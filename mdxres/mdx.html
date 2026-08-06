@@ -1,0 +1,2423 @@
+<!DOCTYPE html>
+<html class="client-nojs" lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<title>MDX - wowdev</title>
+<script>(function(){var className="client-js";var cookie=document.cookie.match(/(?:^|; )wowdev_wikkimwclientpreferences=([^;]+)/);if(cookie){cookie[1].split('%2C').forEach(function(pref){className=className.replace(new RegExp('(^| )'+pref.replace(/-clientpref-\w+$|[^\w-]+/g,'')+'-clientpref-\\w+( |$)'),'$1'+pref+'$2');});}document.documentElement.className=className;}());RLCONF={"wgBreakFrames":false,"wgSeparatorTransformTable":["",""],"wgDigitTransformTable":["",""],"wgDefaultDateFormat":"dmy","wgMonthNames":["","January","February","March","April","May","June","July","August","September","October","November","December"],"wgRequestId":"d3620496f286b76a261294be","wgCanonicalNamespace":"","wgCanonicalSpecialPageName":false,"wgNamespaceNumber":0,"wgPageName":"MDX","wgTitle":"MDX","wgCurRevisionId":33150,"wgRevisionId":33150,"wgArticleId":249,"wgIsArticle":true,"wgIsRedirect":false,"wgAction":"view","wgUserName":null,"wgUserGroups":["*"],"wgCategories":["Format"],"wgPageViewLanguage":"en","wgPageContentLanguage":"en","wgPageContentModel":"wikitext","wgRelevantPageName":"MDX","wgRelevantArticleId":249,"wgIsProbablyEditable":false,"wgRelevantPageIsProbablyEditable":false,"wgRestrictionEdit":[],"wgRestrictionMove":[]};
+RLSTATE={"site.styles":"ready","user.styles":"ready","user":"ready","user.options":"loading","ext.pygments":"ready","skins.vector.styles.legacy":"ready"};RLPAGEMODULES=["ext.pygments.view","site","mediawiki.page.ready","mediawiki.toc","skins.vector.legacy.js"];</script>
+<script>(RLQ=window.RLQ||[]).push(function(){mw.loader.impl(function(){return["user.options@12s5i",function($,jQuery,require,module){mw.user.tokens.set({"patrolToken":"+\\","watchToken":"+\\","csrfToken":"+\\"});
+}];});});</script>
+<link rel="stylesheet" href="/load.php?lang=en&amp;modules=ext.pygments%7Cskins.vector.styles.legacy&amp;only=styles&amp;skin=vector">
+<script async="" src="/load.php?lang=en&amp;modules=startup&amp;only=scripts&amp;raw=1&amp;skin=vector"></script>
+<meta name="ResourceLoaderDynamicStyles" content="">
+<link rel="stylesheet" href="/load.php?lang=en&amp;modules=site.styles&amp;only=styles&amp;skin=vector">
+<meta name="generator" content="MediaWiki 1.43.9">
+<meta name="robots" content="max-image-preview:standard">
+<meta name="format-detection" content="telephone=no">
+<meta name="viewport" content="width=1120">
+<link rel="apple-touch-icon" href="/wowdevlogo.png">
+<link rel="icon" href="/wowdevlogo.png">
+<link rel="search" type="application/opensearchdescription+xml" href="/rest.php/v1/search" title="wowdev (en)">
+<link rel="EditURI" type="application/rsd+xml" href="https://wowdev.wiki/api.php?action=rsd">
+<link rel="alternate" type="application/atom+xml" title="wowdev Atom feed" href="/index.php?title=Special:RecentChanges&amp;feed=atom">
+<link rel="alternate" type="application/rss+xml" title="wowdev RSS feed" href="/index.php?title=Special:RecentChanges&amp;feed=rss">
+</head>
+<body class="skin-vector-legacy mediawiki ltr sitedir-ltr mw-hide-empty-elt ns-0 ns-subject page-MDX rootpage-MDX skin-vector action-view"><div id="mw-page-base" class="noprint"></div>
+<div id="mw-head-base" class="noprint"></div>
+<div id="content" class="mw-body" role="main">
+	<a id="top"></a>
+	<div id="siteNotice"></div>
+	<div class="mw-indicators">
+	</div>
+	<h1 id="firstHeading" class="firstHeading mw-first-heading"><span class="mw-page-title-main">MDX</span></h1>
+	<div id="bodyContent" class="vector-body">
+		<div id="siteSub" class="noprint">From wowdev</div>
+		<div id="contentSub"><div id="mw-content-subtitle"></div></div>
+		<div id="contentSub2"></div>
+		
+		<div id="jump-to-nav"></div>
+		<a class="mw-jump-link" href="#mw-head">Jump to navigation</a>
+		<a class="mw-jump-link" href="#searchInput">Jump to search</a>
+		<div id="mw-content-text" class="mw-body-content"><div class="mw-content-ltr mw-parser-output" lang="en" dir="ltr"><div class="wowdev-sectionbox" style="border-top: 1px dashed black; border-bottom: 1px dashed black; padding: 3px; background: #eee; font-size: 0.8em">This section only applies to versions &lt;&#160;<span class="mw-default-size" typeof="mw:File"><a href="/File:Vanilla-Logo-Small.png" class="mw-file-description"><img alt="Vanilla" src="/images/5/54/Vanilla-Logo-Small.png" decoding="async" width="16" height="16" class="mw-file-element" /></a></span>.</div>
+<p><a class="mw-selflink selflink">MDX</a> files are <a href="/Chunk" title="Chunk">chunked</a> binary files that contain model objects. They are the predecessor of the <a href="/M2" title="M2">M2</a> format.
+</p><p>First used in Warcraft 3, <a class="mw-selflink selflink">MDX</a> was actively developed and used in WoW as the primary model format until patch <span class="mw-default-size" typeof="mw:File"><a href="/File:PreVanilla-Logo-Small.png" class="mw-file-description"><img alt="PreVanilla" src="/images/8/8f/PreVanilla-Logo-Small.png" decoding="async" width="16" height="16" class="mw-file-element" /></a></span>&#160;(0.11.0.3925). Although obsolete, some <a href="/DBC" title="DBC">DBCs</a> still contain filenames with a <tt>.mdx</tt> extension.
+</p><p><b>Note:</b> The majority of the below information has been taken from the <span class="mw-default-size" typeof="mw:File"><a href="/File:PreVanilla-Logo-Small.png" class="mw-file-description"><img alt="PreVanilla" src="/images/8/8f/PreVanilla-Logo-Small.png" decoding="async" width="16" height="16" class="mw-file-element" /></a></span>&#160;(0.5.3.3368) client and is only truly compliant for version 1300 of the format.
+</p>
+<div id="toc" class="toc" role="navigation" aria-labelledby="mw-toc-heading"><input type="checkbox" role="button" id="toctogglecheckbox" class="toctogglecheckbox" style="display:none" /><div class="toctitle" lang="en" dir="ltr"><h2 id="mw-toc-heading">Contents</h2><span class="toctogglespan"><label class="toctogglelabel" for="toctogglecheckbox"></label></span></div>
+<ul>
+<li class="toclevel-1 tocsection-1"><a href="#Structure"><span class="tocnumber">1</span> <span class="toctext">Structure</span></a></li>
+<li class="toclevel-1 tocsection-2"><a href="#Common_Types"><span class="tocnumber">2</span> <span class="toctext">Common Types</span></a>
+<ul>
+<li class="toclevel-2 tocsection-3"><a href="#C3Color"><span class="tocnumber">2.1</span> <span class="toctext">C3Color</span></a></li>
+<li class="toclevel-2 tocsection-4"><a href="#C4QuaternionCompressed"><span class="tocnumber">2.2</span> <span class="toctext">C4QuaternionCompressed</span></a></li>
+<li class="toclevel-2 tocsection-5"><a href="#CMdlBounds"><span class="tocnumber">2.3</span> <span class="toctext">CMdlBounds</span></a></li>
+<li class="toclevel-2 tocsection-6"><a href="#MDLKEYTRACK"><span class="tocnumber">2.4</span> <span class="toctext">MDLKEYTRACK</span></a></li>
+<li class="toclevel-2 tocsection-7"><a href="#MDLSIMPLEKEYTRACK"><span class="tocnumber">2.5</span> <span class="toctext">MDLSIMPLEKEYTRACK</span></a></li>
+<li class="toclevel-2 tocsection-8"><a href="#MDLGENOBJECT"><span class="tocnumber">2.6</span> <span class="toctext">MDLGENOBJECT</span></a>
+<ul>
+<li class="toclevel-3 tocsection-9"><a href="#Flags"><span class="tocnumber">2.6.1</span> <span class="toctext">Flags</span></a></li>
+<li class="toclevel-3 tocsection-10"><a href="#KGTR"><span class="tocnumber">2.6.2</span> <span class="toctext">KGTR</span></a></li>
+<li class="toclevel-3 tocsection-11"><a href="#KGRT"><span class="tocnumber">2.6.3</span> <span class="toctext">KGRT</span></a></li>
+<li class="toclevel-3 tocsection-12"><a href="#KGSC"><span class="tocnumber">2.6.4</span> <span class="toctext">KGSC</span></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-13"><a href="#VERS"><span class="tocnumber">3</span> <span class="toctext">VERS</span></a></li>
+<li class="toclevel-1 tocsection-14"><a href="#MODL"><span class="tocnumber">4</span> <span class="toctext">MODL</span></a></li>
+<li class="toclevel-1 tocsection-15"><a href="#SEQS"><span class="tocnumber">5</span> <span class="toctext">SEQS</span></a></li>
+<li class="toclevel-1 tocsection-16"><a href="#GLBS"><span class="tocnumber">6</span> <span class="toctext">GLBS</span></a></li>
+<li class="toclevel-1 tocsection-17"><a href="#MTLS"><span class="tocnumber">7</span> <span class="toctext">MTLS</span></a>
+<ul>
+<li class="toclevel-2 tocsection-18"><a href="#MTLS(Reforged)"><span class="tocnumber">7.1</span> <span class="toctext">MTLS(Reforged)</span></a></li>
+<li class="toclevel-2 tocsection-19"><a href="#KMTE"><span class="tocnumber">7.2</span> <span class="toctext">KMTE</span></a></li>
+<li class="toclevel-2 tocsection-20"><a href="#KMTA"><span class="tocnumber">7.3</span> <span class="toctext">KMTA</span></a></li>
+<li class="toclevel-2 tocsection-21"><a href="#KMTF"><span class="tocnumber">7.4</span> <span class="toctext">KMTF</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-22"><a href="#TEXS"><span class="tocnumber">8</span> <span class="toctext">TEXS</span></a></li>
+<li class="toclevel-1 tocsection-23"><a href="#TXAN"><span class="tocnumber">9</span> <span class="toctext">TXAN</span></a>
+<ul>
+<li class="toclevel-2 tocsection-24"><a href="#KTAT"><span class="tocnumber">9.1</span> <span class="toctext">KTAT</span></a></li>
+<li class="toclevel-2 tocsection-25"><a href="#KTAR"><span class="tocnumber">9.2</span> <span class="toctext">KTAR</span></a></li>
+<li class="toclevel-2 tocsection-26"><a href="#KTAS"><span class="tocnumber">9.3</span> <span class="toctext">KTAS</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-27"><a href="#GEOS"><span class="tocnumber">10</span> <span class="toctext">GEOS</span></a>
+<ul>
+<li class="toclevel-2 tocsection-28"><a href="#GEOS_(≤_v1400)"><span class="tocnumber">10.1</span> <span class="toctext">GEOS (≤ v1400)</span></a></li>
+<li class="toclevel-2 tocsection-29"><a href="#GEOS_(v1500)"><span class="tocnumber">10.2</span> <span class="toctext">GEOS (v1500)</span></a></li>
+<li class="toclevel-2 tocsection-30"><a href="#GEOS_(Reforged)"><span class="tocnumber">10.3</span> <span class="toctext">GEOS (Reforged)</span></a></li>
+<li class="toclevel-2 tocsection-31"><a href="#VRTX"><span class="tocnumber">10.4</span> <span class="toctext">VRTX</span></a></li>
+<li class="toclevel-2 tocsection-32"><a href="#NRMS"><span class="tocnumber">10.5</span> <span class="toctext">NRMS</span></a></li>
+<li class="toclevel-2 tocsection-33"><a href="#UVAS"><span class="tocnumber">10.6</span> <span class="toctext">UVAS</span></a></li>
+<li class="toclevel-2 tocsection-34"><a href="#UVBS"><span class="tocnumber">10.7</span> <span class="toctext">UVBS</span></a></li>
+<li class="toclevel-2 tocsection-35"><a href="#PTYP"><span class="tocnumber">10.8</span> <span class="toctext">PTYP</span></a></li>
+<li class="toclevel-2 tocsection-36"><a href="#PCNT"><span class="tocnumber">10.9</span> <span class="toctext">PCNT</span></a></li>
+<li class="toclevel-2 tocsection-37"><a href="#PVTX"><span class="tocnumber">10.10</span> <span class="toctext">PVTX</span></a></li>
+<li class="toclevel-2 tocsection-38"><a href="#GNDX"><span class="tocnumber">10.11</span> <span class="toctext">GNDX</span></a></li>
+<li class="toclevel-2 tocsection-39"><a href="#MTGC"><span class="tocnumber">10.12</span> <span class="toctext">MTGC</span></a></li>
+<li class="toclevel-2 tocsection-40"><a href="#MATS"><span class="tocnumber">10.13</span> <span class="toctext">MATS</span></a></li>
+<li class="toclevel-2 tocsection-41"><a href="#TANG"><span class="tocnumber">10.14</span> <span class="toctext">TANG</span></a></li>
+<li class="toclevel-2 tocsection-42"><a href="#SKIN"><span class="tocnumber">10.15</span> <span class="toctext">SKIN</span></a></li>
+<li class="toclevel-2 tocsection-43"><a href="#BIDX"><span class="tocnumber">10.16</span> <span class="toctext">BIDX</span></a></li>
+<li class="toclevel-2 tocsection-44"><a href="#BWGT"><span class="tocnumber">10.17</span> <span class="toctext">BWGT</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-45"><a href="#GEOA"><span class="tocnumber">11</span> <span class="toctext">GEOA</span></a>
+<ul>
+<li class="toclevel-2 tocsection-46"><a href="#KGAO"><span class="tocnumber">11.1</span> <span class="toctext">KGAO</span></a></li>
+<li class="toclevel-2 tocsection-47"><a href="#KGAC"><span class="tocnumber">11.2</span> <span class="toctext">KGAC</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-48"><a href="#BONE"><span class="tocnumber">12</span> <span class="toctext">BONE</span></a></li>
+<li class="toclevel-1 tocsection-49"><a href="#LITE"><span class="tocnumber">13</span> <span class="toctext">LITE</span></a>
+<ul>
+<li class="toclevel-2 tocsection-50"><a href="#KLAS"><span class="tocnumber">13.1</span> <span class="toctext">KLAS</span></a></li>
+<li class="toclevel-2 tocsection-51"><a href="#KLAE"><span class="tocnumber">13.2</span> <span class="toctext">KLAE</span></a></li>
+<li class="toclevel-2 tocsection-52"><a href="#KLAC"><span class="tocnumber">13.3</span> <span class="toctext">KLAC</span></a></li>
+<li class="toclevel-2 tocsection-53"><a href="#KLAI"><span class="tocnumber">13.4</span> <span class="toctext">KLAI</span></a></li>
+<li class="toclevel-2 tocsection-54"><a href="#KLBC"><span class="tocnumber">13.5</span> <span class="toctext">KLBC</span></a></li>
+<li class="toclevel-2 tocsection-55"><a href="#KLBI"><span class="tocnumber">13.6</span> <span class="toctext">KLBI</span></a></li>
+<li class="toclevel-2 tocsection-56"><a href="#KVIS"><span class="tocnumber">13.7</span> <span class="toctext">KVIS</span></a></li>
+<li class="toclevel-2 tocsection-57"><a href="#KATV"><span class="tocnumber">13.8</span> <span class="toctext">KATV</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-58"><a href="#HELP"><span class="tocnumber">14</span> <span class="toctext">HELP</span></a></li>
+<li class="toclevel-1 tocsection-59"><a href="#ATCH"><span class="tocnumber">15</span> <span class="toctext">ATCH</span></a></li>
+<li class="toclevel-1 tocsection-60"><a href="#PIVT"><span class="tocnumber">16</span> <span class="toctext">PIVT</span></a></li>
+<li class="toclevel-1 tocsection-61"><a href="#PREM"><span class="tocnumber">17</span> <span class="toctext">PREM</span></a>
+<ul>
+<li class="toclevel-2 tocsection-62"><a href="#KPEE"><span class="tocnumber">17.1</span> <span class="toctext">KPEE</span></a></li>
+<li class="toclevel-2 tocsection-63"><a href="#KPEG"><span class="tocnumber">17.2</span> <span class="toctext">KPEG</span></a></li>
+<li class="toclevel-2 tocsection-64"><a href="#KPLT"><span class="tocnumber">17.3</span> <span class="toctext">KPLT</span></a></li>
+<li class="toclevel-2 tocsection-65"><a href="#KPEL"><span class="tocnumber">17.4</span> <span class="toctext">KPEL</span></a></li>
+<li class="toclevel-2 tocsection-66"><a href="#KPES"><span class="tocnumber">17.5</span> <span class="toctext">KPES</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-67"><a href="#CAMS"><span class="tocnumber">18</span> <span class="toctext">CAMS</span></a>
+<ul>
+<li class="toclevel-2 tocsection-68"><a href="#KCTR"><span class="tocnumber">18.1</span> <span class="toctext">KCTR</span></a></li>
+<li class="toclevel-2 tocsection-69"><a href="#KCRL"><span class="tocnumber">18.2</span> <span class="toctext">KCRL</span></a></li>
+<li class="toclevel-2 tocsection-70"><a href="#KTTR"><span class="tocnumber">18.3</span> <span class="toctext">KTTR</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-71"><a href="#EVTS"><span class="tocnumber">19</span> <span class="toctext">EVTS</span></a>
+<ul>
+<li class="toclevel-2 tocsection-72"><a href="#KEVT"><span class="tocnumber">19.1</span> <span class="toctext">KEVT</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-73"><a href="#PRE2"><span class="tocnumber">20</span> <span class="toctext">PRE2</span></a>
+<ul>
+<li class="toclevel-2 tocsection-74"><a href="#KP2V"><span class="tocnumber">20.1</span> <span class="toctext">KP2V</span></a></li>
+<li class="toclevel-2 tocsection-75"><a href="#KP2S"><span class="tocnumber">20.2</span> <span class="toctext">KP2S</span></a></li>
+<li class="toclevel-2 tocsection-76"><a href="#KP2R"><span class="tocnumber">20.3</span> <span class="toctext">KP2R</span></a></li>
+<li class="toclevel-2 tocsection-77"><a href="#KP2L"><span class="tocnumber">20.4</span> <span class="toctext">KP2L</span></a></li>
+<li class="toclevel-2 tocsection-78"><a href="#KPLN"><span class="tocnumber">20.5</span> <span class="toctext">KPLN</span></a></li>
+<li class="toclevel-2 tocsection-79"><a href="#KP2G"><span class="tocnumber">20.6</span> <span class="toctext">KP2G</span></a></li>
+<li class="toclevel-2 tocsection-80"><a href="#KLIF"><span class="tocnumber">20.7</span> <span class="toctext">KLIF</span></a></li>
+<li class="toclevel-2 tocsection-81"><a href="#KP2E"><span class="tocnumber">20.8</span> <span class="toctext">KP2E</span></a></li>
+<li class="toclevel-2 tocsection-82"><a href="#KP2W"><span class="tocnumber">20.9</span> <span class="toctext">KP2W</span></a></li>
+<li class="toclevel-2 tocsection-83"><a href="#KP2N"><span class="tocnumber">20.10</span> <span class="toctext">KP2N</span></a></li>
+<li class="toclevel-2 tocsection-84"><a href="#KP2Z"><span class="tocnumber">20.11</span> <span class="toctext">KP2Z</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-85"><a href="#CORN"><span class="tocnumber">21</span> <span class="toctext">CORN</span></a>
+<ul>
+<li class="toclevel-2 tocsection-86"><a href="#KPPA"><span class="tocnumber">21.1</span> <span class="toctext">KPPA</span></a></li>
+<li class="toclevel-2 tocsection-87"><a href="#KPPC"><span class="tocnumber">21.2</span> <span class="toctext">KPPC</span></a></li>
+<li class="toclevel-2 tocsection-88"><a href="#KPPE"><span class="tocnumber">21.3</span> <span class="toctext">KPPE</span></a></li>
+<li class="toclevel-2 tocsection-89"><a href="#KPPL"><span class="tocnumber">21.4</span> <span class="toctext">KPPL</span></a></li>
+<li class="toclevel-2 tocsection-90"><a href="#KPPS"><span class="tocnumber">21.5</span> <span class="toctext">KPPS</span></a></li>
+<li class="toclevel-2 tocsection-91"><a href="#KPPV"><span class="tocnumber">21.6</span> <span class="toctext">KPPV</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-92"><a href="#HTST"><span class="tocnumber">22</span> <span class="toctext">HTST</span></a></li>
+<li class="toclevel-1 tocsection-93"><a href="#RIBB"><span class="tocnumber">23</span> <span class="toctext">RIBB</span></a>
+<ul>
+<li class="toclevel-2 tocsection-94"><a href="#KRHA"><span class="tocnumber">23.1</span> <span class="toctext">KRHA</span></a></li>
+<li class="toclevel-2 tocsection-95"><a href="#KRHB"><span class="tocnumber">23.2</span> <span class="toctext">KRHB</span></a></li>
+<li class="toclevel-2 tocsection-96"><a href="#KRAL"><span class="tocnumber">23.3</span> <span class="toctext">KRAL</span></a></li>
+<li class="toclevel-2 tocsection-97"><a href="#KRCO"><span class="tocnumber">23.4</span> <span class="toctext">KRCO</span></a></li>
+<li class="toclevel-2 tocsection-98"><a href="#KRTX"><span class="tocnumber">23.5</span> <span class="toctext">KRTX</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-99"><a href="#CLID"><span class="tocnumber">24</span> <span class="toctext">CLID</span></a>
+<ul>
+<li class="toclevel-2 tocsection-100"><a href="#TRI"><span class="tocnumber">24.1</span> <span class="toctext">TRI</span></a></li>
+</ul>
+</li>
+</ul>
+</div>
+
+<h2><span class="mw-headline" id="Structure">Structure</span></h2>
+<p>The complete structure for a <a class="mw-selflink selflink">MDX</a> file. <b>Note:</b> Chunks after <tt>MODL</tt> don't have to conform to a specific order and can be unimplemented on a per-file basis - particularly the <tt>K***</tt> sub-chunks.
+</p>
+<pre>struct MDLBASE
+{
+  char magic[4];           // MDLX
+  <a href="#VERS">VERS</a> version;
+  <a href="#MODL">MODL</a> model; 
+  <a href="#SEQS">SEQS</a> sequences;
+  <a href="#GLBS">GLBS</a> globalSeqs;
+  <a href="#MTLS">MTLS</a> materials;
+  <a href="#TEXS">TEXS</a> textures;
+  <a href="#TXAN">TXAN</a> textureanims;
+  <a href="#GEOS">GEOS</a> geosets;
+  <a href="#GEOA">GEOA</a> geosetAnims;
+  <a href="#BONE">BONE</a> bones;
+  <a href="#LITE">LITE</a> lights;
+  <a href="#HELP">HELP</a> helpers;
+  <a href="#ATCH">ATCH</a> attachments;
+  <a href="#PIVT">PIVT</a> pivotPoints;
+  <a href="#PREM">PREM</a> particleEmitters;
+  <a href="#CAMS">CAMS</a> cameras;
+  <a href="#EVTS">EVTS</a> events;
+  <a href="#PRE2">PRE2</a> particleEmitters2;
+  <a href="#CORN">CORN</a> popcornFxEmitters;
+  <a href="#HTST">HTST</a> hitTestShapes;
+  <a href="#RIBB">RIBB</a> ribbonEmitters;
+  <a href="#CLID">CLID</a> collision;
+};
+
+</pre>
+<h2><span class="mw-headline" id="Common_Types">Common Types</span></h2>
+<h3><span class="mw-headline" id="C3Color">C3Color</span></h3>
+<pre>struct C3Color
+{
+  float b;
+  float g;
+  float r;
+};
+</pre>
+<h3><span class="mw-headline" id="C4QuaternionCompressed">C4QuaternionCompressed</span></h3>
+<p>For the WoW variant of <a class="mw-selflink selflink">MDX</a>, all C4Quaternion<a href="/Common_Types#C4Quaternion" title="Common Types">ⁱs</a> are packed in int64_ts.
+</p>
+<div class="mw-highlight mw-highlight-lang-cpp mw-content-ltr" dir="ltr"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">C4QuaternionCompressed</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">m_data</span><span class="p">;</span>
+<span class="w"> </span>
+<span class="w">  </span><span class="n">C4Quaternion</span><span class="w"> </span><span class="nf">Get</span><span class="p">()</span>
+<span class="w">  </span><span class="p">{</span>
+<span class="w">     </span><span class="n">C4Quaternion</span><span class="w"> </span><span class="n">result</span><span class="p">;</span><span class="w">	  </span>
+<span class="w">     </span><span class="n">result</span><span class="p">.</span><span class="n">X</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">m_data</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">42</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">0.00000047683716</span><span class="p">;</span>
+<span class="w">     </span><span class="n">result</span><span class="p">.</span><span class="n">Y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">((</span><span class="w"> </span><span class="n">m_data</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">22</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">43</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">0.00000095367432</span><span class="p">;</span>
+<span class="w">     </span><span class="n">result</span><span class="p">.</span><span class="n">Z</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">((</span><span class="kt">int32_t</span><span class="p">)(</span><span class="w"> </span><span class="n">m_data</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">11</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">11</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">0.00000095367432</span><span class="p">;</span>
+<span class="w">     </span><span class="n">result</span><span class="p">.</span><span class="n">W</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetW</span><span class="p">(</span><span class="w"> </span><span class="n">result</span><span class="p">.</span><span class="n">X</span><span class="p">,</span><span class="w"> </span><span class="n">result</span><span class="p">.</span><span class="n">Y</span><span class="p">,</span><span class="w"> </span><span class="n">result</span><span class="p">.</span><span class="n">Z</span><span class="w"> </span><span class="p">);</span><span class="w">      </span>
+<span class="w">     </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="nf">GetW</span><span class="p">(</span><span class="kt">float</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">y</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">z</span><span class="p">)</span>
+<span class="w">  </span><span class="p">{</span>
+<span class="w">     </span><span class="kt">double</span><span class="w"> </span><span class="n">len</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">z</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">z</span><span class="p">);</span><span class="w">      </span>
+<span class="w">     </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">len</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mf">0.00000095367432</span><span class="w"> </span><span class="p">)</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">sqrt</span><span class="p">(</span><span class="w"> </span><span class="n">len</span><span class="w"> </span><span class="p">);</span>
+<span class="w">     </span>
+<span class="w">     </span><span class="k">return</span><span class="w"> </span><span class="mf">0.0</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">Set</span><span class="p">(</span><span class="n">C4Quaternion</span><span class="w"> </span><span class="n">source</span><span class="p">)</span>
+<span class="w">  </span><span class="p">{</span>
+<span class="w">     </span><span class="kt">int32_t</span><span class="w"> </span><span class="n">sign</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">source</span><span class="o">-&gt;</span><span class="n">W</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mi">-1</span><span class="w"> </span><span class="p">);</span><span class="w">            </span>
+<span class="w">     </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int64_t</span><span class="p">)(</span><span class="w"> </span><span class="n">sign</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">source</span><span class="o">-&gt;</span><span class="n">X</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">2097152.0</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">21</span><span class="p">;</span>
+<span class="w">     </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int64_t</span><span class="p">)(</span><span class="w"> </span><span class="n">sign</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">source</span><span class="o">-&gt;</span><span class="n">Y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">1048576.0</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0x1FFFFF</span><span class="p">;</span>
+<span class="w">     </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">z</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int64_t</span><span class="p">)(</span><span class="w"> </span><span class="n">sign</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">source</span><span class="o">-&gt;</span><span class="n">Z</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">1048576.0</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0x1FFFFF</span><span class="p">;</span>
+<span class="w">     </span>
+<span class="w">     </span><span class="n">m_data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">z</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="p">((</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">21</span><span class="w"> </span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span><span class="w">    </span>
+<span class="p">};</span>
+</pre></div>
+<h3><span class="mw-headline" id="CMdlBounds">CMdlBounds</span></h3>
+<pre>struct CMdlBounds
+{
+  CAaBox<a href="/Common_Types#CAaBox" title="Common Types">ⁱ</a> extent;
+  float radius;
+};
+</pre>
+<h3><span class="mw-headline" id="MDLKEYTRACK">MDLKEYTRACK</span></h3>
+<p>The <tt>MDLKEYTRACK</tt> is a simpler equivalent of the <a href="/M2#Types" title="M2">M2Track</a>. It stores a list of <tt>MDLKEYFRAMES</tt> which are essentially tuples of a time and T type values.
+If the type is <tt>TRACK_HERMITE</tt> or <tt>TRACK_BEZIER</tt> then the frame also contains <tt>inTan</tt> and <tt>outTan</tt> information. See the relevant <a href="/M2#Interpolation" title="M2">M2 interpolation section</a> for more information.
+</p><p>Under certain conditions the client overrides the track type e.g. when <tt>MDLMODELSECTION.flags &amp; 4</tt> (always animate) is set <tt>TRACK_LINEAR</tt> is used.
+</p>
+<pre>template&lt;typename T&gt;
+struct MDLKEYTRACK&lt;T&gt;
+{
+  uint32_t count;
+  MDLTRACKTYPE type;
+  uint32_t globalSeqId;        // <a href="#GLBS">GLBS</a> index or 0xFFFFFFFF if none
+  MDLKEYFRAME&lt;T&gt; keys[count];  
+};
+
+template&lt;typename T&gt;
+struct MDLKEYFRAME&lt;T&gt;
+{
+  int32_t time;
+  T value;
+ #if MDLKEYTRACK.type &gt; TRACK_LINEAR
+  T inTan;
+  T outTan;
+ #endif
+};
+
+enum MDLTRACKTYPE&#160;: uint32_t
+{
+  TRACK_NO_INTERP = 0x0,
+  TRACK_LINEAR = 0x1,
+  TRACK_HERMITE = 0x2,
+  TRACK_BEZIER = 0x3,
+  NUM_TRACK_TYPES = 0x4,
+};
+</pre>
+<h3><span class="mw-headline" id="MDLSIMPLEKEYTRACK">MDLSIMPLEKEYTRACK</span></h3>
+<p>The <tt>MDLSIMPLEKEYTRACK</tt> is used in place of the <tt>MDLKEYTRACK</tt> when only linear integer values are required. Types used by this track are <tt>MDLINTKEY</tt> and <tt>MDLEVENTKEY</tt>.
+</p>
+<pre>template&lt;typename T&gt;
+struct MDLSIMPLEKEYTRACK&lt;T&gt;
+{
+  uint32_t count;
+  uint32_t globalSeqId;  // <a href="#GLBS">GLBS</a> index or 0xFFFFFFFF if none
+  T keys[count];
+};
+
+struct MDLINTKEY         // default type
+{
+  uint32_t time;
+  uint32_t value;
+};
+
+struct MDLEVENTKEY       // only used for the <a href="#EVTS">EVTS</a> <a href="#KEVT">KEVT</a> sub-chunk
+{
+  int32_t time;
+};
+</pre>
+<h3><span class="mw-headline" id="MDLGENOBJECT">MDLGENOBJECT</span></h3>
+<p><tt>MDLGENOBJECT</tt> is a base class inherited by several chunks. This is not just for common data but is also used to build an object hierarchy.
+</p><p>The hierarchy is usually organised as: <code>Bones (root bones first) → Lights → Helpers → Attachments → ParticleEmitters → RibbonEmitters → Events → HitTestShapes</code>. The client will throw an exception if the objectIds are not sequential.
+</p>
+<pre>struct MDLGENOBJECT
+{
+  uint32_t size;
+  char name[0x50];
+  uint32_t objectId; // globally unique id, used as the index in the hierarchy. index into <a href="#PIVT">PIVT</a>
+  uint32_t parentId; // parent MDLGENOBJECT's objectId or 0xFFFFFFFF if none
+  uint32_t flags;
+  
+  <a href="#KGTR">KGTR</a> transkeys;
+  <a href="#KGRT">KGRT</a> rotkeys;
+  <a href="#KGSC">KGSC</a> scalekeys;
+};
+</pre>
+<h4><span class="mw-headline" id="Flags">Flags</span></h4>
+<p><b>Notes:</b> Certain flag combinations are invalid and will throw exceptions. Flags ≥ 0x20000 are only applicable to <a href="#PRE2">PRE2</a> objects. GENOBJECT flags are also set in the class constructor.
+</p>
+<table class="wikitable">
+
+<tbody><tr>
+<th width="50">Flag
+</th>
+<th width="450">Meaning
+</th>
+<th width="650">Notes
+</th></tr>
+<tr>
+<td>0x00000001</td>
+<td>DONT_INHERIT_TRANSLATION</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000002</td>
+<td>DONT_INHERIT_SCALING</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000004</td>
+<td>DONT_INHERIT_ROTATION</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000008</td>
+<td>BILLBOARD</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000010</td>
+<td>BILLBOARD_LOCK_X</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000020</td>
+<td>BILLBOARD_LOCK_Y</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000040</td>
+<td>BILLBOARD_LOCK_Z</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000080</td>
+<td>GENOBJECT_MDLBONESECTION</td>
+<td>not explicitly set in the files however all other GENOBJECT flags are
+</td></tr>
+<tr>
+<td>0x00000100</td>
+<td>GENOBJECT_MDLLIGHTSECTION</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000200</td>
+<td>GENOBJECT_MDLEVENTSECTION</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000400</td>
+<td>GENOBJECT_MDLATTACHMENTSECTION</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00000800</td>
+<td>GENOBJECT_MDLPARTICLEEMITTER2</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00001000</td>
+<td>GENOBJECT_MDLHITTESTSHAPE</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00002000</td>
+<td>GENOBJECT_MDLRIBBONEMITTER</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00004000</td>
+<td>PROJECT</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00008000</td>
+<td>EMITTER_USES_TGA (<a href="#PREM">PREM</a>), UNSHADED (<a href="#PRE2">PRE2</a>)</td>
+<td>UNSHADED disables lighting on <a href="/M2/Rendering#CParticleMat" title="M2/Rendering">particle materials</a>
+</td></tr>
+<tr>
+<td>0x00010000</td>
+<td>EMITTER_USES_MDL (<a href="#PREM">PREM</a>), SORT_PRIMITIVES_FAR_Z (<a href="#PRE2">PRE2</a>)</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00020000</td>
+<td>LINE_EMITTER</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00040000</td>
+<td>PARTICLE_UNFOGGED</td>
+<td>disables fog on <a href="/M2/Rendering#CParticleMat" title="M2/Rendering">particle materials</a>
+</td></tr>
+<tr>
+<td>0x00080000</td>
+<td>PARTICLE_USE_MODEL_SPACE</td>
+<td>uses model space instead of world space
+</td></tr>
+<tr>
+<td>0x00100000</td>
+<td>PARTICLE_INHERIT_SCALE</td>
+<td>
+</td></tr>
+<tr>
+<td>0x00200000</td>
+<td>PARTICLE_INSTANT_VELOCITY_LINEAR</td>
+<td>a cumulative velocity is applied to new particles
+</td></tr>
+<tr>
+<td>0x00400000</td>
+<td>PARTICLE_0XKILL</td>
+<td>particles are destroyed after their first update tick
+</td></tr>
+<tr>
+<td>0x00800000</td>
+<td>PARTICLE_Z_VELOCITY_ONLY</td>
+<td>particle X and Y velocities are set to 0.0 at instantiation
+</td></tr>
+<tr>
+<td>0x01000000</td>
+<td>PARTICLE_TUMBLER</td>
+<td>50% chance to invert each particle position component at instantiation (PET_BASE)
+</td></tr>
+<tr>
+<td>0x02000000</td>
+<td>PARTICLE_TAIL_GROWS</td>
+<td>
+</td></tr>
+<tr>
+<td>0x04000000</td>
+<td>PARTICLE_EXTRUDE</td>
+<td>extrudes between the previous and current translation
+</td></tr>
+<tr>
+<td>0x08000000</td>
+<td>PARTICLE_XYQUADS</td>
+<td>particles align to the XY axis facing the Z axis
+</td></tr>
+<tr>
+<td>0x10000000</td>
+<td>PARTICLE_PROJECT</td>
+<td>
+</td></tr>
+<tr>
+<td>0x20000000</td>
+<td>PARTICLE_FOLLOW</td>
+<td>particles follow each other
+</td></tr>
+</tbody></table>
+<h4><span class="mw-headline" id="KGTR">KGTR</span></h4>
+<p>Geoset translation track
+</p>
+<pre>struct KGTR
+{
+  char tag[4]; // KGTR
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a>&gt; transkeys;
+};
+</pre>
+<h4><span class="mw-headline" id="KGRT">KGRT</span></h4>
+<p>Geoset rotation track
+</p>
+<pre>struct KGRT
+{
+  char tag[4]; // KGRT
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;<a href="#C4QuaternionCompressed">C4QuaternionCompressed</a>&gt; rotkeys;
+};
+</pre>
+<h4><span class="mw-headline" id="KGSC">KGSC</span></h4>
+<p>Geoset scale track
+</p>
+<pre>struct KGSC
+{
+  char tag[4]; // KGSC
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a>&gt; scalekeys;
+};
+</pre>
+<h2><span class="mw-headline" id="VERS">VERS</span></h2>
+<p>Version. Equivalent to the <tt>MVER</tt> chunk.
+</p><p>File analysis of v1400 shows no structural differences to v1300, the only apparent change is that referenced file paths are now normalized.
+</p><p>v1500 sees two structural changes from the previous iterations namely; new flags in the <a href="#MTLS">MTLS</a> chunk and a complete redesign of the <a href="#GEOS_.28v1500.29">GEOS</a> chunk.
+</p><p>The WC3 and WC3 Reforged structure is documented <a rel="nofollow" class="external text" href="https://www.hiveworkshop.com/threads/mdx-specifications.240487">here</a>.
+</p>
+<pre>uint32_t version; // 800 WC3, 900, 1000 WC3 Reforged, 1300 &lt;&#160;<span class="mw-default-size" typeof="mw:File"><a href="/File:PreVanilla-Logo-Small.png" class="mw-file-description"><img alt="PreVanilla" src="/images/8/8f/PreVanilla-Logo-Small.png" decoding="async" width="16" height="16" class="mw-file-element" /></a></span>&#160;(0.9.1.3810), 1400 &amp; 1500 ≥&#160;<span class="mw-default-size" typeof="mw:File"><a href="/File:PreVanilla-Logo-Small.png" class="mw-file-description"><img alt="PreVanilla" src="/images/8/8f/PreVanilla-Logo-Small.png" decoding="async" width="16" height="16" class="mw-file-element" /></a></span>&#160;(0.9.1.3810)
+</pre>
+<h2><span class="mw-headline" id="MODL">MODL</span></h2>
+<p>Global model information.
+</p>
+<pre>struct MDLMODELSECTION
+{
+  char name[0x50];
+  char animationFile[0x104];  // always 0 filled
+  <a href="#CMdlBounds">CMdlBounds</a> bounds;          // for reforged: seems to be the radius first then the box 
+  uint32_t blendTime;
+  #if !WC3Reforged            // Reforged doesn't have those flags
+     uint8_t flags;           // deprecated, always 0. &amp;1, 2: GROUND_TRACK, &amp;4: always animate
+  #endif
+};
+
+enum GROUND_TRACK
+{
+  TRACK_YAW_ONLY = 0x0,
+  TRACK_PITCH_YAW = 0x1,
+  TRACK_PITCH_YAW_ROLL = 0x2,
+  GROUND_TRACK_MASK = 0x3,
+};
+</pre>
+<h2><span class="mw-headline" id="SEQS">SEQS</span></h2>
+<p>Sequences. <a class="mw-selflink selflink">MDX</a> uses a single track for all animations meaning start times and end times between each animation are consecutive.
+</p>
+<pre>struct SEQS
+{
+   uint32_t numSeqs;   // limited to 0xFF
+   MDLSEQUENCESSECTION sequences [numSeqs];
+};
+ 
+struct MDLSEQUENCESSECTION
+{
+  char name[0x50];
+  CiRange<a href="/Common_Types#CiRange" title="Common Types">ⁱ</a> time;       // start time, end time
+  float movespeed;     // movement speed of the entity while playing this animation
+  uint32_t flags;      // &amp;1: non looping
+  #if WC3 Reforged
+     float rarity;
+     int syncPoint;    // probably for syncing audio with the animation, only seen 0 so far
+  #endif
+  <a href="#CMdlBounds">CMdlBounds</a> bounds;
+  #if !WC3 Reforged
+     float frequency;  // determines chance of this animation playing. for all animations of the same type this must add to 1.0
+     CiRange<a href="/Common_Types#CiRange" title="Common Types">ⁱ</a> replay;     // the client will pick a random number of repetitions within bounds
+     uint32_t blendTime;
+  #endif
+};
+</pre>
+<h2><span class="mw-headline" id="GLBS">GLBS</span></h2>
+<p>Maximum lengths for sequence ranges. This chunk has no count, the client reads uint32_ts until chunk.size bytes have been read.
+</p>
+<pre>struct MDLGLOBALSEQSECTION
+{
+  uint32_t length[chunk.size / 0x4];
+};
+</pre>
+<h2><span class="mw-headline" id="MTLS">MTLS</span></h2>
+<p>Materials.
+</p>
+<pre>struct MTLS
+{
+  uint32_t numMaterials;    // limited to 0xFF
+  uint32_t unused;          // has values but is ignored by the client
+  MDLMATERIALSECTION materials[numMaterials];
+};
+
+struct MDLMATERIALSECTION
+{
+  uint32_t size;
+  int32_t priorityPlane;    // priority is sorted lowest to highest
+  uint32_t numLayers;	     
+  MDLTEXLAYER texLayers[numLayers];	
+};
+
+struct MDLTEXLAYER
+{ 
+  uint32_t size;
+  MDLTEXOP blendMode;
+  MDLGEO flags;
+  uint32_t textureId;        // <a href="#TEXS">TEXS</a> index or 0xFFFFFFFF for none
+  uint32_t transformId;      // <a href="#TXAN">TXAN</a> index or 0xFFFFFFFF for none
+  int32_t coordId;           // <a href="#UAVS">UAVS</a> index or -1 for none, defines vertex buffer format <code>coordId == -1&#160;? GxVBF_PN&#160;: GxVBF_PNT0</code>
+  float staticAlpha;         // 0 for transparent, 1 for opaque
+  
+  <a href="#KMTA">KMTA</a> alphaKeys;
+  <a href="#KMTF">KMTF</a> flipKeys;
+};
+
+enum MDLTEXOP&#160;: uint32_t
+{
+  TEXOP_LOAD = 0x0,
+  TEXOP_TRANSPARENT = 0x1,
+  TEXOP_BLEND = 0x2,
+  TEXOP_ADD = 0x3,
+  TEXOP_ADD_ALPHA = 0x4,
+  TEXOP_MODULATE = 0x5,
+  TEXOP_MODULATE2X = 0x6,
+  NUMTEXOPS = 0x7,
+};
+
+enum MDLGEO&#160;: uint32_t
+{
+  MODEL_GEO_UNSHADED = 0x1,
+  MODEL_GEO_SPHERE_ENV_MAP = 0x2,  // unused until v1500
+  MODEL_GEO_WRAPWIDTH = 0x4,       // unused until v1500
+  MODEL_GEO_WRAPHEIGHT = 0x8,      // unused until v1500
+  MODEL_GEO_TWOSIDED = 0x10,
+  MODEL_GEO_UNFOGGED = 0x20,
+  MODEL_GEO_NO_DEPTH_TEST = 0x40,
+  MODEL_GEO_NO_DEPTH_SET = 0x80,
+  MODEL_GEO_NO_FALLBACK = 0x100,   // added in v1500. seen in <tt>ElwynnTallWaterfall01.mdx</tt>, <tt>FelwoodTallWaterfall01.mdx</tt> and <tt>LavaFallsBlackRock*.mdx</tt>
+};
+</pre>
+<h3><span id="MTLS.28Reforged.29"></span><span class="mw-headline" id="MTLS(Reforged)">MTLS(Reforged)</span></h3>
+<pre>In reforged we don't know the number of materials, and sizeof(MTLS) isn't constant so read till end of the chunk.
+</pre>
+<pre>struct {
+  SHADERREF shaderRef;        // reference to the shader
+  LAYS lays;                  // layers
+} MTLS;
+</pre>
+<pre>struct {
+  int32 sizeOfLayer;        // including the int
+  int32 priorityPlane;
+  int32 flags;
+  char shaderName[80];    // shader name
+} SHADERREF;
+</pre>
+<pre>// Layers
+// 0 - Diffuse
+// 1 - Normal Map
+// 2 - ORM = Occlusion, Roughness, Metalic (RGB)
+// 3 - Emissive
+// 4 - Team Color
+// 5 - Environment Map
+struct {
+   char LAYS[4];
+   int32 numberOfLAYS;
+   TEXTURELAYER textureLayers[numberOfLAYS]
+} LAYS;
+</pre>
+<pre>struct {
+  int32 textureLayerSize;   // including this int
+  MDLTEXOP blendMode;
+  MDLGEO shadingFlags;
+  int32 textureID;
+  int32 textureAnimationID;
+  int32 coordID;
+  float alpha;
+  float emissiveGain;
+  #if version == 1000
+       float unk1[3];
+       int32 unk2[2];       // 0 filled
+  #endif
+  <a href="#KMTE">KMTE</a> emissiveKeys;
+  <a href="#KMTA">KMTA</a> alphaKeys;
+  <a href="#KMTF">KMTF</a> textureLayerKeys;
+} TEXTURELAYER;
+</pre>
+<h3><span class="mw-headline" id="KMTE">KMTE</span></h3>
+<p>Material alpha track
+</p>
+<pre>struct KMTE
+{
+  char tag[4]; // KMTE
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; emissiveKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KMTA">KMTA</span></h3>
+<p>Material alpha track
+</p>
+<pre>struct KMTA
+{
+  char tag[4]; // KMTA
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; alphaKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KMTF">KMTF</span></h3>
+<p>Material flipbook texture track
+</p>
+<pre>struct KMTF
+{
+  char tag[4]; // KMTF
+  <a href="#MDLSIMPLEKEYTRACK">MDLSIMPLEKEYTRACK</a>&lt;MDLINTKEY&gt; flipKeys;
+};
+</pre>
+<h2><span class="mw-headline" id="TEXS">TEXS</span></h2>
+<p>Textures. The client reads <tt>MDLTEXTURESECTION</tt>s until chunk.size bytes have been read.
+</p>
+<pre>struct TEXS
+{
+  MDLTEXTURESECTION textures[chunk.size / sizeof(MDLTEXTURESECTION)];
+};
+
+struct MDLTEXTURESECTION
+{
+  #if WC3 Reforged
+     char texturePath[268];   // string followed by 0's till 268
+  #else
+     REPLACEABLE_MATERIAL_IDS replaceableId;   // used for texture variations or 0 for none
+     char image[0x104];                        // 0 filled when replaceableId is set
+     uint32_t flags;                           // &amp;1: wrap width, &amp;2: wrap height
+  #endif
+};
+
+enum REPLACEABLE_MATERIAL_IDS&#160;: uint32_t
+{
+  TEX_COMPONENT_SKIN = 0x1,
+  TEX_COMPONENT_OBJECT_SKIN = 0x2,
+  TEX_COMPONENT_WEAPON_BLADE = 0x3,
+  TEX_COMPONENT_WEAPON_HANDLE = 0x4,
+  TEX_COMPONENT_ENVIRONMENT = 0x5,
+  TEX_COMPONENT_CHAR_HAIR = 0x6,
+  TEX_COMPONENT_CHAR_FACIAL_HAIR = 0x7,
+  TEX_COMPONENT_SKIN_EXTRA = 0x8,
+  TEX_COMPONENT_UI_SKIN = 0x9,
+  TEX_COMPONENT_TAUREN_MANE = 0xA,
+  TEX_COMPONENT_MONSTER_1 = 0xB,
+  TEX_COMPONENT_MONSTER_2 = 0xC,
+  TEX_COMPONENT_MONSTER_3 = 0xD,
+  TEX_COMPONENT_ITEM_ICON = 0xE,
+  NUM_REPLACEABLE_MATERIAL_IDS = 0xF,
+};
+</pre>
+<h2><span class="mw-headline" id="TXAN">TXAN</span></h2>
+<p>Texture Animations.
+</p>
+<pre>struct TXAN
+{
+  uint32_t numTexAnims;
+  MDLTEXANIMSECTION textureAnims[numTexAnims];
+};
+
+struct MDLTEXANIMSECTION
+{
+  uint32_t size;
+  
+  <a href="#KTAT">KTAT</a> transkeys;
+  <a href="#KTAR">KTAR</a> rotkeys;
+  <a href="#KTAS">KTAS</a> scalekeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KTAT">KTAT</span></h3>
+<p>Texture animation translation track
+</p>
+<pre>struct KTAT
+{
+  char tag[4]; // KTAT
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a>&gt; transkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KTAR">KTAR</span></h3>
+<p>Texture animation rotation track
+</p>
+<pre>struct KTAR
+{
+  char tag[4]; // KTAR
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;<a href="#C4QuaternionCompressed">C4QuaternionCompressed</a>&gt; rotkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KTAS">KTAS</span></h3>
+<p>Texture animation scale track
+</p>
+<pre>struct KTAS
+{
+  char tag[4]; // KTAS
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a>&gt; scalekeys;
+};
+</pre>
+<h2><span class="mw-headline" id="GEOS">GEOS</span></h2>
+<p>Geosets.
+</p>
+<h3><span id="GEOS_.28.E2.89.A4_v1400.29"></span><span class="mw-headline" id="GEOS_(≤_v1400)">GEOS (≤ v1400)</span></h3>
+<pre>struct GEOS
+{
+  uint32_t numGeosets;                  // limited to 0xFF
+  MDLGEOSETSECTION geosets[numGeosets];
+};
+
+struct MDLGEOSETSECTION
+{
+  uint32_t size;
+  
+  <a href="#VRTX">VRTX</a> vertices;
+  <a href="#NRMS">NRMS</a> normals;
+  <a href="#UAVS">UAVS</a> texCoords;
+  MDLPRIMITIVES primitives;
+  <a href="#GNDX">GNDX</a> vertGroupIndices;
+  <a href="#MTGC">MTGC</a> groupMatrixCounts;
+  <a href="#MATS">MATS</a> matrices;
+  <a href="#BIDX">BIDX</a> boneIndices;
+  <a href="#BWGT">BWGT</a> boneWeights;
+  
+  uint32_t materialId;                  // <a href="#MTLS">MTLS</a> index
+  uint32_t selectionGroup;              // when formatted as four digits, the first two digits map to CHARACTER_GEOSET_SECTIONS, the second two digits are an associated sub-group
+                                        // see the related <a href="/M2/.skin#Mesh_part_ID" title="M2/.skin">M2 skin section</a> for more information
+  uint32_t flags;                       // &amp;1: unselectable
+  <a href="#CMdlBounds">CMdlBounds</a> bounds;
+  uint32_t numSeqBounds;
+  <a href="#CMdlBounds">CMdlBounds</a> seqBounds[numSeqBounds];
+};
+
+struct MDLPRIMITIVES
+{
+  <a href="#PTYP">PTYP</a> types;
+  <a href="#PCNT">PCNT</a> counts;
+  <a href="#PVTX">PVTX</a> vertices;
+};
+
+enum CHARACTER_GEOSET_SECTIONS
+{
+  CHARGEOSET_HAIR = 0x0,
+  CHARGEOSET_BEARD = 0x1,
+  CHARGEOSET_SIDEBURN = 0x2,
+  CHARGEOSET_MOUSTACHE = 0x3,
+  CHARGEOSET_GLOVE = 0x4,
+  CHARGEOSET_BOOT = 0x5,
+  CHARGEOSET_OBSOLETEDONTUSEME = 0x6,
+  CHARGEOSET_EAR = 0x7,
+  CHARGEOSET_SLEEVES = 0x8,
+  CHARGEOSET_PANTS = 0x9,
+  CHARGEOSET_DOUBLET = 0xA,
+  CHARGEOSET_PANTDOUBLET = 0xB,
+  CHARGEOSET_TABARD = 0xC,
+  CHARGEOSET_ROBE = 0xD,
+  CHARGEOSET_LOINCLOTH = 0xE,
+  NUM_CHARGEOSETS = 0xF,
+  CHARGEOSET_NONE = 0xFFFFFFFF,
+};
+</pre>
+<h3><span id="GEOS_.28v1500.29"></span><span class="mw-headline" id="GEOS_(v1500)">GEOS (v1500)</span></h3>
+<div class="wowdev-sectionbox" style="border-top: 1px dashed black; border-bottom: 1px dashed black; padding: 3px; background: #eee; font-size: 0.8em">This section only applies to version 1500.</div>
+<pre>struct GEOS
+{
+  uint32_t numGeosets;                  // limited to 0xFF
+  MDLGEOSETSECTION geosets[numGeosets];
+  MDLBATCH batches[numGeosets];
+};
+
+struct MDLGEOSETSECTION
+{
+   uint32_t materialId;
+   C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> boundsCentre;
+   float boundsRadius;
+   uint32_t selectionGroup;
+   uint32_t geosetIndex;
+   uint32_t flags;                  // &amp;1: unselectable, &amp;0x10: project2D, &amp;0x20: shaderSkin, other flags are unimplemented
+   
+   char vertexTag[4];               // PVTX
+   uint32_t vertexCount;
+   char primTypeTag[4];             // PTYP
+   uint32_t primitiveTypesCount;
+   char primVertexTag[4];           // PVTX (duplicated tag name, client doesn't validate them)
+   uint32_t primitiveVerticesCount;
+
+   uint64_t unused;                 // explicitly 0, ignored by client
+}
+
+struct MDLBATCH
+{
+   const MDLGEOSETSECTION geoset = GEOS.geosets[index];   // GEOS geoset of matching index
+   
+   MDLVERTEX vertices[geoset.vertexCount];
+   uint32_t primitiveType;  				  // always 0x3 (Triangle)
+   uint32_t unknown;  				          // always 0
+   
+   uint16_t numPrimVertices;  				  // matches geoset.primitiveVerticesCount
+   uint16_t minVertex;   
+   uint16_t maxVertex;
+   uint16_t unused;  				          // explicitly 0, ignored by client
+   
+   uint16_t primitiveVertices[numPrimVertices];   
+   
+ #if numPrimVertices&#160;% 8&#160;!= 0
+   uint16_t padding[x];     // alignment padding, calculated as <code>x = (8 - numPrimVertices&#160;% 8)</code>
+ #endif
+}
+
+struct MDLVERTEX            // same structure as <a href="/M2#Vertices" title="M2">M2Vertex</a>
+{
+   C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> position;
+   uint8_t boneWeights[4];
+   uint8_t boneIndices[4];
+   C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> normal;
+   C2Vector<a href="/Common_Types#C2Vector" title="Common Types">ⁱ</a> texCoords[2];  // second is always (0,0) in all beta files however use of both is supported
+}
+</pre>
+<h3><span id="GEOS_.28Reforged.29"></span><span class="mw-headline" id="GEOS_(Reforged)">GEOS (Reforged)</span></h3>
+<p>Reforged doesn't have a number of geosets, instead we read SUBMESHes till end of chunk.
+</p>
+<pre>struct GEOS
+{
+  SUBMESH submeshes[];
+};
+
+struct SUBMESH
+{
+  int32 submeshSize;    // including current int
+  <a href="#VRTX">VRTX</a> vertices;
+  <a href="#NRMS">NRMS</a> normals;
+  <a href="#PTYP">PTYP</a> types;
+  <a href="#PVTX">PVTX</a> vertices;
+  <a href="#GNDX">GNDX</a> vertGroupIndices;
+  <a href="#MTGC">MTGC</a> groupMatrixCounts;
+  <a href="#MATS">MATS</a> matrices;
+  <a href="#TANG">TANG</a> tangents;
+  <a href="#SKIN">SKIN</a> boneWeights;
+  <a href="#UVAS">UVAS</a> numberOfUVBS;               // Used to be texture coordinates in the original WC3, now just an int counting the number of UV layers
+  <a href="#UVBS">UVBS</a> texCoords;         // Chunk can be present twice when the mesh uses two uv layers UV0, UV1
+}
+
+</pre>
+<h3><span class="mw-headline" id="VRTX">VRTX</span></h3>
+<p>Vertices. Also used by <a href="#CLID">CLID</a>.
+</p>
+<pre>struct VRTX
+{
+  char tag[4]; // VRTX
+  uint32_t count; // limited to 0xFFFF
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> vertices[count]; 
+};
+</pre>
+<h3><span class="mw-headline" id="NRMS">NRMS</span></h3>
+<p>Normals. Also used by <a href="#CLID">CLID</a>.
+</p>
+<pre>struct NRMS
+{
+  char tag[4]; // NRMS
+  uint32_t count;
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> normals[count];
+};
+</pre>
+<h3><span class="mw-headline" id="UVAS">UVAS</span></h3>
+<p>Texture coordinates. The client uses UVAS.count * <a href="#VRTX">VRTX</a>.count to calculate how many C2Vectors to read
+</p>
+<pre>struct UVAS
+{
+  #if WC3 Reforged
+     int32 numberOfUVBS;
+  #else
+     char tag[4]; // UVAS
+     uint32_t count;
+     C2Vector<a href="/Common_Types#C2Vector" title="Common Types">ⁱ</a> texCoords[count * vertices.count];
+  #endif
+};
+</pre>
+<h3><span class="mw-headline" id="UVBS">UVBS</span></h3>
+<p>Texture coordinates. The client uses UVAS.count * <a href="#VRTX">VRTX</a>.count to calculate how many C2Vectors to read
+</p>
+<pre>struct UVAS
+{
+  char tag[4]; // UVBS
+  uint32_t count;
+  C2Vector<a href="/Common_Types#C2Vector" title="Common Types">ⁱ</a> texCoords[count];
+};
+</pre>
+<h3><span class="mw-headline" id="PTYP">PTYP</span></h3>
+<p>Primitive types. This is always 0x4 (Triangle) although the client appears to support all <tt>FACETYPE</tt>s
+</p>
+<pre>struct PTYP
+{
+  char tag[4]; // PTYP
+  uint32_t count;
+  FACETYPE primitiveTypes[count];
+};
+
+enum FACETYPE&#160;: uint8_t
+{
+  FACETYPE_POINTS = 0x0,
+  FACETYPE_LINES = 0x1,
+  FACETYPE_LINE_LOOP = 0x2,
+  FACETYPE_LINE_STRIP = 0x3,
+  FACETYPE_TRIANGLES = 0x4,
+  FACETYPE_TRIANGLE_STRIP = 0x5,
+  FACETYPE_TRIANGLE_FAN = 0x6,
+  FACETYPE_QUADS = 0x7,
+  FACETYPE_QUAD_STRIP = 0x8,
+  FACETYPE_POLYGON = 0x9
+};
+</pre>
+<h3><span class="mw-headline" id="PCNT">PCNT</span></h3>
+<p>Primitive counts. The number of uint16_ts used by <a href="#PVTX">PVTX</a> in each group
+</p>
+<pre>struct PCNT
+{
+  char tag[4]; // PCNT
+  uint32_t count;
+  uint32_t primitiveCounts[count];
+};
+</pre>
+<h3><span class="mw-headline" id="PVTX">PVTX</span></h3>
+<p>Primitive vertices
+</p>
+<pre>struct PVTX
+{
+  char tag[4]; // PVTX
+  uint32_t count;
+  uint16_t primitiveVertices[count];
+};
+</pre>
+<h3><span class="mw-headline" id="GNDX">GNDX</span></h3>
+<p>Vertex group indices
+</p>
+<pre>struct GNDX
+{
+  char tag[4]; // GNDX
+  uint32_t count;
+  uint8_t vertGroupIndices[count];
+};
+</pre>
+<h3><span class="mw-headline" id="MTGC">MTGC</span></h3>
+<p>Group matrix counts
+</p>
+<pre>struct MTGC
+{
+  char tag[4]; // MTGC
+  uint32_t count;
+  uint32_t groupMatrixCounts[count];
+};
+</pre>
+<h3><span class="mw-headline" id="MATS">MATS</span></h3>
+<p>Matrices
+</p>
+<pre>struct MATS
+{
+  char tag[4]; // MATS
+  uint32_t count;
+  uint32_t matrices[count];
+};
+</pre>
+<h3><span class="mw-headline" id="TANG">TANG</span></h3>
+<p>Vertex tangents
+</p>
+<pre>struct TANG
+{
+  char tag[4]; // TANG
+  uint32_t count;
+  C4Vector tangents[count];
+};
+</pre>
+<h3><span class="mw-headline" id="SKIN">SKIN</span></h3>
+<p>Vertex weights. Divide weight values by 255f to normalize.
+</p>
+<pre>struct SKIN
+{
+  char tag[4]; // SKIN
+  uint32_t count;
+  BONEWEIGHT weights[count / 8];
+};
+struct BONEWEIGHT
+{
+  byte boneIndex0;
+  byte boneIndex1;
+  byte boneIndex2;
+  byte boneIndex3;
+  byte weight0;
+  byte weight1;
+  byte weight2;
+  byte weight3;
+};
+</pre>
+<h3><span class="mw-headline" id="BIDX">BIDX</span></h3>
+<p>Bone indices
+</p>
+<pre>struct BIDX
+{
+  char tag[4]; // BIDX
+  uint32_t count;
+  uint32_t boneIndices[count];
+};
+</pre>
+<h3><span class="mw-headline" id="BWGT">BWGT</span></h3>
+<p>Bone weights
+</p>
+<pre>struct BWGT
+{
+  char tag[4]; // BWGT
+  uint32_t count;
+  uint32_t boneWeights[count];
+};
+</pre>
+<h2><span class="mw-headline" id="GEOA">GEOA</span></h2>
+<p>Geoset animations
+</p>
+<pre>struct GEOA
+{
+  uint32_t numGeoAnims;
+  MDLGEOSETANIMSECTION geosetAnims[numGeoAnims];
+};
+ 
+struct MDLGEOSETANIMSECTION
+{
+  uint32_t size;
+  uint32_t geosetId;        // <a href="#GEOS">GEOS</a> index or 0xFFFFFFFF if none
+  float staticAlpha;        // 0 is transparent, 1 is opaque
+  <a href="#C3Color">C3Color</a> staticColor;
+  uint32_t flags;           // &amp;1: color
+  
+  <a href="#KGAO">KGAO</a> alphaKeys;
+  <a href="#KGAC">KGAC</a> colorKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KGAO">KGAO</span></h3>
+<p>Animated geoset alpha track
+</p>
+<pre>struct KGAO
+{
+  char tag[4]; // KGAO
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; alphaKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KGAC">KGAC</span></h3>
+<p>Animated geoset color track
+</p>
+<pre>struct KGAC
+{
+  char tag[4]; // KGAC
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;<a href="#C3Color">C3Color</a>&gt; colorKeys;
+};
+       
+</pre>
+<h2><span class="mw-headline" id="BONE">BONE</span></h2>
+<p>Bones
+</p>
+<pre>struct BONE
+{
+  #if WC3 Reforged
+     MDLBONESECTION bones[];   // Reforged doesn't have a bone count, read till end of chunk
+  #else
+     uint32_t numBones;
+     MDLBONESECTION bones[numBones];
+  #end
+};
+
+struct MDLBONESECTION&#160;: MDLGENOBJECT
+{
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  uint32_t geosetId;       // <a href="#GEOS">GEOS</a> index or 0xFFFFFFFF if none
+  uint32_t geosetAnimId;   // <a href="#GEOA">GEOA</a> index or 0xFFFFFFFF if none
+};
+</pre>
+<h2><span class="mw-headline" id="LITE">LITE</span></h2>
+<p>Lights.
+</p>
+<pre>struct LITE
+{
+  uint32_t numLights;
+  MDLLIGHTSECTION lights[numLights];
+};
+
+struct MDLLIGHTSECTION&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  LIGHT_TYPE type;
+  float staticAttenStart;
+  float staticAttenEnd;
+  <a href="#C3Color">C3Color</a> staticColor;
+  float staticIntensity;  
+  <a href="#C3Color">C3Color</a> staticAmbColor;
+  float staticAmbIntensity;
+  
+  <a href="#KLAS">KLAS</a> attenstartkeys;
+  <a href="#KLAE">KLAE</a> attenendkeys;
+  <a href="#KLAC">KLAC</a> colorkeys;
+  <a href="#KLAI">KLAI</a> intensitykeys;
+  <a href="#KLBC">KLBC</a> ambcolorkeys;
+  <a href="#KLBI">KLBI</a> ambintensitykeys;
+  <a href="#KVIS">KVIS</a> visibilityKeys;
+};
+
+enum LIGHT_TYPE&#160;: uint32_t
+{
+  LIGHTTYPE_OMNI = 0x0,
+  LIGHTTYPE_DIRECT = 0x1,
+  LIGHTTYPE_AMBIENT = 0x2,
+  NUM_MDL_LIGHT_TYPES = 0x3,
+};
+</pre>
+<h3><span class="mw-headline" id="KLAS">KLAS</span></h3>
+<p>Light attenuation start track
+</p>
+<pre>struct KLAS
+{
+  char tag[4]; // KLAS
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; attenstartkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KLAE">KLAE</span></h3>
+<p>Light attenuation end track
+</p>
+<pre>struct KLAE
+{
+  char tag[4]; // KLAE
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; attenendkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KLAC">KLAC</span></h3>
+<p>Light color track
+</p>
+<pre>struct KLAC
+{
+  char tag[4]; // KLAC
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;<a href="#C3Color">C3Color</a>&gt; colorkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KLAI">KLAI</span></h3>
+<p>Light intensity track
+</p>
+<pre>struct KLAI
+{
+  char tag[4]; // KLAI
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; intensitykeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KLBC">KLBC</span></h3>
+<p>Light ambience color track
+</p>
+<pre>struct KLBC
+{
+  char tag[4]; // KLBC
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;<a href="#C3Color">C3Color</a>&gt; ambcolorkeys
+};
+</pre>
+<h3><span class="mw-headline" id="KLBI">KLBI</span></h3>
+<p>Light ambient intensity track
+</p>
+<pre>struct KLBI
+{
+  char tag[4]; // KLBI
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; ambintensitykeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KVIS">KVIS</span></h3>
+<p>Visiblity track. <b>Note:</b> Unlike other tracks this one is used globally. Values are boolean floats of 0.0 and 1.0 
+</p>
+<pre>struct KVIS
+{
+  char tag[4]; // KVIS
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; visibilityKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KATV">KATV</span></h3>
+<p>Visiblity track. Values are boolean floats of 0.0 and 1.0 
+</p>
+<pre>struct KATV
+{
+  char tag[4]; // KATV
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; visibilityKeys;
+};
+</pre>
+<h2><span class="mw-headline" id="HELP">HELP</span></h2>
+<p>Helpers.
+</p>
+<pre>struct HELP
+{
+  uint32_t count;
+  MDLGENOBJECT helpers[count];
+};
+</pre>
+<h2><span class="mw-headline" id="ATCH">ATCH</span></h2>
+<p>Attachment Points.
+</p>
+<pre>struct ATCH
+{
+  #if WC3 Reforged
+     MDLATTACHMENTSECTIONREFORGED attachments[];   // Reforged doesn't have an attachment count, read till end of chunk
+  #else
+     uint32_t numAttachments;
+     uint32_t unused;                 // has values but is ignored by the client
+     MDLATTACHMENTSECTION attachments[numAttachments];
+  #end
+};
+
+struct MDLATTACHMENTSECTION&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;             // MDLGENOBJECT.name is loosely the GEOCOMPONENTLINKS enum
+  
+  GEOCOMPONENTLINKS attachmentId;
+  uint8_t padding;
+  char path[0x104];                // 0 filled in all alpha files
+  
+  <a href="#KVIS">KVIS</a> visibilityKeys;
+};
+</pre>
+<pre>struct MDLATTACHMENTSECTIONREFORGED&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;             // MDLGENOBJECT.name is loosely the GEOCOMPONENTLINKS enum
+</pre>
+<pre>  <a href="#KATV">KATV</a> visibilityKeys;
+};
+
+enum GEOCOMPONENTLINKS&#160;: uint32_t
+{
+  ATTACH_SHIELD = 0x0,
+  ATTACH_HANDR = 0x1,
+  ATTACH_HANDL = 0x2,
+  ATTACH_ELBOWR = 0x3,
+  ATTACH_ELBOWL = 0x4,
+  ATTACH_SHOULDERR = 0x5,
+  ATTACH_SHOULDERL = 0x6,
+  ATTACH_KNEER = 0x7,
+  ATTACH_KNEEL = 0x8,
+  ATTACH_HIPR = 0x9,
+  ATTACH_HIPL = 0xA,
+  ATTACH_HELM = 0xB,
+  ATTACH_BACK = 0xC,
+  ATTACH_SHOULDERFLAPR = 0xD,
+  ATTACH_SHOULDERFLAPL = 0xE,
+  ATTACH_TORSOBLOODFRONT = 0xF,
+  ATTACH_TORSOBLOODBACK = 0x10,
+  ATTACH_BREATH = 0x11,
+  ATTACH_PLAYERNAME = 0x12,
+  ATTACH_UNITEFFECT_BASE = 0x13,
+  ATTACH_UNITEFFECT_HEAD = 0x14,
+  ATTACH_UNITEFFECT_SPELLLEFTHAND = 0x15,
+  ATTACH_UNITEFFECT_SPELLRIGHTHAND = 0x16,
+  ATTACH_UNITEFFECT_SPECIAL1 = 0x17,
+  ATTACH_UNITEFFECT_SPECIAL2 = 0x18,
+  ATTACH_UNITEFFECT_SPECIAL3 = 0x19,
+  ATTACH_SHEATH_MAINHAND = 0x1A,
+  ATTACH_SHEATH_OFFHAND = 0x1B,
+  ATTACH_SHEATH_SHIELD = 0x1C,
+  ATTACH_PLAYERNAMEMOUNTED = 0x1D,
+  ATTACH_LARGEWEAPONLEFT = 0x1E,
+  ATTACH_LARGEWEAPONRIGHT = 0x1F,
+  ATTACH_HIPWEAPONLEFT = 0x20,
+  ATTACH_HIPWEAPONRIGHT = 0x21,
+  ATTACH_TORSOSPELL = 0x22,
+  ATTACH_HANDARROW = 0x23,
+  NUM_ATTACH_SLOTS = 0x24,
+  ATTACH_NONE = 0xFFFFFFFF,
+};
+</pre>
+<h2><span class="mw-headline" id="PIVT">PIVT</span></h2>
+<p>Pivot points. The client reads C3Vectors until chunk.size bytes have been read. PivotPoints are paired with <tt>MDLGENOBJECT</tt>s by matching indices.
+</p>
+<pre>struct PIVT
+{
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> pivotPoints[chunk.size / 0xC];	 
+};
+</pre>
+<h2><span class="mw-headline" id="PREM">PREM</span></h2>
+<p>Particle emitters. <b>Note:</b> This is deprecated use <a href="#PRE2">PRE2</a> instead.
+</p>
+<pre>struct PREM
+{ 
+  uint32_t numEmitters;
+  MDLPARTICLEEMITTER emitters[numEmitters];
+};
+
+struct MDLPARTICLEEMITTER&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  float staticEmissionRate;  
+  float staticGravity;  
+  float staticLongitude;
+  float staticLatitude;
+  MDLPARTICLE particle;
+  
+  <a href="#KPEE">KPEE</a> emissionRate;
+  <a href="#KPEG">KPEG</a> gravity;
+  <a href="#KPLN">KPLN</a> longitude;
+  <a href="#KPLT">KPLT</a> latitude;
+  <a href="#KVIS">KVIS</a> visibilityKeys;
+};
+
+struct MDLPARTICLE
+{
+  char path[0x104];       // model path
+  float staticLife;
+  float staticSpeed;
+  
+  <a href="#KPEL">KPEL</a> life;
+  <a href="#KPES">KPES</a> speed;
+};
+</pre>
+<h3><span class="mw-headline" id="KPEE">KPEE</span></h3>
+<p>Particle emitter emission rate track
+</p>
+<pre>struct KPEE
+{
+  char tag[4]; // KPEE
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; emissionRate;
+};
+</pre>
+<h3><span class="mw-headline" id="KPEG">KPEG</span></h3>
+<p>Particle emitter particle gravity track
+</p>
+<pre>struct KPEG
+{
+  char tag[4]; // KPEG
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; gravity;
+};
+</pre>
+<h3><span class="mw-headline" id="KPLT">KPLT</span></h3>
+<p>Particle emitter particle latitude track
+</p>
+<pre>struct KPLT
+{
+  char tag[4]; // KPLT
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; latitude;
+};
+</pre>
+<h3><span class="mw-headline" id="KPEL">KPEL</span></h3>
+<p>Particle emitter particle life track
+</p>
+<pre>struct KPEL
+{
+  char tag[4]; // KPEL
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; life;
+};
+</pre>
+<h3><span class="mw-headline" id="KPES">KPES</span></h3>
+<p>Particle emitter particle speed track
+</p>
+<pre>struct KPES
+{
+  char tag[4]; // KPES
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; speed;
+};
+</pre>
+<h2><span class="mw-headline" id="CAMS">CAMS</span></h2>
+<p>Cameras.
+</p>
+<pre>struct CAMS
+{
+  uint32_t numCameras;
+  MDLCAMERASECTION cameras[numCameras];   
+};
+
+struct MDLCAMERASECTION
+{
+  uint32_t size;
+  char name[0x50];        // common names are CameraPortrait, Portrait and Paperdoll
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> pivot;
+  float fieldOfView;      // default is 0.9500215
+  float farClip;          // default is 27.7777786
+  float nearClip;         // default is 0.222222224
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> targetPivot;
+  
+  <a href="#KCTR">KCTR</a> transkeys;
+  <a href="#KCRL">KCRL</a> rollkeys;
+  <a href="#KVIS">KVIS</a> visibilityKeys;
+  <a href="#KTTR">KTTR</a> targettranskeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KCTR">KCTR</span></h3>
+<p>Camera translation track
+</p>
+<pre>struct KCTR
+{
+  char tag[4]; // KCTR
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a>&gt; transkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KCRL">KCRL</span></h3>
+<p>Camera roll track
+</p>
+<pre>struct KCRL
+{
+  char tag[4]; // KCRL
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; rollkeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KTTR">KTTR</span></h3>
+<p>Camera target translation track
+</p>
+<pre>struct KTTR
+{
+  char tag[4]; // KTTR
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a>&gt; targettranskeys;
+};
+</pre>
+<h2><span class="mw-headline" id="EVTS">EVTS</span></h2>
+<p>Events. For a complete list see the <a href="/M2#Possible_Events" title="M2">M2 events section</a>.
+</p>
+<pre>struct EVTS
+{
+  uint32_t numEventObjs;
+  MDLEVENTSECTION events[numEventObjs];
+};
+
+struct MDLEVENTSECTION&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  <a href="#KEVT">KEVT</a> eventKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KEVT">KEVT</span></h3>
+<p>Event time track
+</p>
+<pre>struct KEVT
+{
+  char tag[4]; // KEVT
+  <a href="#MDLSIMPLEKEYTRACK">MDLSIMPLEKEYTRACK</a>&lt;MDLEVENTKEY&gt; eventKeys;
+};
+</pre>
+<h2><span class="mw-headline" id="PRE2">PRE2</span></h2>
+<p>Particle Emitter 2, the successor of the <a href="#PREM">PREM</a> chunk.
+</p>
+<pre>struct PRE2
+{
+  #if WC3Reforged
+     MDLPARTICLEEMITTER2 emitters[];    // Reforged doesn't have a number of emitters, read till end of chunk
+  #else
+     uint32_t numEmitters;
+     MDLPARTICLEEMITTER2 emitters[numEmitters];
+  #end
+};
+
+struct MDLPARTICLEEMITTER2&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  #if !WC3Reforged
+     uint32_t emitterSize;
+     PARTICLE_EMITTER_TYPE emitterType;
+  #end
+  float staticSpeed;          // particleVelocity
+  float staticVariation;      // particleVelocityVariation, velocity multiplier. client adds 1.0 and multiplies by random multiplier
+  float staticLatitude;
+  #if !WC3Reforged
+     float staticLongitude;
+  #end
+  float staticGravity;        // particleAcceleration, only applied to the z axis
+  #if !WC3Reforged
+     float staticZsource;        // deducted from the particle starting z position. must be ≥ 0.0
+  #end
+  float staticLife;           // base particle lifespan in seconds
+  float staticEmissionRate;   // base amount of particles per second. client treats negatives as 0.0
+  float staticLength;         // height, for <tt>PET_SPLINE endAngle (multiplied by emissionRate)</tt>, for <tt>PET_SPHERE outerRadius</tt>
+  float staticWidth;          // width, for <tt>PET_SPLINE startAngle</tt>, for <tt>PET_SPHERE innerRadius</tt>
+  #if WC3Reforged
+     PARTICLE_BLEND_MODE blendMode;
+  #end
+  uint32_t rows;
+  uint32_t cols;
+  PARTICLE_TYPE type; 
+  float tailLength;
+  float middleTime;
+  <a href="#C3Color">C3Color</a> startColor;
+  <a href="#C3Color">C3Color</a> middleColor;
+  <a href="#C3Color">C3Color</a> endColor;
+  uint8_t startAlpha;
+  uint8_t middleAlpha;
+  uint8_t endAlpha;   
+  float startScale;
+  float middleScale;
+  float endScale;
+  uint32_t lifespanUVAnimStart;
+  uint32_t lifespanUVAnimEnd;
+  uint32_t lifespanUVAnimRepeat;
+  uint32_t decayUVAnimStart;
+  uint32_t decayUVAnimEnd;
+  uint32_t decayUVAnimRepeat;
+  uint32_t tailUVAnimStart;
+  uint32_t tailUVAnimEnd;
+  uint32_t tailUVAnimRepeat;
+  uint32_t tailDecayUVAnimStart;
+  uint32_t tailDecayUVAnimEnd;
+  uint32_t tailDecayUVAnimRepeat;
+  #if !WC3Reforged
+     PARTICLE_BLEND_MODE blendMode;
+  #end
+  uint32_t textureId;         // <a href="#TEXS">TEXS</a> index or 0xFFFFFFFF if none
+  #if WC3Reforged
+     int32_t squirts;
+  #end
+  int32_t priorityPlane;      // priority is sorted lowest to highest
+  uint32_t replaceableId;     // only seen in <tt>Wisp.mdx</tt>
+  #if !WC3Reforged
+     char geometryMdl[0x104];    // particle model
+     char recursionMdl[0x104];  
+     float twinkleFPS;           // default is 10.0
+     float twinkleOnOff;         // boolean, twinkle applies additional scaling to make a shrink and grow effect
+     float twinkleScaleMin;      // twinkle is not applied if <code>twinkleScaleMax - twinkleScaleMin == 0.0</code>
+     float twinkleScaleMax;
+     float ivelScale;            // instant velocity scale, multiplier for each particle's intial velocity
+     float tumblexMin;           // tumble adds a randomised rotation to each particle
+     float tumblexMax;
+     float tumbleyMin;
+     float tumbleyMax;
+     float tumblezMin;
+     float tumblezMax;
+     float drag;                 // decreases particle velocity over time
+     float spin;
+     C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> windVector;       // simulates being blown
+     float windTime;             // how long windVector is to be applied
+     float followSpeed1;
+     float followScale1;
+     float followSpeed2;
+     float followScale2;
+     uint32_t numSplines;
+     C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> spline[numSplines];
+     uint32_t squirts;           // boolean
+  #end   
+  #if WC3Reforged
+     <a href="#KP2V">KP2V</a> visibilityKeys;
+  #else
+     <a href="#KVIS">KVIS</a> visibilityKeys;
+  #end
+  <a href="#KP2S">KP2S</a> speed;
+  <a href="#KP2R">KP2R</a> variation;
+  <a href="#KP2L">KP2L</a> latitude;
+  <a href="#KPLN">KPLN</a> longitude;
+  <a href="#KP2G">KP2G</a> gravity;
+  <a href="#KLIF">KLIF</a> life;
+  <a href="#KP2E">KP2E</a> emissionRate;
+  <a href="#KP2W">KP2W</a> width;
+  <a href="#KP2N">KP2N</a> length;
+  <a href="#KP2Z">KP2Z</a> zsource;
+};
+
+enum PARTICLE_BLEND_MODE&#160;: uint32_t
+{
+  PBM_BLEND = 0x0,
+  PBM_ADD = 0x1,
+  PBM_MODULATE = 0x2,
+  PBM_MODULATE_2X = 0x3,
+  PBM_ALPHA_KEY = 0x4,
+  NUM_PARTICLE_BLEND_MODES = 0x5,
+};
+
+enum PARTICLE_TYPE&#160;: uint32_t
+{
+  PT_HEAD = 0x0,
+  PT_TAIL = 0x1,
+  PT_BOTH = 0x2,
+  NUM_PARTICLE_TYPES = 0x3,
+};
+
+enum PARTICLE_EMITTER_TYPE&#160;: uint32_t
+{
+  PET_BASE = 0x0,
+  PET_PLANE = 0x1,
+  PET_SPHERE = 0x2,
+  PET_SPLINE = 0x3,
+  NUM_PARTICLE_EMITTER_TYPES = 0x4,
+};
+</pre>
+<h3><span class="mw-headline" id="KP2V">KP2V</span></h3>
+<p>Particle emitter 2 visibility track
+</p>
+<pre>struct KP2V
+{
+  char tag[4]; // KP2V
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; visibility;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2S">KP2S</span></h3>
+<p>Particle emitter 2 speed track
+</p>
+<pre>struct KP2S
+{
+  char tag[4]; // KP2S
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; speed;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2R">KP2R</span></h3>
+<p>Particle emitter 2 variation track
+</p>
+<pre>struct KP2R
+{
+  char tag[4]; // KP2R
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; variation;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2L">KP2L</span></h3>
+<p>Particle emitter 2 latitude track
+</p>
+<pre>struct KP2L
+{
+  char tag[4]; // KP2L
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; latitude;
+};
+</pre>
+<h3><span class="mw-headline" id="KPLN">KPLN</span></h3>
+<p>Particle emitter 2 longitude track
+</p>
+<pre>struct KPLN
+{
+  char tag[4]; // KPLN
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; longitude;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2G">KP2G</span></h3>
+<p>Particle emitter 2 gravity track
+</p>
+<pre>struct KP2G
+{
+  char tag[4]; // KP2G
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; gravity;
+};
+</pre>
+<h3><span class="mw-headline" id="KLIF">KLIF</span></h3>
+<p>Particle emitter 2 life track
+</p>
+<pre>struct KLIF
+{
+  char tag[4]; // KLIF
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; life;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2E">KP2E</span></h3>
+<p>Particle emitter 2 emission rate track
+</p>
+<pre>struct KP2E
+{
+  char tag[4]; // KP2E
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; emissionRate; 
+};
+</pre>
+<h3><span class="mw-headline" id="KP2W">KP2W</span></h3>
+<p>Particle emitter 2 width track
+</p>
+<pre>struct KP2W
+{
+  char tag[4]; // KP2W
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; width;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2N">KP2N</span></h3>
+<p>Particle emitter 2 length track
+</p>
+<pre>struct KP2N
+{
+  char tag[4]; // KP2N
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; length;
+};
+</pre>
+<h3><span class="mw-headline" id="KP2Z">KP2Z</span></h3>
+<p>Particle emitter 2 zsource track
+</p>
+<pre>struct KP2Z
+{
+  char tag[4]; // KP2Z
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; zsource;
+};
+</pre>
+<h2><span class="mw-headline" id="CORN">CORN</span></h2>
+<p>Reforged uses a 3rd party particle emitter as well, named PopcornFX version 2. The chunk references the *.pkb (popcornfx baked files) as well as the attributes exposed in the pkb files.
+</p>
+<pre>struct CORN
+{
+  CORNEMITTER cornEmitter[];   // count is unknown, read to end.
+};
+</pre>
+<pre>struct CORNEMITTER
+{
+  uint32 emitterSize;         // including this int
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  C4Color colorMultiplier;   // the color is multiplied with the overall color of the particles
+  C4Color teamColor;         // default is (1,1,1,0) turned off, changes the color of some of the particles of some emitters (e.g: Wisp)
+  char filePath[260];        // the path to the .pkb file
+  char popcornFlags[260];    // comma separated flags (e.g: "Always=on" for emitters that are always on and aren't activated by animation tracks)
+  <a href="#KPPA">KPPA</a> alphaMultiplier;
+  <a href="#KPPC">KPPC</a> colorMultiplier;
+  <a href="#KPPE">KPPE</a> emissionRateMultiplier;
+  <a href="#KPPL">KPPL</a> lifespanMultiplier;
+  <a href="#KPPS">KPPS</a> speedMultiplier;
+  <a href="#KPPV">KPPV</a> visibility;  // on/off
+};
+</pre>
+<h3><span class="mw-headline" id="KPPA">KPPA</span></h3>
+<p>Popcorn emitter alpha multiplier
+</p>
+<pre>struct KPPA
+{
+  char tag[4]; // KPPA
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; alphaMultiplier;
+};
+</pre>
+<h3><span class="mw-headline" id="KPPC">KPPC</span></h3>
+<p>Popcorn emitter color multiplier
+</p>
+<pre>struct KPPC
+{
+  char tag[4]; // KPPC
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;C3Color&gt; colorMultiplier;
+};
+</pre>
+<h3><span class="mw-headline" id="KPPE">KPPE</span></h3>
+<p>Popcorn emitter emission rate multiplier
+</p>
+<pre>struct KPPE
+{
+  char tag[4]; // KPPE
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; emissionRateMultiplier;
+};
+</pre>
+<h3><span class="mw-headline" id="KPPL">KPPL</span></h3>
+<p>Popcorn emitter lifespan multiplier
+</p>
+<pre>struct KPPL
+{
+  char tag[4]; // KPPL
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; lifespanMultiplier;
+};
+</pre>
+<h3><span class="mw-headline" id="KPPS">KPPS</span></h3>
+<p>Popcorn emitter speed multiplier
+</p>
+<pre>struct KPPS
+{
+  char tag[4]; // KPPS
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; speedMultiplier;
+};
+</pre>
+<h3><span class="mw-headline" id="KPPV">KPPV</span></h3>
+<p>Popcorn emitter visibility
+</p>
+<pre>struct KPPV
+{
+  char tag[4]; // KPPV
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; visibility; // if 1 emitter is activated, if 0 emitter is deactivated
+};
+</pre>
+<h2><span class="mw-headline" id="HTST">HTST</span></h2>
+<p>Hit test shapes.
+</p>
+<pre>struct HTST
+{
+  uint32_t numHitTestShapes;
+  MDLHITTESTSHAPE hittestshapes[numHitTestShapes];
+};
+
+struct MDLHITTESTSHAPE&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  GEOM_SHAPE type;
+  
+ #if type == SHAPE_BOX:
+  MDLBOX box;
+ #elseif type == SHAPE_CYLINDER:
+  MDLCYLINDER cylinder;
+ #elseif type == SHAPE_SPHERE:
+  MDLSPHERE sphere;
+ #elseif type == SHAPE_PLANE:
+  MDLPLANE plane;
+ #endif
+};
+
+enum GEOM_SHAPE&#160;: uint8_t
+{
+  SHAPE_BOX = 0x0,
+  SHAPE_CYLINDER = 0x1,
+  SHAPE_SPHERE = 0x2,
+  SHAPE_PLANE = 0x3,
+  NUM_SHAPES = 0x4,
+};
+
+struct MDLBOX
+{
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> minimum;
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> maximum;
+};
+
+struct MDLCYLINDER
+{
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> base;
+  float height;
+  float radius;
+};
+
+struct MDLSPHERE
+{
+  C3Vector<a href="/Common_Types#C3Vector" title="Common Types">ⁱ</a> center;
+  float radius;
+};
+
+struct MDLPLANE
+{
+  float length;
+  float width;
+};
+</pre>
+<h2><span class="mw-headline" id="RIBB">RIBB</span></h2>
+<p>Ribbon emitter.
+</p>
+<pre>struct RIBB
+{
+  uint32_t numEmitters;
+  MDLRIBBONEMITTER emitters[numEmitters];
+};
+
+struct MDLRIBBONEMITTER&#160;: MDLGENOBJECT
+{
+  uint32_t size;
+  <a href="#MDLGENOBJECT">MDLGENOBJECT</a> object;
+  
+  uint32_t emitterSize;
+  float staticHeightAbove;        // must be ≥ 0.0
+  float staticHeightBelow;        // must be ≥ 0.0
+  float staticAlpha;              // 0 is transparent, 1 is opaque
+  <a href="#C3Color">C3Color</a> staticColor;
+  float edgeLifetime;             // in seconds. must be &gt; 0.0, client forces a minimum of 0.25s
+  uint32_t staticTextureSlot;
+  uint32_t edgesPerSecond;        // must be ≥ 1.0
+  uint32_t textureRows;
+  uint32_t textureCols;  
+  uint32_t materialId;            // <a href="#MTLS">MTLS</a> index
+  float gravity;  
+
+  <a href="#KRHA">KRHA</a> heightAbove;
+  <a href="#KRHB">KRHB</a> heightBelow;
+  <a href="#KRAL">KRAL</a> alphaKeys;
+  <a href="#KRCO">KRCO</a> colorKeys;
+  <a href="#KRTX">KRTX</a> textureSlot;               // unused by alpha files
+  <a href="#KVIS">KVIS</a> visibilityKeys;
+};
+
+</pre>
+<h3><span class="mw-headline" id="KRHA">KRHA</span></h3>
+<p>Ribbon emitter height above track
+</p>
+<pre>struct KRHA
+{
+  char tag[4]; // KRHA
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; heightAbove;
+};
+</pre>
+<h3><span class="mw-headline" id="KRHB">KRHB</span></h3>
+<p>Ribbon emitter height below track
+</p>
+<pre>struct KRHB
+{
+  char tag[4]; // KRHB
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; heightBelow;
+};
+</pre>
+<h3><span class="mw-headline" id="KRAL">KRAL</span></h3>
+<p>Ribbon emitter alpha track
+</p>
+<pre>struct KRAL
+{
+  char tag[4]; // KRAL
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;float&gt; alphaKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KRCO">KRCO</span></h3>
+<p>Ribbon emitter color track
+</p>
+<pre>struct KRCO
+{
+  char tag[4]; // KRCO
+  <a href="#MDLKEYTRACK">MDLKEYTRACK</a>&lt;<a href="#C3Color">C3Color</a>&gt; colorKeys;
+};
+</pre>
+<h3><span class="mw-headline" id="KRTX">KRTX</span></h3>
+<p>Ribbon emitter texture slot track
+</p>
+<pre>struct KRTX
+{
+  char tag[4]; // KRTX
+  <a href="#MDLSIMPLEKEYTRACK">MDLSIMPLEKEYTRACK</a>&lt;MDLINTKEY&gt; textureSlot;
+};
+
+</pre>
+<h2><span class="mw-headline" id="CLID">CLID</span></h2>
+<p>Collision.
+</p>
+<pre>struct MDLCOLLISION
+{
+  <a href="#VRTX">VRTX</a> vertices;
+  <a href="#TRI">TRI</a> triIndices; 
+  <a href="#NRMS">NRMS</a> facetNormals;
+};
+</pre>
+<h3><span class="mw-headline" id="TRI">TRI</span></h3>
+<p>Triangles
+</p>
+<pre>struct TRI
+{
+  char tag[4]; // 'TRI ' the space (ASCII char 32) is intentional
+  uint32_t count;
+  uint16_t triIndices[count];
+};
+</pre>
+<!-- 
+NewPP limit report
+Cached time: 20260721143842
+Cache expiry: 86400
+Reduced expiry: false
+Complications: [show‐toc]
+CPU time usage: 0.104 seconds
+Real time usage: 0.536 seconds
+Preprocessor visited node count: 1511/1000000
+Post‐expand include size: 5854/2097152 bytes
+Template argument size: 420/2097152 bytes
+Highest expansion depth: 12/100
+Expensive parser function count: 1/100
+Unstrip recursion depth: 0/20
+Unstrip post‐expand size: 9772/5000000 bytes
+-->
+<!--
+Transclusion expansion time report (%,ms,calls,template)
+100.00%  456.415      1 -total
+  2.50%   11.430      1 Template:SectionBox/VersionRange
+  2.03%    9.274      3 Template:Sandbox/VersionRange
+  2.02%    9.212      2 Template:SectionBox
+  1.25%    5.723     27 Template:Type
+  1.20%    5.496      5 Template:Sandbox/PrettyVersion
+-->
+
+<!-- Saved in parser cache with key wowdev-wikki:pcache:idhash:249-0!canonical and timestamp 20260721143842 and revision id 33150. Rendering was triggered because: diff-page
+ -->
+</div>
+<div class="printfooter" data-nosnippet="">Retrieved from "<a dir="ltr" href="https://wowdev.wiki/index.php?title=MDX&amp;oldid=33150">https://wowdev.wiki/index.php?title=MDX&amp;oldid=33150</a>"</div></div>
+		<div id="catlinks" class="catlinks" data-mw="interface"><div id="mw-normal-catlinks" class="mw-normal-catlinks"><a href="/Special:Categories" title="Special:Categories">Category</a>: <ul><li><a href="/Category:Format" title="Category:Format">Format</a></li></ul></div></div>
+	</div>
+</div>
+
+<div id="mw-navigation">
+	<h2>Navigation menu</h2>
+	<div id="mw-head">
+		
+<nav id="p-personal" class="mw-portlet mw-portlet-personal vector-user-menu-legacy vector-menu" aria-labelledby="p-personal-label"  >
+	<h3
+		id="p-personal-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Personal tools</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="pt-createaccount" class="mw-list-item"><a href="/index.php?title=Special:CreateAccount&amp;returnto=MDX" title="You are encouraged to create an account and log in; however, it is not mandatory"><span>Create account</span></a></li><li id="pt-login" class="mw-list-item"><a href="/index.php?title=Special:UserLogin&amp;returnto=MDX" title="You are encouraged to log in; however, it is not mandatory [o]" accesskey="o"><span>Log in</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+		<div id="left-navigation">
+			
+<nav id="p-namespaces" class="mw-portlet mw-portlet-namespaces vector-menu-tabs vector-menu-tabs-legacy vector-menu" aria-labelledby="p-namespaces-label"  >
+	<h3
+		id="p-namespaces-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Namespaces</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="ca-nstab-main" class="selected mw-list-item"><a href="/MDX" title="View the content page [c]" accesskey="c"><span>Page</span></a></li><li id="ca-talk" class="new mw-list-item"><a href="/index.php?title=Talk:MDX&amp;action=edit&amp;redlink=1" rel="discussion" class="new" title="Discussion about the content page (page does not exist) [t]" accesskey="t"><span>Discussion</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+			
+<nav id="p-variants" class="mw-portlet mw-portlet-variants emptyPortlet vector-menu-dropdown vector-menu" aria-labelledby="p-variants-label"  >
+	<input type="checkbox"
+		id="p-variants-checkbox"
+		role="button"
+		aria-haspopup="true"
+		data-event-name="ui.dropdown-p-variants"
+		class="vector-menu-checkbox"
+		aria-labelledby="p-variants-label"
+	>
+	<label
+		id="p-variants-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">English</span>
+	</label>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			
+		</ul>
+		
+	</div>
+</nav>
+
+		</div>
+		<div id="right-navigation">
+			
+<nav id="p-views" class="mw-portlet mw-portlet-views vector-menu-tabs vector-menu-tabs-legacy vector-menu" aria-labelledby="p-views-label"  >
+	<h3
+		id="p-views-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Views</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="ca-view" class="selected mw-list-item"><a href="/MDX"><span>Read</span></a></li><li id="ca-viewsource" class="mw-list-item"><a href="/index.php?title=MDX&amp;action=edit" title="This page is protected.&#10;You can view its source [e]" accesskey="e"><span>View source</span></a></li><li id="ca-history" class="mw-list-item"><a href="/index.php?title=MDX&amp;action=history" title="Past revisions of this page [h]" accesskey="h"><span>View history</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+			
+<nav id="p-cactions" class="mw-portlet mw-portlet-cactions emptyPortlet vector-menu-dropdown vector-menu" aria-labelledby="p-cactions-label"  title="More options" >
+	<input type="checkbox"
+		id="p-cactions-checkbox"
+		role="button"
+		aria-haspopup="true"
+		data-event-name="ui.dropdown-p-cactions"
+		class="vector-menu-checkbox"
+		aria-labelledby="p-cactions-label"
+	>
+	<label
+		id="p-cactions-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">More</span>
+	</label>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			
+		</ul>
+		
+	</div>
+</nav>
+
+			
+<div id="p-search" role="search" class="vector-search-box-vue  vector-search-box-show-thumbnail vector-search-box-auto-expand-width vector-search-box">
+	<h3 >Search</h3>
+	<form action="/index.php" id="searchform" class="vector-search-box-form">
+		<div id="simpleSearch"
+			class="vector-search-box-inner"
+			 data-search-loc="header-navigation">
+			<input class="vector-search-box-input"
+				 type="search" name="search" placeholder="Search wowdev" aria-label="Search wowdev" autocapitalize="sentences" title="Search wowdev [f]" accesskey="f" id="searchInput"
+			>
+			<input type="hidden" name="title" value="Special:Search">
+			<input id="mw-searchButton"
+				 class="searchButton mw-fallbackSearchButton" type="submit" name="fulltext" title="Search the pages for this text" value="Search">
+			<input id="searchButton"
+				 class="searchButton" type="submit" name="go" title="Go to a page with this exact name if it exists" value="Go">
+		</div>
+	</form>
+</div>
+
+		</div>
+	</div>
+	
+<div id="mw-panel" class="vector-legacy-sidebar">
+	<div id="p-logo" role="banner">
+		<a class="mw-wiki-logo" href="/Main_Page"
+			title="Visit the main page"></a>
+	</div>
+	
+<nav id="p-navigation" class="mw-portlet mw-portlet-navigation vector-menu-portal portal vector-menu" aria-labelledby="p-navigation-label"  >
+	<h3
+		id="p-navigation-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Navigation</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-Main-Page-/-Overview" class="mw-list-item"><a href="/Main_Page"><span>Main Page / Overview</span></a></li><li id="n-recentchanges" class="mw-list-item"><a href="/Special:RecentChanges" title="A list of recent changes in the wiki [r]" accesskey="r"><span>Recent changes</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+	
+<nav id="p-World" class="mw-portlet mw-portlet-World vector-menu-portal portal vector-menu" aria-labelledby="p-World-label"  >
+	<h3
+		id="p-World-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">World</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-ADT" class="mw-list-item"><a href="/ADT/v18"><span>ADT</span></a></li><li id="n-WDT" class="mw-list-item"><a href="/WDT"><span>WDT</span></a></li><li id="n-WDL" class="mw-list-item"><a href="/WDL"><span>WDL</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-Model" class="mw-portlet mw-portlet-Model vector-menu-portal portal vector-menu" aria-labelledby="p-Model-label"  >
+	<h3
+		id="p-Model-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Model</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-M3" class="mw-list-item"><a href="/M3"><span>M3</span></a></li><li id="n-M2" class="mw-list-item"><a href="/M2"><span>M2</span></a></li><li id="n-WMO" class="mw-list-item"><a href="/WMO"><span>WMO</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-Database" class="mw-portlet mw-portlet-Database vector-menu-portal portal vector-menu" aria-labelledby="p-Database-label"  >
+	<h3
+		id="p-Database-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Database</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-DBC" class="mw-list-item"><a href="/DBC"><span>DBC</span></a></li><li id="n-DB2" class="mw-list-item"><a href="/DB2"><span>DB2</span></a></li><li id="n-WDB" class="mw-list-item"><a href="/WDB"><span>WDB</span></a></li><li id="n-ADB-&amp;-DBCache" class="mw-list-item"><a href="/ADB"><span>ADB &amp; DBCache</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-Rendering" class="mw-portlet mw-portlet-Rendering vector-menu-portal portal vector-menu" aria-labelledby="p-Rendering-label"  >
+	<h3
+		id="p-Rendering-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Rendering</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-General" class="mw-list-item"><a href="/Rendering"><span>General</span></a></li><li id="n-M2-specific" class="mw-list-item"><a href="/M2/Rendering"><span>M2 specific</span></a></li><li id="n-WMO-specific" class="mw-list-item"><a href="/WMO/Rendering"><span>WMO specific</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-Patching_&amp;_files" class="mw-portlet mw-portlet-Patching_files vector-menu-portal portal vector-menu" aria-labelledby="p-Patching_&amp;_files-label"  >
+	<h3
+		id="p-Patching_&amp;_files-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Patching &amp; files</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-NGDP" class="mw-list-item"><a href="/NGDP"><span>NGDP</span></a></li><li id="n-TACT" class="mw-list-item"><a href="/TACT"><span>TACT</span></a></li><li id="n-CASC" class="mw-list-item"><a href="/CASC"><span>CASC</span></a></li><li id="n-MPQ" class="mw-list-item"><a href="/MPQ"><span>MPQ</span></a></li><li id="n-Ribbit" class="mw-list-item"><a href="/Ribbit"><span>Ribbit</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-Other" class="mw-portlet mw-portlet-Other vector-menu-portal portal vector-menu" aria-labelledby="p-Other-label"  >
+	<h3
+		id="p-Other-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Other</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-Community-Projects" class="mw-list-item"><a href="/Community_Projects"><span>Community Projects</span></a></li><li id="n-BLP" class="mw-list-item"><a href="/BLP"><span>BLP</span></a></li><li id="n-BLS" class="mw-list-item"><a href="/BLS"><span>BLS</span></a></li><li id="n-TEX-(Cata+)" class="mw-list-item"><a href="/TEX/v0"><span>TEX (Cata+)</span></a></li><li id="n-Model.blob-(WotLK+)" class="mw-list-item"><a href="/Model.blob"><span>Model.blob (WotLK+)</span></a></li><li id="n-random-&lt;-Vanilla" class="mw-list-item"><a href="/Alpha"><span>random &lt; Vanilla</span></a></li><li id="n-Client-internals" class="mw-list-item"><a href="/Category:Client"><span>Client internals</span></a></li><li id="n-ADT-==-WoWEdit" class="mw-list-item"><a href="/ADT/v23"><span>ADT == WoWEdit</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-DB_tables_by_expansion" class="mw-portlet mw-portlet-DB_tables_by_expansion vector-menu-portal portal vector-menu" aria-labelledby="p-DB_tables_by_expansion-label"  >
+	<h3
+		id="p-DB_tables_by_expansion-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">DB tables by expansion</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-All-versions" class="mw-list-item"><a href="/Category:DBC"><span>All versions</span></a></li><li id="n-Alpha" class="mw-list-item"><a href="/Category:DBC_Alpha"><span>Alpha</span></a></li><li id="n-Vanilla" class="mw-list-item"><a href="/Category:DBC_Vanilla"><span>Vanilla</span></a></li><li id="n-BC" class="mw-list-item"><a href="/Category:DBC_BC"><span>BC</span></a></li><li id="n-WotLK" class="mw-list-item"><a href="/Category:DBC_WotLK"><span>WotLK</span></a></li><li id="n-Cataclysm" class="mw-list-item"><a href="/Category:DBC_Cataclysm"><span>Cataclysm</span></a></li><li id="n-MoP" class="mw-list-item"><a href="/Category:DBC_MoP"><span>MoP</span></a></li><li id="n-WoD" class="mw-list-item"><a href="/Category:DBC_WoD"><span>WoD</span></a></li><li id="n-Legion" class="mw-list-item"><a href="/Category:DBC_Legion"><span>Legion</span></a></li><li id="n-BfA" class="mw-list-item"><a href="/Category:DBC_BfA"><span>BfA</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-DB_tables_by_version" class="mw-portlet mw-portlet-DB_tables_by_version vector-menu-portal portal vector-menu" aria-labelledby="p-DB_tables_by_version-label"  >
+	<h3
+		id="p-DB_tables_by_version-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">DB tables by version</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="n-8606-(2.4.3)" class="mw-list-item"><a href="/Category:2.4.3.8606"><span>8606 (2.4.3)</span></a></li><li id="n-8905-(3.0.2)" class="mw-list-item"><a href="/Category:3.0.2.8905"><span>8905 (3.0.2)</span></a></li><li id="n-9183-(3.0.3)" class="mw-list-item"><a href="/Category:3.0.3.9183"><span>9183 (3.0.3)</span></a></li><li id="n-9294-(3.0.5)" class="mw-list-item"><a href="/Category:3.0.5.9294"><span>9294 (3.0.5)</span></a></li><li id="n-9506-(3.0.8)" class="mw-list-item"><a href="/Category:3.0.8.9506"><span>9506 (3.0.8)</span></a></li><li id="n-9551-(3.0.9)" class="mw-list-item"><a href="/Category:3.0.9.9551"><span>9551 (3.0.9)</span></a></li><li id="n-12340-(3.3.5a)" class="mw-list-item"><a href="/Category:3.3.5.12340"><span>12340 (3.3.5a)</span></a></li><li id="n-13329-(4.0.3)" class="mw-list-item"><a href="/Category:4.0.3.13329"><span>13329 (4.0.3)</span></a></li><li id="n-18179-(6.0.1)" class="mw-list-item"><a href="/Category:6.0.1.18179"><span>18179 (6.0.1)</span></a></li><li id="n-21737-(7.0.1)" class="mw-list-item"><a href="/Category:7.0.1.21737"><span>21737 (7.0.1)</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+<nav id="p-tb" class="mw-portlet mw-portlet-tb vector-menu-portal portal vector-menu" aria-labelledby="p-tb-label"  >
+	<h3
+		id="p-tb-label"
+		
+		class="vector-menu-heading "
+	>
+		<span class="vector-menu-heading-label">Tools</span>
+	</h3>
+	<div class="vector-menu-content">
+		
+		<ul class="vector-menu-content-list">
+			
+			<li id="t-whatlinkshere" class="mw-list-item"><a href="/Special:WhatLinksHere/MDX" title="A list of all wiki pages that link here [j]" accesskey="j"><span>What links here</span></a></li><li id="t-recentchangeslinked" class="mw-list-item"><a href="/Special:RecentChangesLinked/MDX" rel="nofollow" title="Recent changes in pages linked from this page [k]" accesskey="k"><span>Related changes</span></a></li><li id="t-specialpages" class="mw-list-item"><a href="/Special:SpecialPages" title="A list of all special pages [q]" accesskey="q"><span>Special pages</span></a></li><li id="t-print" class="mw-list-item"><a href="javascript:print();" rel="alternate" title="Printable version of this page [p]" accesskey="p"><span>Printable version</span></a></li><li id="t-permalink" class="mw-list-item"><a href="/index.php?title=MDX&amp;oldid=33150" title="Permanent link to this revision of this page"><span>Permanent link</span></a></li><li id="t-info" class="mw-list-item"><a href="/index.php?title=MDX&amp;action=info" title="More information about this page"><span>Page information</span></a></li>
+		</ul>
+		
+	</div>
+</nav>
+
+	
+</div>
+
+</div>
+
+<footer id="footer" class="mw-footer" >
+	<ul id="footer-info">
+	<li id="footer-info-lastmod"> This page was last edited on 23 February 2021, at 18:50.</li>
+</ul>
+
+	<ul id="footer-places">
+	<li id="footer-places-privacy"><a href="/wowdev:Privacy_policy">Privacy policy</a></li>
+	<li id="footer-places-about"><a href="/wowdev:About">About wowdev</a></li>
+	<li id="footer-places-disclaimers"><a href="/wowdev:General_disclaimer">Disclaimers</a></li>
+</ul>
+
+	<ul id="" class="noprint">
+</ul>
+
+</footer>
+
+<script>(RLQ=window.RLQ||[]).push(function(){mw.config.set({"wgBackendResponseTime":258,"wgPageParseReport":{"limitreport":{"cputime":"0.104","walltime":"0.536","ppvisitednodes":{"value":1511,"limit":1000000},"postexpandincludesize":{"value":5854,"limit":2097152},"templateargumentsize":{"value":420,"limit":2097152},"expansiondepth":{"value":12,"limit":100},"expensivefunctioncount":{"value":1,"limit":100},"unstrip-depth":{"value":0,"limit":20},"unstrip-size":{"value":9772,"limit":5000000},"timingprofile":["100.00%  456.415      1 -total","  2.50%   11.430      1 Template:SectionBox/VersionRange","  2.03%    9.274      3 Template:Sandbox/VersionRange","  2.02%    9.212      2 Template:SectionBox","  1.25%    5.723     27 Template:Type","  1.20%    5.496      5 Template:Sandbox/PrettyVersion"]},"cachereport":{"timestamp":"20260721143842","ttl":86400,"transientcontent":false}}});});</script>
+<script>var _gaq=_gaq||[];_gaq.push(['_setAccount','UA-88399748-1']);_gaq.push(['_trackPageview']);(function(){var g=document.createElement('script');g.async=!0;g.src='https://ssl.google-analytics.com/ga.js';var s=document.getElementsByTagName('script')[0];s.parentNode.insertBefore(g,s);})();</script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a1f298282857e693',t:'MTc4NDcyNDg3MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Wc3ModelViewer.Core/Wc3ModelViewer.Core.csproj" />
+  <Project Path="Wc3ModelViewer/Wc3ModelViewer.csproj" />
+</Solution>

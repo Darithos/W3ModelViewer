@@ -1,0 +1,23 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+publish/
+
+# IDE / tooling
+.vs/
+.vscode/
+.claude/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Game content — never publish. Blizzard's copyrighted assets and anything
+# extracted from a local CASC install (models, textures, exported .m3 folders).
+*.m3
+*.mdx
+*.blp
+*.dds
+!native/*.dll
