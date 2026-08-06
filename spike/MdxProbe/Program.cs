@@ -183,6 +183,53 @@ if (args.Contains("--cutouts"))
     return 0;
 }
 
+// --effects [n] censuses the chunks the reader currently skips across n real models. Effects work
+// starts here rather than from the spec: it says which emitter chunks actually ship, how often, and
+// on which models — so the export path is built for the data that exists, not the format's full
+// surface. Prints per-chunk model counts and the worst offenders.
+if (args.Contains("--effects"))
+{
+    int ei = Array.IndexOf(args, "--effects");
+    int limit = ei + 1 < args.Length && int.TryParse(args[ei + 1], out int n) ? n : 400;
+    using var s = new Wc3Storage(install);
+    var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
+    var models = index.Models.Where(m => !m.IsPortrait).Take(limit).ToList();
+
+    var chunkModels = new Dictionary<string, int>(StringComparer.Ordinal);
+    var chunkBytes = new Dictionary<string, long>(StringComparer.Ordinal);
+    var carriers = new List<(string Name, string Chunks)>();
+    int parsed = 0;
+    foreach (var entry in models)
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel mdl;
+        try { mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        parsed++;
+        if (mdl.SkippedChunks.Count == 0) continue;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string entryText in mdl.SkippedChunks)
+        {
+            int paren = entryText.IndexOf('(');
+            string tag = paren < 0 ? entryText : entryText[..paren];
+            long bytes = paren < 0 ? 0 : long.Parse(entryText[(paren + 1)..^1]);
+            if (seen.Add(tag)) chunkModels[tag] = chunkModels.GetValueOrDefault(tag) + 1;
+            chunkBytes[tag] = chunkBytes.GetValueOrDefault(tag) + bytes;
+        }
+        carriers.Add((entry.RelativePath, string.Join(" ", mdl.SkippedChunks)));
+    }
+
+    Console.WriteLine($"--- skipped-chunk census over {parsed:N0} parsed models ---");
+    Console.WriteLine($"  {"chunk",-6} {"models",8} {"% of set",9} {"total bytes",14}");
+    foreach (var kv in chunkModels.OrderByDescending(k => k.Value))
+        Console.WriteLine($"  {kv.Key,-6} {kv.Value,8:N0} {kv.Value * 100.0 / parsed,8:0.0}% {chunkBytes[kv.Key],14:N0}");
+
+    Console.WriteLine("\n--- models carrying the most effect data ---");
+    foreach (var c in carriers.OrderByDescending(c => c.Chunks.Length).Take(12))
+        Console.WriteLine($"  {c.Name}\n      {c.Chunks}");
+    return 0;
+}
+
 // --audit <m3Path> re-reads a written .m3's texture references and reports whether each resolves
 // on disk next to the model (with the Assets/ head stripped, matching the paste-into-Assets layout).
 if (args.Contains("--audit"))
