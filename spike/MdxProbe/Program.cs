@@ -238,6 +238,185 @@ if (args.Contains("--effects"))
     return 0;
 }
 
+// --corn [n] answers one question with bytes: is Reforged's PopcornFX convertible at all? It reads
+// what every CORN emitter references, then checks whether the archive even contains the baked
+// effects those paths name. An emitter we cannot resolve to data is not a conversion problem.
+if (args.Contains("--corn"))
+{
+    int ci = Array.IndexOf(args, "--corn");
+    int limit = ci + 1 < args.Length && int.TryParse(args[ci + 1], out int cn) ? cn : 400;
+    using var s = new Wc3Storage(install);
+    var names = s.EnumerateAll();
+    var index = Wc3AssetIndex.FromNames(names);
+
+    var popcornAssets = names
+        .Where(n => Path.GetExtension(n).StartsWith(".pk", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+    Console.WriteLine($"--- archive: {names.Count:N0} files, {popcornAssets.Count:N0} with a .pk* extension ---");
+    foreach (var grp in popcornAssets.GroupBy(n => Path.GetExtension(n).ToLowerInvariant())
+                                     .OrderByDescending(g => g.Count()))
+        Console.WriteLine($"  {grp.Key,-8} {grp.Count(),6:N0}   e.g. {grp.First()}");
+
+    var refs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var flagSet = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    int emitters = 0, models = 0, dumped = 0;
+    foreach (var entry in index.Models.Where(m => !m.IsPortrait).Take(limit))
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        var corn = Chunks(raw).FirstOrDefault(c => c.Tag == "CORN");
+        if (corn.Tag is null) continue;
+        models++;
+
+        int p = corn.Start, end = corn.Start + corn.Size;
+        while (p + 8 <= end)
+        {
+            int inclusive = BitConverter.ToInt32(raw, p);
+            if (inclusive < 8 || p + inclusive > end) break;
+            int nodeSize = BitConverter.ToInt32(raw, p + 4);
+            int payload = p + 4 + nodeSize;                     // node is self-sizing; payload follows
+
+            // Locate the .pkb path by content rather than by a spec offset: the two C4Colors ahead
+            // of it are floats that could be anything, and a wrong offset here would read garbage
+            // that still looks like a string.
+            int at = -1;
+            for (int q = payload; q + 4 < p + inclusive; q++)
+                if (raw[q] == '.' && raw[q + 1] is (byte)'p' or (byte)'P'
+                    && raw[q + 2] is (byte)'k' or (byte)'K') { at = q; break; }
+            if (at < 0) { p += inclusive; continue; }
+            int start = at;
+            while (start > payload && raw[start - 1] >= 0x20 && raw[start - 1] < 0x7f) start--;
+            int stop = at;
+            while (stop < p + inclusive && raw[stop] >= 0x20 && raw[stop] < 0x7f) stop++;
+            string path = Encoding.ASCII.GetString(raw, start, stop - start);
+
+            // The flags string follows the 260-byte path field.
+            int flagsAt = start + 260;
+            string flags = "";
+            if (flagsAt < p + inclusive)
+            {
+                int fe = flagsAt;
+                while (fe < p + inclusive && raw[fe] >= 0x20 && raw[fe] < 0x7f) fe++;
+                flags = Encoding.ASCII.GetString(raw, flagsAt, fe - flagsAt);
+            }
+
+            emitters++;
+            refs[path] = refs.GetValueOrDefault(path) + 1;
+            if (flags.Length > 0) flagSet[flags] = flagSet.GetValueOrDefault(flags) + 1;
+            if (dumped < 4)
+            {
+                dumped++;
+                Console.WriteLine($"\n  {entry.RelativePath}");
+                Console.WriteLine($"    payload starts {start - payload} B before the path "
+                                + $"(spec says 32 = two C4Colors)");
+                Console.WriteLine($"    path  = {path}");
+                Console.WriteLine($"    flags = {flags}");
+            }
+            p += inclusive;
+        }
+    }
+
+    Console.WriteLine($"\n--- {emitters:N0} CORN emitters across {models:N0} models "
+                    + $"referencing {refs.Count:N0} distinct effects ---");
+    int present = 0;
+    foreach (var kv in refs.OrderByDescending(k => k.Value).Take(25))
+    {
+        // Models name the .pkfx *source*; the archive ships the .pkb *bake* of it.
+        string leaf = Path.GetFileNameWithoutExtension(kv.Key.Replace('/', '\\')) + ".pkb";
+        bool found = names.Any(n => n.EndsWith(leaf, StringComparison.OrdinalIgnoreCase));
+        if (found) present++;
+        Console.WriteLine($"  {(found ? "IN ARCHIVE" : "not found ")} {kv.Value,4}x  {kv.Key}");
+    }
+    Console.WriteLine($"\n  {present} of the top {Math.Min(25, refs.Count)} effects exist as files in the archive");
+    // What a bake actually contains decides whether "bake it in" is engineering or reverse
+    // engineering. Dump the head of one so the answer rests on bytes.
+    string? sample = names.FirstOrDefault(n => n.EndsWith(".pkb", StringComparison.OrdinalIgnoreCase));
+    if (sample is not null && s.TryReadFile(sample) is { } pkb)
+    {
+        Console.WriteLine($"\n--- {sample} ({pkb.Length:N0} bytes) ---");
+        for (int row = 0; row < 6; row++)
+        {
+            int off = row * 16;
+            if (off >= pkb.Length) break;
+            int n = Math.Min(16, pkb.Length - off);
+            string hex = string.Join(" ", Enumerable.Range(0, n).Select(k => pkb[off + k].ToString("x2")));
+            string txt = string.Concat(Enumerable.Range(0, n)
+                .Select(k => pkb[off + k] >= 0x20 && pkb[off + k] < 0x7f ? (char)pkb[off + k] : '.'));
+            Console.WriteLine($"  {off:x4}  {hex,-47}  {txt}");
+        }
+        var strings = new List<string>();
+        for (int q = 0, run = 0; q < pkb.Length; q++)
+        {
+            if (pkb[q] >= 0x20 && pkb[q] < 0x7f) run++;
+            else { if (run >= 6) strings.Add(Encoding.ASCII.GetString(pkb, q - run, run)); run = 0; }
+        }
+        // Float tables dominate the printable runs, so filter to runs that look like identifiers:
+        // a bake that names its node types and attributes is readable; one that does not is not.
+        var idents = strings.Where(t => t.Count(char.IsLetter) >= t.Length * 0.7)
+                            .Distinct(StringComparer.Ordinal).ToList();
+        Console.WriteLine($"  {strings.Count} printable runs, {idents.Count} identifier-like:");
+        foreach (string t in idents) Console.WriteLine($"    {t}");
+        var assets = strings.Where(t => t.Contains('/') || t.Contains('.', StringComparison.Ordinal)
+                                        && t.Any(char.IsLetter) && t.Count(char.IsLetter) > 4)
+                            .Distinct(StringComparer.Ordinal).ToList();
+        Console.WriteLine($"  {assets.Count} asset-like strings:");
+        foreach (string t in assets.Take(40)) Console.WriteLine($"    {t}");
+
+        // A converted effect is only as good as the sprites it draws. Sweep every bake for texture
+        // references and check them against the archive: if the art is missing, nothing else matters.
+        Console.WriteLine("\n--- texture references across all bakes ---");
+        var texRefs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int bakes = 0;
+        foreach (string pk in popcornAssets.Where(n => n.EndsWith(".pkb", StringComparison.OrdinalIgnoreCase)))
+        {
+            var data = s.TryReadFile(pk);
+            if (data is null) continue;
+            bakes++;
+            for (int q = 0, run = 0; q < data.Length; q++)
+            {
+                if (data[q] >= 0x20 && data[q] < 0x7f) { run++; continue; }
+                if (run >= 8)
+                {
+                    string t = Encoding.ASCII.GetString(data, q - run, run);
+                    foreach (string ext in (string[])[".tif", ".dds", ".tga", ".png"])
+                    {
+                        int e = t.IndexOf(ext, StringComparison.OrdinalIgnoreCase);
+                        if (e < 0) continue;
+                        string tp = t[..(e + ext.Length)];
+                        int cut = tp.LastIndexOfAny([':', '>', '<', '=', '"', '\'', '$', '!', '&']);
+                        if (cut >= 0) tp = tp[(cut + 1)..];
+                        texRefs[tp] = texRefs.GetValueOrDefault(tp) + 1;
+                    }
+                }
+                run = 0;
+            }
+        }
+        var lookup = new HashSet<string>(names.Select(n => n.Replace('\\', '/')), StringComparer.OrdinalIgnoreCase);
+        int resolved = texRefs.Keys.Count(t => Resolves(t, lookup));
+        Console.WriteLine($"  {bakes:N0} bakes -> {texRefs.Count:N0} distinct textures, "
+                        + $"{resolved:N0} resolve in the archive ({resolved * 100.0 / Math.Max(1, texRefs.Count):0.0}%)");
+        foreach (var kv in texRefs.OrderByDescending(k => k.Value).Take(12))
+            Console.WriteLine($"  {(Resolves(kv.Key, lookup) ? "ok     " : "MISSING")} {kv.Value,4}x  {kv.Key}");
+
+        static bool Resolves(string t, HashSet<string> lookup)
+        {
+            string leaf = t.Replace('\\', '/');
+            int slash = leaf.LastIndexOf('/');
+            string file = slash < 0 ? leaf : leaf[(slash + 1)..];
+            string stem = Path.GetFileNameWithoutExtension(file);
+            // WC3 stores these as .dds under war3.w3mod:_hd.w3mod:, whatever the bake calls them.
+            return lookup.Any(n => n.EndsWith("/" + stem + ".dds", StringComparison.OrdinalIgnoreCase)
+                                || n.EndsWith(":" + stem + ".dds", StringComparison.OrdinalIgnoreCase)
+                                || n.EndsWith("/" + file, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    Console.WriteLine("\n--- popcornFlags seen ---");
+    foreach (var kv in flagSet.OrderByDescending(k => k.Value).Take(15))
+        Console.WriteLine($"  {kv.Value,5}x  {kv.Key}");
+    return 0;
+}
+
 // --fx [n] parses n models and asserts every emitter field decodes to something physically sane.
 // A struct read at the wrong offset still produces numbers; the only way to know the layout is
 // right is to check those numbers mean something across the whole game rather than one model.
