@@ -274,8 +274,8 @@ public partial class MainWindow : Window
         int hidden = _geosetItems.Count - shown.Count;
         string hiddenNote = hidden > 0 ? $" (+{hidden} hidden)" : "";
         // Effects are called out per model because their absence is otherwise unexplainable: a
-        // Reforged HD model's effects are almost always PopcornFX, which this tool can neither draw
-        // nor export, and the viewport for one of those is simply empty. Saying so beats leaving
+        // Reforged HD model's effects are almost always PopcornFX, which this tool does not yet draw
+        // or export, and the viewport for one of those is simply empty. Saying so beats leaving
         // the user to wonder whether something is broken.
         var fx = new List<string>();
         if (model.ParticleEmitters.Count > 0) fx.Add($"{model.ParticleEmitters.Count} particle");

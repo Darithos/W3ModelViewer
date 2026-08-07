@@ -502,10 +502,11 @@ public sealed class MdxModel
     public List<MdxLight> Lights { get; } = [];
 
     /// <summary>
-    /// Reforged PopcornFX emitters (CORN). Only the count is tracked: the chunk references external
-    /// baked <c>.pkb</c> effect files through a third-party runtime, so there is nothing to convert
-    /// and nothing an exporter can honestly emit. Recorded so a dropped effect can be reported
-    /// rather than silently vanishing — a third of Warcraft III's effect models use these.
+    /// Reforged PopcornFX emitters (CORN). Only the count is tracked so far. The referenced
+    /// <c>.pkb</c> bakes do ship in the archive and their renderer, textures, shapes and curves are
+    /// readable, but per-particle behaviour is compiled bytecode that no fixed-field emitter can
+    /// reproduce. Recorded so a dropped effect can be reported rather than silently vanishing —
+    /// a third of Warcraft III's effect models use these.
     /// </summary>
     public int PopcornEmitterCount { get; set; }
 

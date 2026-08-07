@@ -57,9 +57,10 @@ public static class MdxReader
                                        (p, i) => ReadRibb(model, p, i)); break;
                 case "LITE": ReadNodes(model, r, MdxNodeKind.Light,
                                        (p, i) => ReadLite(model, p, i)); break;
-                // Reforged's PopcornFX emitters reference external baked .pkb effects through a
-                // third-party runtime. Nothing here converts, so only the count is kept — enough to
-                // tell the user what was dropped instead of silently losing a third of the effects.
+                // Reforged's PopcornFX emitters name a .pkfx effect whose .pkb bake does ship in the
+                // archive (see MdxProbe --corn), so this is unread rather than unreadable. Only the
+                // count is kept for now — enough to tell the user what was dropped instead of
+                // silently losing a third of the effects.
                 case "CORN": model.PopcornEmitterCount += CountCornEmitters(r); break;
                 case "PIVT": while (r.More) model.Pivots.Add(r.Vec3()); break;
                 case "CAMS": ReadCams(model, r); break;
@@ -619,9 +620,8 @@ public static class MdxReader
 
     /// <summary>
     /// Counts CORN entries by walking their inclusive sizes. The emitters themselves are not parsed
-    /// — each one points at an external baked PopcornFX <c>.pkb</c> that a third-party runtime owns,
-    /// so there is nothing to convert. The count exists purely so the exporter can say how many
-    /// effects it dropped.
+    /// yet — each names a PopcornFX effect whose bake ships in the archive but whose behaviour is
+    /// compiled bytecode. The count exists so the exporter can say how many effects it dropped.
     /// </summary>
     private static int CountCornEmitters(Cursor r)
     {

@@ -341,12 +341,13 @@ public sealed class M3Exporter
     /// </summary>
     private void BuildEffects(Casc.Wc3TextureCache textures, string modelCascName)
     {
-        // Reforged's PopcornFX emitters reference external baked .pkb effects owned by a
-        // third-party runtime. There is no honest conversion, so say so rather than let a third of
-        // Warcraft III's effect models silently lose their effects.
+        // Reforged's PopcornFX emitters point at .pkb bakes that do ship in the archive, but their
+        // per-particle behaviour is compiled bytecode with no mapping onto PAR_'s fixed fields. Not
+        // yet converted, so say so rather than let a third of Warcraft III's effect models silently
+        // lose their effects.
         if (_mdx.PopcornEmitterCount > 0)
             _log.Add($"{_mdx.PopcornEmitterCount} PopcornFX (CORN) emitter(s) dropped — Reforged's "
-                     + "third-party effect system has no StarCraft II equivalent");
+                     + "own effect system, not yet converted");
 
         if (!_opt.ExportEffects)
         {
