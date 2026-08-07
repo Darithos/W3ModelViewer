@@ -230,6 +230,79 @@ if (args.Contains("--effects"))
     return 0;
 }
 
+// --fx [n] parses n models and asserts every emitter field decodes to something physically sane.
+// A struct read at the wrong offset still produces numbers; the only way to know the layout is
+// right is to check those numbers mean something across the whole game rather than one model.
+if (args.Contains("--fx"))
+{
+    int fi = Array.IndexOf(args, "--fx");
+    int limit = fi + 1 < args.Length && int.TryParse(args[fi + 1], out int fn) ? fn : 600;
+    using var s = new Wc3Storage(install);
+    var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
+
+    int parsed = 0, withFx = 0, par = 0, rib = 0, lit = 0, corn = 0, bad = 0;
+    var complaints = new List<string>();
+    void Check(bool ok, string model, string what)
+    {
+        if (ok) return;
+        bad++;
+        if (complaints.Count < 25) complaints.Add($"  {model}: {what}");
+    }
+
+    foreach (var entry in index.Models.Where(m => !m.IsPortrait).Take(limit))
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel m;
+        try { m = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        parsed++;
+        if (!m.HasEffects) continue;
+        withFx++;
+        par += m.ParticleEmitters.Count; rib += m.RibbonEmitters.Count;
+        lit += m.Lights.Count; corn += m.PopcornEmitterCount;
+        string name = entry.RelativePath;
+
+        foreach (var e in m.ParticleEmitters)
+        {
+            Check(e.NodeIndex >= 0 && e.NodeIndex < m.Nodes.Count, name, $"{e.Name} node index {e.NodeIndex}");
+            Check(e.Rows is >= 1 and <= 64 && e.Columns is >= 1 and <= 64, name, $"{e.Name} sheet {e.Rows}x{e.Columns}");
+            Check(Enum.IsDefined(e.Blend), name, $"{e.Name} blend {(int)e.Blend}");
+            Check(Enum.IsDefined(e.ParticleType), name, $"{e.Name} type {(int)e.ParticleType}");
+            Check(e.TextureId >= -1 && e.TextureId < Math.Max(1, m.Textures.Count), name, $"{e.Name} texture {e.TextureId} of {m.Textures.Count}");
+            Check(e.Life is >= 0 and < 1000, name, $"{e.Name} life {e.Life}");
+            Check(e.EmissionRate is >= 0 and < 100000, name, $"{e.Name} rate {e.EmissionRate}");
+            Check(Sane(e.StartColor) && Sane(e.MiddleColor) && Sane(e.EndColor), name, $"{e.Name} colours out of 0..1");
+        }
+        foreach (var e in m.RibbonEmitters)
+        {
+            Check(e.MaterialId >= -1 && e.MaterialId < Math.Max(1, m.Materials.Count), name, $"{e.Name} material {e.MaterialId} of {m.Materials.Count}");
+            Check(e.EdgeLifetime is >= 0 and < 1000, name, $"{e.Name} edge life {e.EdgeLifetime}");
+            Check(e.Rows is >= 1 and <= 64 && e.Columns is >= 1 and <= 64, name, $"{e.Name} sheet {e.Rows}x{e.Columns}");
+            Check(Sane(e.Color), name, $"{e.Name} colour out of 0..1");
+        }
+        foreach (var e in m.Lights)
+        {
+            Check(Enum.IsDefined(e.LightType), name, $"{e.Name} light type {(int)e.LightType}");
+            Check(e.AttenuationEnd >= 0 && e.AttenuationEnd < 100000, name, $"{e.Name} atten end {e.AttenuationEnd}");
+            Check(Sane(e.Color), name, $"{e.Name} colour out of 0..1");
+        }
+    }
+
+    Console.WriteLine($"--- effect parse over {parsed:N0} models ({withFx:N0} carry effects) ---");
+    Console.WriteLine($"  particle emitters : {par:N0}");
+    Console.WriteLine($"  ribbon emitters   : {rib:N0}");
+    Console.WriteLine($"  lights            : {lit:N0}");
+    Console.WriteLine($"  popcorn (dropped) : {corn:N0}");
+    Console.WriteLine(bad == 0
+        ? "\n  every emitter field is within a sane range — layout confirmed"
+        : $"\n  {bad:N0} implausible values:");
+    foreach (string c in complaints) Console.WriteLine(c);
+    return bad == 0 ? 0 : 1;
+
+    static bool Sane(System.Numerics.Vector3 c) =>
+        c.X is >= -0.01f and <= 1.01f && c.Y is >= -0.01f and <= 1.01f && c.Z is >= -0.01f and <= 1.01f;
+}
+
 // --audit <m3Path> re-reads a written .m3's texture references and reports whether each resolves
 // on disk next to the model (with the Assets/ head stripped, matching the paste-into-Assets layout).
 if (args.Contains("--audit"))

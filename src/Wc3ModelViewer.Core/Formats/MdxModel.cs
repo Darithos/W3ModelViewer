@@ -59,6 +59,15 @@ public enum MdxNodeFlags
     ParticleEmitter = 0x1000,
     CollisionShape = 0x2000,
     RibbonEmitter = 0x4000,
+
+    // Flags from 0x8000 up are PRE2-only and change what the emitter does rather than what the
+    // node is. The two low ones are overloaded — they mean something else entirely on a PREM.
+    ParticleUnshaded = 0x8000,
+    ParticleSortFarZ = 0x10000,
+    LineEmitter = 0x20000,
+    ParticleUnfogged = 0x40000,
+    ParticleModelSpace = 0x80000,
+    ParticleInheritScale = 0x100000,
 }
 
 /// <summary>The Reforged HD texture slots, as bound by an HD layer's texture-slot table.</summary>
@@ -277,6 +286,140 @@ public sealed class MdxNode
     public override string ToString() => $"{Kind} '{Name}' (id {ObjectId}, parent {ParentId})";
 }
 
+/// <summary>How a particle's texture is combined with what is behind it.</summary>
+public enum MdxParticleBlend { Blend = 0, Add = 1, Modulate = 2, Modulate2X = 3, AlphaKey = 4 }
+
+/// <summary>Head sprites, a stretched tail, or both.</summary>
+public enum MdxParticleType { Head = 0, Tail = 1, Both = 2 }
+
+public enum MdxLightType { Omni = 0, Directional = 1, Ambient = 2 }
+
+/// <summary>
+/// Fields shared by everything that hangs off a node — the emitters and lights all reference the
+/// node that positions them rather than duplicating its transform.
+/// </summary>
+public abstract class MdxNodeAttachedObject
+{
+    /// <summary>Index into <see cref="MdxModel.Nodes"/> of the node carrying this object's transform.</summary>
+    public int NodeIndex { get; init; } = -1;
+
+    /// <summary>Emitters are switched on and off per sequence through this track.</summary>
+    public MdxTrack<float>? VisibilityTrack { get; init; }
+}
+
+/// <summary>
+/// A PRE2 particle emitter — the one Warcraft III actually uses (PREM is deprecated).
+/// </summary>
+/// <remarks>
+/// Build 2.0.4 ships one 171-byte form of this struct in both the SD and HD trees — not the two
+/// variants the published spec describes. <see cref="Longitude"/> is only ever set by the legacy
+/// PREM path. See <c>MdxReader.ReadPre2</c> for how that was established from real bytes.
+/// </remarks>
+public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
+{
+    public required string Name { get; init; }
+
+    public float Speed { get; init; }
+    public float Variation { get; init; }
+    public float Latitude { get; init; }
+    public float Longitude { get; init; }
+    public float Gravity { get; init; }
+    public float Life { get; init; }
+    public float EmissionRate { get; init; }
+    public float Length { get; init; }
+    public float Width { get; init; }
+
+    public MdxParticleBlend Blend { get; init; }
+    public int Rows { get; init; } = 1;
+    public int Columns { get; init; } = 1;
+    public MdxParticleType ParticleType { get; init; }
+    public float TailLength { get; init; }
+    public float MiddleTime { get; init; }
+
+    public Vector3 StartColor { get; init; } = Vector3.One;
+    public Vector3 MiddleColor { get; init; } = Vector3.One;
+    public Vector3 EndColor { get; init; } = Vector3.One;
+    public byte StartAlpha { get; init; } = 255;
+    public byte MiddleAlpha { get; init; } = 255;
+    public byte EndAlpha { get; init; } = 255;
+    public float StartScale { get; init; } = 1;
+    public float MiddleScale { get; init; } = 1;
+    public float EndScale { get; init; } = 1;
+
+    /// <summary>TEXS index, or -1. The particle sprite sheet.</summary>
+    public int TextureId { get; init; } = -1;
+    public int PriorityPlane { get; init; }
+    public int ReplaceableId { get; init; }
+    public bool Squirt { get; init; }
+
+    public MdxTrack<float>? SpeedTrack { get; init; }
+    public MdxTrack<float>? VariationTrack { get; init; }
+    public MdxTrack<float>? LatitudeTrack { get; init; }
+    public MdxTrack<float>? GravityTrack { get; init; }
+    public MdxTrack<float>? LifeTrack { get; init; }
+    public MdxTrack<float>? EmissionRateTrack { get; init; }
+    public MdxTrack<float>? WidthTrack { get; init; }
+    public MdxTrack<float>? LengthTrack { get; init; }
+
+    /// <summary>Unshaded particles ignore scene lighting — the usual choice for glows and fire.</summary>
+    public bool Unshaded { get; init; }
+    public bool Unfogged { get; init; }
+    public bool ModelSpace { get; init; }
+    public bool LineEmitter { get; init; }
+
+    public override string ToString() => $"PRE2 '{Name}' ({Blend}, {EmissionRate:0.#}/s, life {Life:0.##}s)";
+}
+
+/// <summary>A RIBB ribbon emitter — a trailing strip of quads, used for weapon trails and banners.</summary>
+public sealed class MdxRibbonEmitter : MdxNodeAttachedObject
+{
+    public required string Name { get; init; }
+
+    public float HeightAbove { get; init; }
+    public float HeightBelow { get; init; }
+    public float Alpha { get; init; } = 1;
+    public Vector3 Color { get; init; } = Vector3.One;
+
+    /// <summary>Seconds an emitted edge survives. The client clamps this to a 0.25 s minimum.</summary>
+    public float EdgeLifetime { get; init; }
+    public int TextureSlot { get; init; }
+    public int EdgesPerSecond { get; init; } = 1;
+    public int Rows { get; init; } = 1;
+    public int Columns { get; init; } = 1;
+
+    /// <summary>MTLS index — unlike a particle emitter, a ribbon draws through a real material.</summary>
+    public int MaterialId { get; init; } = -1;
+    public float Gravity { get; init; }
+
+    public MdxTrack<float>? HeightAboveTrack { get; init; }
+    public MdxTrack<float>? HeightBelowTrack { get; init; }
+    public MdxTrack<float>? AlphaTrack { get; init; }
+    public MdxTrack<Vector3>? ColorTrack { get; init; }
+
+    public override string ToString() => $"RIBB '{Name}' (mat {MaterialId}, {EdgesPerSecond}/s, {EdgeLifetime:0.##}s)";
+}
+
+/// <summary>A LITE light source.</summary>
+public sealed class MdxLight : MdxNodeAttachedObject
+{
+    public required string Name { get; init; }
+
+    public MdxLightType LightType { get; init; }
+    public float AttenuationStart { get; init; }
+    public float AttenuationEnd { get; init; }
+    public Vector3 Color { get; init; } = Vector3.One;
+    public float Intensity { get; init; }
+    public Vector3 AmbientColor { get; init; } = Vector3.One;
+    public float AmbientIntensity { get; init; }
+
+    public MdxTrack<float>? AttenuationStartTrack { get; init; }
+    public MdxTrack<float>? AttenuationEndTrack { get; init; }
+    public MdxTrack<Vector3>? ColorTrack { get; init; }
+    public MdxTrack<float>? IntensityTrack { get; init; }
+
+    public override string ToString() => $"LITE '{Name}' ({LightType}, range {AttenuationEnd:0.#})";
+}
+
 /// <summary>A camera. Cameras are not nodes — they carry no objectId, parentId or pivot.</summary>
 public sealed class MdxCamera
 {
@@ -313,6 +456,24 @@ public sealed class MdxModel
 
     /// <summary>Every node, in file order. <see cref="MdxNode.ObjectId"/> indexes <see cref="Pivots"/>.</summary>
     public List<MdxNode> Nodes { get; } = [];
+
+    // ---- effects. Each entry points back at the node in Nodes that positions it. ----
+
+    public List<MdxParticleEmitter2> ParticleEmitters { get; } = [];
+    public List<MdxRibbonEmitter> RibbonEmitters { get; } = [];
+    public List<MdxLight> Lights { get; } = [];
+
+    /// <summary>
+    /// Reforged PopcornFX emitters (CORN). Only the count is tracked: the chunk references external
+    /// baked <c>.pkb</c> effect files through a third-party runtime, so there is nothing to convert
+    /// and nothing an exporter can honestly emit. Recorded so a dropped effect can be reported
+    /// rather than silently vanishing — a third of Warcraft III's effect models use these.
+    /// </summary>
+    public int PopcornEmitterCount { get; set; }
+
+    /// <summary>True when the model carries anything the effect pipeline cares about.</summary>
+    public bool HasEffects => ParticleEmitters.Count > 0 || RibbonEmitters.Count > 0
+                              || Lights.Count > 0 || PopcornEmitterCount > 0;
 
     /// <summary>Tags of chunks the reader skipped, for diagnostics.</summary>
     public List<string> SkippedChunks { get; } = [];

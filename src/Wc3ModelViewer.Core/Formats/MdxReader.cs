@@ -49,6 +49,18 @@ public static class MdxReader
                 case "ATCH": ReadNodes(model, r, MdxNodeKind.Attachment); break;
                 case "EVTS": ReadNodes(model, r, MdxNodeKind.Event); break;
                 case "CLID": ReadNodes(model, r, MdxNodeKind.CollisionShape); break;
+                case "PRE2": ReadNodes(model, r, MdxNodeKind.ParticleEmitter2,
+                                       (p, i) => ReadPre2(model, p, i)); break;
+                case "PREM": ReadNodes(model, r, MdxNodeKind.ParticleEmitter,
+                                       (p, i) => ReadPrem(model, p, i)); break;
+                case "RIBB": ReadNodes(model, r, MdxNodeKind.RibbonEmitter,
+                                       (p, i) => ReadRibb(model, p, i)); break;
+                case "LITE": ReadNodes(model, r, MdxNodeKind.Light,
+                                       (p, i) => ReadLite(model, p, i)); break;
+                // Reforged's PopcornFX emitters reference external baked .pkb effects through a
+                // third-party runtime. Nothing here converts, so only the count is kept — enough to
+                // tell the user what was dropped instead of silently losing a third of the effects.
+                case "CORN": model.PopcornEmitterCount += CountCornEmitters(r); break;
                 case "PIVT": while (r.More) model.Pivots.Add(r.Vec3()); break;
                 case "CAMS": ReadCams(model, r); break;
                 default: model.SkippedChunks.Add($"{tag}({size})"); break;
@@ -357,7 +369,13 @@ public static class MdxReader
     /// Reads a chunk of nodes. Every node shares the same header; the extra fields that follow it
     /// depend on the kind, and are skipped by trusting the node's inclusive size.
     /// </summary>
-    private static void ReadNodes(MdxModel m, Cursor r, MdxNodeKind kind)
+    /// <summary>
+    /// Reads a chunk of hierarchy nodes. <paramref name="payload"/> lets an emitter chunk claim the
+    /// bytes between the end of the generic node and the end of its entry: emitters are nodes first
+    /// (they carry a transform and a place in the hierarchy) and effect data second.
+    /// </summary>
+    private static void ReadNodes(MdxModel m, Cursor r, MdxNodeKind kind,
+                                  Action<Cursor, int>? payload = null)
     {
         while (r.Remaining >= 4)
         {
@@ -417,9 +435,208 @@ public static class MdxReader
                 AttachmentId = attachmentId, AttachmentPath = attachPath,
             });
 
-            r.Seek(hasOuterSize && inclusive >= 4 ? start + inclusive : after);
+            int entryEnd = hasOuterSize && inclusive >= 4 ? start + inclusive : after;
+            if (payload is not null && entryEnd > after && entryEnd <= r.End)
+            {
+                // Hand the emitter its own bytes. A malformed payload must not desync the node
+                // walk, so the cursor is a sub-view and we seek past it either way.
+                try { payload(r.Sub(after, entryEnd - after), m.Nodes.Count - 1); }
+                catch (Exception e) when (e is InvalidDataException or ArgumentOutOfRangeException
+                                              or IndexOutOfRangeException) { }
+            }
+
+            r.Seek(entryEnd);
             if (r.Position <= start) break;                 // never loop on a malformed entry
         }
+    }
+
+    // ---------------------------------------------------------------- effects
+
+    /// <summary>
+    /// PRE2 particle emitter payload — 171 bytes, then the tracks.
+    /// </summary>
+    /// <remarks>
+    /// The published spec describes two forms of this struct, a "classic" one carrying an emitter
+    /// shape, longitude, zsource, two 260-byte model paths and trailing twinkle/tumble/wind/spline
+    /// blocks, and a shorter Reforged one. <b>Build 2.0.4 ships only the short form, in both the SD
+    /// and HD trees.</b> Verified against real bytes (<c>abilities\weapons\boatmissile</c>, SD): the
+    /// fields decode as a fire gradient — blend Add, an 8×8 sprite sheet, alphas 255/255/0 — and the
+    /// first track tag <c>KP2V</c> lands exactly 171 bytes in, which is only true with
+    /// <c>squirt</c> present and none of the classic block. Reading the spec's long form here would
+    /// desync every field. This matches the project's standing finding that Reforged 2.0 does not
+    /// match any published spec; trust the bytes.
+    /// </remarks>
+    private static void ReadPre2(MdxModel m, Cursor p, int nodeIndex)
+    {
+        float speed = p.F32(), variation = p.F32(), latitude = p.F32(), gravity = p.F32();
+        float life = p.F32(), emissionRate = p.F32(), length = p.F32(), width = p.F32();
+        var blend = (MdxParticleBlend)p.U32();
+
+        int rows = p.I32(), cols = p.I32();
+        var type = (MdxParticleType)p.U32();
+        float tailLength = p.F32(), middleTime = p.F32();
+
+        Vector3 c0 = p.Vec3(), c1 = p.Vec3(), c2 = p.Vec3();
+        byte a0 = p.U8(), a1 = p.U8(), a2 = p.U8();
+        float s0 = p.F32(), s1 = p.F32(), s2 = p.F32();     // unaligned by the three alpha bytes
+        p.Skip(48);                                         // 12 uint32 head/tail UV animation ranges
+
+        int textureId = p.I32();
+        bool squirt = p.I32() != 0;
+        int priorityPlane = p.I32();
+        int replaceableId = p.I32();
+
+        var flags = m.Nodes[nodeIndex].Flags;
+        var e = new MdxParticleEmitter2
+        {
+            Name = m.Nodes[nodeIndex].Name, NodeIndex = nodeIndex,
+            Speed = speed, Variation = variation, Latitude = latitude,
+            Gravity = gravity, Life = life, EmissionRate = emissionRate,
+            Length = length, Width = width,
+            Blend = blend, Rows = Math.Max(1, rows), Columns = Math.Max(1, cols),
+            ParticleType = type, TailLength = tailLength, MiddleTime = middleTime,
+            StartColor = c0, MiddleColor = c1, EndColor = c2,
+            StartAlpha = a0, MiddleAlpha = a1, EndAlpha = a2,
+            StartScale = s0, MiddleScale = s1, EndScale = s2,
+            TextureId = textureId, PriorityPlane = priorityPlane, ReplaceableId = replaceableId,
+            Squirt = squirt,
+            Unshaded = (flags & MdxNodeFlags.ParticleUnshaded) != 0,
+            Unfogged = (flags & MdxNodeFlags.ParticleUnfogged) != 0,
+            ModelSpace = (flags & MdxNodeFlags.ParticleModelSpace) != 0,
+            LineEmitter = (flags & MdxNodeFlags.LineEmitter) != 0,
+            SpeedTrack = FindFloatTrack(p, "KP2S"),
+            VariationTrack = FindFloatTrack(p, "KP2R"),
+            LatitudeTrack = FindFloatTrack(p, "KP2L"),
+            GravityTrack = FindFloatTrack(p, "KP2G"),
+            LifeTrack = FindFloatTrack(p, "KLIF"),
+            EmissionRateTrack = FindFloatTrack(p, "KP2E"),
+            WidthTrack = FindFloatTrack(p, "KP2W"),
+            LengthTrack = FindFloatTrack(p, "KP2N"),
+            VisibilityTrack = FindFloatTrack(p, "KP2V") ?? FindFloatTrack(p, "KVIS"),
+        };
+        m.ParticleEmitters.Add(e);
+    }
+
+    /// <summary>
+    /// RIBB ribbon emitter payload — 52 bytes, then the tracks.
+    /// </summary>
+    /// <remarks>
+    /// The published spec puts an <c>emitterSize</c> uint32 in front of this block. Build 2.0.4 does
+    /// not: the payload begins directly at <c>heightAbove</c>. Reading the phantom field shifts
+    /// every subsequent one by four bytes, which is nearly invisible — the shifted colour channels
+    /// still land in 0..1 and the shifted material id still reads 0 whenever gravity is 0. It was
+    /// only caught because <c>MdxProbe --fx</c> range-checks every field across the whole game and
+    /// <c>tinkerrocketmissile</c> has gravity 50, which surfaced as a material id of 1112014848.
+    /// </remarks>
+    private static void ReadRibb(MdxModel m, Cursor p, int nodeIndex)
+    {
+        float above = p.F32(), below = p.F32(), alpha = p.F32();
+        var color = p.Vec3();
+        float edgeLifetime = p.F32();
+        int textureSlot = p.I32(), edgesPerSecond = p.I32();
+        int rows = p.I32(), cols = p.I32(), materialId = p.I32();
+        float gravity = p.F32();
+
+        m.RibbonEmitters.Add(new MdxRibbonEmitter
+        {
+            Name = m.Nodes[nodeIndex].Name, NodeIndex = nodeIndex,
+            HeightAbove = above, HeightBelow = below, Alpha = alpha, Color = color,
+            EdgeLifetime = edgeLifetime, TextureSlot = textureSlot,
+            EdgesPerSecond = Math.Max(1, edgesPerSecond),
+            Rows = Math.Max(1, rows), Columns = Math.Max(1, cols),
+            MaterialId = materialId, Gravity = gravity,
+            HeightAboveTrack = FindFloatTrack(p, "KRHA"),
+            HeightBelowTrack = FindFloatTrack(p, "KRHB"),
+            AlphaTrack = FindFloatTrack(p, "KRAL"),
+            ColorTrack = FindVec3Track(p, "KRCO"),
+            VisibilityTrack = FindFloatTrack(p, "KRVS") ?? FindFloatTrack(p, "KVIS"),
+        });
+    }
+
+    private static void ReadLite(MdxModel m, Cursor p, int nodeIndex)
+    {
+        var type = (MdxLightType)p.U32();
+        float attenStart = p.F32(), attenEnd = p.F32();
+        var color = p.Vec3();
+        float intensity = p.F32();
+        var ambColor = p.Vec3();
+        float ambIntensity = p.F32();
+
+        m.Lights.Add(new MdxLight
+        {
+            Name = m.Nodes[nodeIndex].Name, NodeIndex = nodeIndex,
+            LightType = type, AttenuationStart = attenStart, AttenuationEnd = attenEnd,
+            Color = color, Intensity = intensity,
+            AmbientColor = ambColor, AmbientIntensity = ambIntensity,
+            AttenuationStartTrack = FindFloatTrack(p, "KLAS"),
+            AttenuationEndTrack = FindFloatTrack(p, "KLAE"),
+            ColorTrack = FindVec3Track(p, "KLAC"),
+            IntensityTrack = FindFloatTrack(p, "KLAI"),
+            VisibilityTrack = FindFloatTrack(p, "KVIS"),
+        });
+    }
+
+    /// <summary>
+    /// The legacy PREM emitter. Its payload is read only far enough to place it: PREM emits *models*
+    /// rather than sprites, which has no SC2 counterpart, and it appears on 0.4% of models.
+    /// </summary>
+    private static void ReadPrem(MdxModel m, Cursor p, int nodeIndex)
+    {
+        float emissionRate = p.F32(), gravity = p.F32();
+        float longitude = p.F32(), latitude = p.F32();
+        p.Skip(260);                                        // model path — a PREM particle *is* a model
+        float life = p.F32(), speed = p.F32();
+
+        m.ParticleEmitters.Add(new MdxParticleEmitter2
+        {
+            Name = m.Nodes[nodeIndex].Name, NodeIndex = nodeIndex,
+            EmissionRate = emissionRate, Gravity = gravity, Longitude = longitude,
+            Latitude = latitude, Life = life, Speed = speed,
+            TextureId = -1,                                 // no sprite: nothing to draw or export
+            VisibilityTrack = FindFloatTrack(p, "KVIS"),
+        });
+    }
+
+    /// <summary>
+    /// Counts CORN entries by walking their inclusive sizes. The emitters themselves are not parsed
+    /// — each one points at an external baked PopcornFX <c>.pkb</c> that a third-party runtime owns,
+    /// so there is nothing to convert. The count exists purely so the exporter can say how many
+    /// effects it dropped.
+    /// </summary>
+    private static int CountCornEmitters(Cursor r)
+    {
+        int count = 0;
+        while (r.Remaining >= 4)
+        {
+            int start = r.Position;
+            int inclusive = r.I32();
+            if (inclusive < 8 || start + inclusive > r.End) break;
+            count++;
+            r.Seek(start + inclusive);
+            if (r.Position <= start) break;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Scans the remainder of an emitter payload for a named track. Emitter tracks are optional and
+    /// appear in a fixed order, but scanning rather than stepping means one unexpected or unknown
+    /// track cannot cost us the rest — which matters because Reforged reorders these.
+    /// </summary>
+    private static MdxTrack<float>? FindFloatTrack(Cursor p, string tag)
+    {
+        int at = p.FindTag(tag);
+        if (at < 0) return null;
+        var c = p.At(at);
+        return ReadFloatTrack(c);
+    }
+
+    private static MdxTrack<Vector3>? FindVec3Track(Cursor p, string tag)
+    {
+        int at = p.FindTag(tag);
+        if (at < 0) return null;
+        var c = p.At(at);
+        return ReadVec3Track(c);
     }
 
     private static void ReadCams(MdxModel m, Cursor r)
@@ -551,6 +768,23 @@ public static class MdxReader
         public void SkipToEnd() => Position = End;
         public Cursor Sub(int at, int len) => new(_d, at, Math.Min(len, _d.Length - at));
 
+        /// <summary>A cursor over this one's remaining bytes, starting at an absolute position.</summary>
+        public Cursor At(int position) => new(_d, position, End - position);
+
+        /// <summary>
+        /// Absolute position of a four-character tag at or after the current one, or -1. Emitter
+        /// payloads are scanned for their tracks rather than stepped through, so an unrecognised
+        /// or reordered track cannot cost the ones after it.
+        /// </summary>
+        public int FindTag(string tag)
+        {
+            for (int i = Position; i + 4 <= End; i++)
+                if (_d[i] == tag[0] && _d[i + 1] == tag[1] && _d[i + 2] == tag[2] && _d[i + 3] == tag[3])
+                    return i;
+            return -1;
+        }
+
+        public byte U8() => Position < End ? _d[Position++] : (byte)0;
         public uint U32() { uint v = BitConverter.ToUInt32(_d, Position); Position += 4; return v; }
         public int I32() { int v = BitConverter.ToInt32(_d, Position); Position += 4; return v; }
         public float F32() { float v = BitConverter.ToSingle(_d, Position); Position += 4; return v; }
