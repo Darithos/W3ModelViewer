@@ -281,13 +281,13 @@ public partial class MainWindow : Window
         if (model.ParticleEmitters.Count > 0) fx.Add($"{model.ParticleEmitters.Count} particle");
         if (model.RibbonEmitters.Count > 0) fx.Add($"{model.RibbonEmitters.Count} ribbon");
         if (model.Lights.Count > 0) fx.Add($"{model.Lights.Count} light");
-        string effects = fx.Count > 0 ? $", effects: {string.Join(" + ", fx)}" : "";
+        string effectNote = fx.Count > 0 ? $", effects: {string.Join(" + ", fx)}" : "";
         if (model.PopcornEmitterCount > 0)
-            effects += $", {model.PopcornEmitterCount} PopcornFX (not shown — Reforged's own system)";
+            effectNote += $", {model.PopcornEmitterCount} PopcornFX (not shown — Reforged's own system)";
 
         Status.Text = $"{entry.RelativePath}   —   {entry.ArtSet}, {shown.Count} geosets{hiddenNote}, " +
                       $"{shown.Sum(g => g.VertexCount):N0} verts, {shown.Sum(g => g.TriangleCount):N0} tris, " +
-                      $"{model.Sequences.Count} sequences{effects}";
+                      $"{model.Sequences.Count} sequences{effectNote}";
     }
 
     // ---------------- Geoset panel ----------------
