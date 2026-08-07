@@ -114,6 +114,18 @@ public sealed class MdxAnimator
     private delegate T Curve<T>(T a, T outTanA, T inTanB, T b, float t);
 
     /// <summary>Finds the key window and interpolates. Shared by every value type.</summary>
+    /// <summary>
+    /// Samples a float track the same way node transforms are sampled, honouring interpolation mode
+    /// and global sequences. Exposed for the emitter parameters that ride their own tracks
+    /// (emission rate, speed, ribbon heights) — see <see cref="MdxEffectSimulator"/>.
+    /// </summary>
+    public float SampleFloat(MdxTrack<float>? track, MdxSequence? seq, int timeMs, float rest, long? wallMs = null)
+        => Sample(track, seq, timeMs, wallMs ?? timeMs, rest, float.Lerp, HermiteF, BezierF);
+
+    /// <summary>Samples a vector track — emitter and ribbon colour tracks.</summary>
+    public Vector3 SampleVector(MdxTrack<Vector3>? track, MdxSequence? seq, int timeMs, Vector3 rest, long? wallMs = null)
+        => Sample(track, seq, timeMs, wallMs ?? timeMs, rest, Vector3.Lerp, Hermite, Bezier);
+
     private T Sample<T>(MdxTrack<T>? track, MdxSequence? seq, int timeMs, long wall,
                         T rest, Blend<T> lerp, Curve<T> hermite, Curve<T> bezier)
     {

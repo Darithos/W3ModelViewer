@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<GeosetItem> _geosetItems = [];
     private bool _suppressRebuild;                       // guards RebuildScene during bulk visibility changes
     private readonly List<SceneMesh> _sceneMeshes = [];  // meshes of the current scene
+    private EffectLayer? _effects;                       // particle and ribbon emitters, null when the model has none
 
     private MdxSequence? _sequence;                      // active sequence (null = rest pose)
     private bool _playing;
@@ -243,6 +244,9 @@ public partial class MainWindow : Window
         _cutoutCache.Clear();
         ClearAnimationUi();
 
+        var effects = new EffectLayer(model, textures, entry.CascName);
+        _effects = effects.HasAnything ? effects : null;
+
         // Default to LOD 0 — the full-detail mesh, and the one the exporter writes.
         var lods = model.LodLevels;
         _lod = lods.FirstOrDefault();
@@ -379,6 +383,7 @@ public partial class MainWindow : Window
         }
         foreach (var gm in cutoutModels) group.Children.Add(gm);   // cutouts after all opaque
         foreach (var gm in alphaModels) group.Children.Add(gm);    // then blended/additive
+        _effects?.AddTo(group);                                    // effects last: they add light over everything
 
         ModelHost.Content = group;
         if (zoom) Viewport.ZoomExtents(0);
@@ -486,6 +491,7 @@ public partial class MainWindow : Window
         _timeMs = 0;
         _playing = true;
         _lastTick = _clock.Elapsed;
+        _effects?.Reset();          // particles from the previous sequence must not bleed into this one
 
         _suppressAnimUi = true;
         LoopCheck.IsChecked = !seq.NonLooping;
@@ -541,11 +547,35 @@ public partial class MainWindow : Window
         }
 
         ApplyPose();
+        UpdateEffects((float)dt);
 
         _suppressAnimUi = true;
         FrameSlider.Value = _timeMs;
         if (!_playing) PlayButton.IsChecked = false;      // non-looping run ended
         _suppressAnimUi = false;
+    }
+
+    /// <summary>
+    /// Steps the emitters. Particles are billboarded here rather than in the simulator because
+    /// facing depends on the camera, which the simulator has no business knowing about.
+    /// </summary>
+    private void UpdateEffects(float dt)
+    {
+        if (_effects is null || _model is null || _animator is null || _sequence is null) return;
+
+        var look = new Vector3D(0, 1, 0);
+        var camUp = new Vector3D(0, 0, 1);
+        if (Viewport.Camera is ProjectionCamera cam) { look = cam.LookDirection; camUp = cam.UpDirection; }
+
+        var right = Vector3D.CrossProduct(look, camUp);
+        if (right.LengthSquared < 1e-9) right = new Vector3D(1, 0, 0); else right.Normalize();
+        var up = Vector3D.CrossProduct(right, look);
+        if (up.LengthSquared < 1e-9) up = new Vector3D(0, 0, 1); else up.Normalize();
+
+        int t = _sequence.IntervalStart + (int)_timeMs;
+        _effects.Update(dt * (float)SpeedSlider.Value, _animator, _sequence, t, _wallMs,
+                        new Vector3((float)right.X, (float)right.Y, (float)right.Z),
+                        new Vector3((float)up.X, (float)up.Y, (float)up.Z));
     }
 
     /// <summary>Applies the current time to all meshes: skinning plus GEOA geoset visibility.</summary>

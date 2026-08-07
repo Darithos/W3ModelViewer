@@ -303,6 +303,46 @@ if (args.Contains("--fx"))
         c.X is >= -0.01f and <= 1.01f && c.Y is >= -0.01f and <= 1.01f && c.Z is >= -0.01f and <= 1.01f;
 }
 
+// --simfx <cascPath> [seconds] runs the viewer's effect simulation headlessly and reports what it
+// produced. Emitters are easy to "render" as nothing at all — a wrong cone, a zero rate or a
+// visibility track read backwards all just show an empty screen — so the numbers are checked here
+// rather than by squinting at the viewport.
+if (args.Contains("--simfx"))
+{
+    int si = Array.IndexOf(args, "--simfx");
+    string path = args[si + 1];
+    float seconds = si + 2 < args.Length && float.TryParse(args[si + 2], out float sec) ? sec : 3f;
+    using var s = new Wc3Storage(install);
+    var raw = s.TryReadFile(path);
+    if (raw is null) { Console.WriteLine($"not found: {path}"); return 1; }
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    Console.WriteLine($"{path}\n  {mdl.ParticleEmitters.Count} particle emitters, {mdl.RibbonEmitters.Count} ribbons, "
+                      + $"{mdl.Lights.Count} lights, {mdl.PopcornEmitterCount} popcorn (dropped)");
+    if (mdl.Sequences.Count == 0) { Console.WriteLine("  no sequences"); return 0; }
+
+    var animator = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
+    foreach (var seq in mdl.Sequences.Take(3))
+    {
+        var sim = new Wc3ModelViewer.Core.Formats.MdxEffectSimulator(mdl);
+        const float step = 1f / 30f;
+        int frames = Math.Max(1, (int)(seconds / step));
+        int peak = 0, peakEdges = 0;
+        double totalScale = 0; int sampled = 0;
+        for (int f = 0; f < frames; f++)
+        {
+            int t = seq.IntervalStart + (int)(f * step * 1000) % Math.Max(1, seq.DurationMs);
+            animator.Evaluate(seq, t, (long)(f * step * 1000));
+            sim.Update(step, animator, seq, t, (long)(f * step * 1000));
+            peak = Math.Max(peak, sim.Particles.Count);
+            foreach (var tr in sim.Trails) peakEdges = Math.Max(peakEdges, tr.Edges.Count);
+            foreach (var p in sim.Particles) { totalScale += sim.Appearance(p).Scale; sampled++; }
+        }
+        Console.WriteLine($"  [{seq.Name,-16}] peak {peak,5} particles, {peakEdges,4} ribbon edges, "
+                          + $"mean scale {(sampled == 0 ? 0 : totalScale / sampled),7:0.00}");
+    }
+    return 0;
+}
+
 // --audit <m3Path> re-reads a written .m3's texture references and reports whether each resolves
 // on disk next to the model (with the Assets/ head stripped, matching the paste-into-Assets layout).
 if (args.Contains("--audit"))

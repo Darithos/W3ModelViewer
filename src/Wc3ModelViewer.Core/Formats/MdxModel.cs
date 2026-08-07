@@ -348,6 +348,11 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
 
     /// <summary>TEXS index, or -1. The particle sprite sheet.</summary>
     public int TextureId { get; init; } = -1;
+
+    // Sprite-sheet cells a live particle walks through, indexed row-major across Rows x Columns.
+    public int HeadCellStart { get; init; }
+    public int HeadCellEnd { get; init; }
+    public int HeadCellRepeat { get; init; } = 1;
     public int PriorityPlane { get; init; }
     public int ReplaceableId { get; init; }
     public bool Squirt { get; init; }

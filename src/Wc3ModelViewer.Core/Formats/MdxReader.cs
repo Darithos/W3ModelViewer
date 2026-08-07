@@ -479,7 +479,11 @@ public static class MdxReader
         Vector3 c0 = p.Vec3(), c1 = p.Vec3(), c2 = p.Vec3();
         byte a0 = p.U8(), a1 = p.U8(), a2 = p.U8();
         float s0 = p.F32(), s1 = p.F32(), s2 = p.F32();     // unaligned by the three alpha bytes
-        p.Skip(48);                                         // 12 uint32 head/tail UV animation ranges
+
+        // Twelve uint32 sprite-sheet cell ranges: head lifespan, head decay, tail lifespan, tail
+        // decay, each {start, end, repeat}. A particle walks its head range while alive.
+        int headStart = p.I32(), headEnd = p.I32(), headRepeat = p.I32();
+        p.Skip(36);                                         // head decay + both tail ranges
 
         int textureId = p.I32();
         bool squirt = p.I32() != 0;
@@ -500,6 +504,7 @@ public static class MdxReader
             StartScale = s0, MiddleScale = s1, EndScale = s2,
             TextureId = textureId, PriorityPlane = priorityPlane, ReplaceableId = replaceableId,
             Squirt = squirt,
+            HeadCellStart = headStart, HeadCellEnd = headEnd, HeadCellRepeat = Math.Max(1, headRepeat),
             Unshaded = (flags & MdxNodeFlags.ParticleUnshaded) != 0,
             Unfogged = (flags & MdxNodeFlags.ParticleUnfogged) != 0,
             ModelSpace = (flags & MdxNodeFlags.ParticleModelSpace) != 0,
