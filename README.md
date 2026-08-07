@@ -20,6 +20,15 @@ Working end to end:
   masks flattened per material, filter-mode-aware blending, LOD picker.
 - **Animation player** — double-click a sequence to play; scrub, pause, speed control. CPU skinning
   of both schemes (classic matrix groups and Reforged 4-weight SKIN), GEOA geoset visibility.
+- **Effects** — particle emitters (`PRE2`/`PREM`), ribbons (`RIBB`) and lights (`LITE`) are parsed
+  and the particles and ribbons simulated live in the viewer; particle emitters also export as SC2
+  `PAR_` systems. Reforged's own PopcornFX effects (`CORN`, a third of effect models) are counted
+  and reported rather than converted — their per-particle behaviour is compiled bytecode with no
+  equivalent in a fixed-field emitter. The status bar names what a model carries so an empty
+  viewport reads as a known limit rather than a bug.
+- **Animated texture flipbooks** — HD water, fountains and coral animate their diffuse through a
+  `KMTF` texture-id track of up to 50 frames. The viewer plays these on the track's own timeline;
+  export resolves the flipbook's first frame instead of falling back to texture 0.
 - **.m3 export (StarCraft II)** — mesh, skeleton, baked animations, attachments, cameras, GEOA
   visibility, PBR→specular texture conversion, written directly by the app: **no Blender, no
   add-ons, no external tools**. Verified in the StarCraft II editor: models load, animate and
