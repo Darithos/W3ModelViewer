@@ -100,6 +100,14 @@ if (args.Contains("--layers"))
                     : "")));
             Console.WriteLine($"   filter={layer.FilterMode} shading={layer.ShadingFlags} pbr={layer.IsPbr} alphaTrack={(layer.AlphaTrack is not null ? "yes" : "no")} staticAlpha={layer.Alpha:0.###} teamColorMult={layer.TeamColorMultiplier:0.###}");
             Console.WriteLine($"   slots: {slots}");
+            if (layer.TextureIdTrack is { Count: > 0 } fb)
+            {
+                var ids = fb.Values.Select(v => (int)v).ToList();
+                string first = (uint)ids[0] < (uint)mdl.Textures.Count
+                    ? System.IO.Path.GetFileName(mdl.Textures[ids[0]].FileName) : "?";
+                Console.WriteLine($"   FLIPBOOK: {fb.Count} keys over {fb.Times[^1]}ms, "
+                                  + $"tex {ids[0]}..{ids[^1]} starting {first}");
+            }
             int did = layer.DiffuseTextureId;
             if ((uint)did < (uint)mdl.Textures.Count)
             {
@@ -241,6 +249,8 @@ if (args.Contains("--fx"))
     var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
 
     int parsed = 0, withFx = 0, par = 0, rib = 0, lit = 0, corn = 0, bad = 0;
+    int flipModels = 0, flipLayers = 0, flipFrames = 0;
+    var flipExamples = new List<string>();
     var complaints = new List<string>();
     void Check(bool ok, string model, string what)
     {
@@ -256,6 +266,19 @@ if (args.Contains("--fx"))
         Wc3ModelViewer.Core.Formats.MdxModel m;
         try { m = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
         parsed++;
+
+        // Flipbook (KMTF) layers ride here too: a texture animation is an effect in everything but
+        // name, and the fountains' water is the case that proved the slot table must be terminated
+        // by a track tag rather than by its declared capacity.
+        int layersHere = m.Materials.Sum(mm => mm.Layers.Count(l => l.TextureIdTrack is { Count: > 0 }));
+        if (layersHere > 0)
+        {
+            flipModels++;
+            flipLayers += layersHere;
+            flipFrames += m.Materials.Sum(mm => mm.Layers.Sum(l => l.FlipbookTextureIds.Count()));
+            if (flipExamples.Count < 6) flipExamples.Add(entry.RelativePath);
+        }
+
         if (!m.HasEffects) continue;
         withFx++;
         par += m.ParticleEmitters.Count; rib += m.RibbonEmitters.Count;
@@ -293,6 +316,8 @@ if (args.Contains("--fx"))
     Console.WriteLine($"  ribbon emitters   : {rib:N0}");
     Console.WriteLine($"  lights            : {lit:N0}");
     Console.WriteLine($"  popcorn (dropped) : {corn:N0}");
+    Console.WriteLine($"  flipbook layers   : {flipLayers:N0} across {flipModels:N0} models, {flipFrames:N0} frames");
+    foreach (string e in flipExamples) Console.WriteLine($"      {e}");
     Console.WriteLine(bad == 0
         ? "\n  every emitter field is within a sane range — layout confirmed"
         : $"\n  {bad:N0} implausible values:");

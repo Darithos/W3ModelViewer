@@ -190,23 +190,31 @@ public static class MdxReader
             fresnelMul = r.F32();
             teamColorMul = r.F32();
 
-            // ... and then, on HD layers only, the slot table: unknown, slotCount, (textureId, slot)*.
+            // ... and then, on HD layers only, the slot table: unknown, capacity, (textureId, slot)*.
+            //
+            // The second word is the shader's slot CAPACITY, not the number of pairs written — it
+            // reads 6 on every HD layer, but a layer that binds only a diffuse writes exactly one
+            // pair and then starts its tracks. Trusting it as a count made the fountains' water
+            // consume its own KMTF flipbook as slot data, losing the animation and leaving the
+            // diffuse pointing at texture 0 — the rock. The table is really terminated by the first
+            // track tag, so read pairs until one appears (or a slot index stops making sense).
             if (r.Remaining >= 8 && !IsTrackTag(r.PeekTag()))
             {
                 r.Skip(4);                                  // observed 1
-                int slotCount = r.I32();
-                if ((uint)slotCount <= 16 && r.Remaining >= slotCount * 8)
-                    for (int i = 0; i < slotCount; i++)
+                int capacity = r.I32();
+                if ((uint)capacity <= 16)
+                    for (int i = 0; i < capacity && r.Remaining >= 8 && !IsTrackTag(r.PeekTag()); i++)
                     {
-                        int texId = r.I32();
-                        int slot = r.I32();
-                        if ((uint)slot <= (uint)MdxTextureSlot.EnvironmentMap)
-                            slots[(MdxTextureSlot)slot] = texId;
+                        // Validate before consuming: a half-read pair would desync the track walk.
+                        int slot = r.PeekI32(r.Position + 4);
+                        if ((uint)slot > (uint)MdxTextureSlot.EnvironmentMap) break;
+                        slots[(MdxTextureSlot)slot] = r.I32();
+                        r.Skip(4);
                     }
             }
         }
 
-        MdxTrack<float>? alphaTrack = null, emissiveTrack = null, texIdTrack = null;
+        MdxTrack<float>? alphaTrack = null, emissiveTrack = null, texIdTrack = null, normalIdTrack = null;
         while (r.Remaining >= 8)
         {
             string tag = r.PeekTag();
@@ -214,7 +222,13 @@ public static class MdxReader
             {
                 case "KMTA": alphaTrack = ReadFloatTrack(r); continue;
                 case "KMTE": emissiveTrack = ReadFloatTrack(r); continue;
-                case "KMTF": texIdTrack = ReadFloatTrack(r, asInt: true); continue;
+                // A flipbook layer carries one KMTF per texture slot it animates, in slot order:
+                // the fountains' water animates its diffuse AND its normal, so two arrive here. The
+                // first is the diffuse; keeping the last would bind the normal map as base colour.
+                case "KMTF":
+                    var flip = ReadFloatTrack(r, asInt: true);
+                    if (texIdTrack is null) texIdTrack = flip; else normalIdTrack ??= flip;
+                    continue;
                 default: r.SkipToEnd(); break;
             }
             break;
@@ -226,7 +240,8 @@ public static class MdxReader
             TextureAnimationId = texAnimId, CoordId = coordId, Alpha = alpha,
             EmissiveMultiplier = emissive, FresnelColor = fresnel, FresnelMultiplier = fresnelMul,
             TeamColorMultiplier = teamColorMul, TextureSlots = slots,
-            AlphaTrack = alphaTrack, EmissiveTrack = emissiveTrack, TextureIdTrack = texIdTrack,
+            AlphaTrack = alphaTrack, EmissiveTrack = emissiveTrack,
+            TextureIdTrack = texIdTrack, NormalIdTrack = normalIdTrack,
         };
     }
 

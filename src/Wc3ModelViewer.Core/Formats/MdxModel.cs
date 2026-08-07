@@ -169,7 +169,11 @@ public sealed class MdxLayer
 
     public MdxTrack<float>? AlphaTrack { get; init; }
     public MdxTrack<float>? EmissiveTrack { get; init; }
+    /// <summary>KMTF flipbook selecting the diffuse texture over time, or null when static.</summary>
     public MdxTrack<float>? TextureIdTrack { get; init; }
+
+    /// <summary>The matching flipbook for the normal map, when the layer animates one.</summary>
+    public MdxTrack<float>? NormalIdTrack { get; init; }
 
     /// <summary>True when the layer binds the PBR maps, i.e. it is a Reforged HD layer.</summary>
     public bool IsPbr => TextureSlots.ContainsKey(MdxTextureSlot.Normal)
@@ -177,8 +181,37 @@ public sealed class MdxLayer
 
     public int Slot(MdxTextureSlot slot) => TextureSlots.TryGetValue(slot, out int id) ? id : -1;
 
-    /// <summary>The texture to sample for base colour, preferring the explicit diffuse binding.</summary>
-    public int DiffuseTextureId => Slot(MdxTextureSlot.Diffuse) is var d && d >= 0 ? d : TextureId;
+    /// <summary>
+    /// The texture to sample for base colour, preferring the explicit diffuse binding.
+    /// </summary>
+    /// <remarks>
+    /// A <c>KMTF</c> track wins over both. Reforged animates water, waterfalls and similar surfaces
+    /// as a flipbook — the fountains carry fifty <c>War3_FountainWater_Diff_00nn</c> frames — and
+    /// selects the frame through that track while leaving the layer's static
+    /// <see cref="TextureId"/> at 0. Ignoring the track therefore does not just freeze the
+    /// animation, it samples whatever happens to be texture 0, which on every fountain is the rock
+    /// diffuse. See <see cref="TextureIdAt"/> for picking a specific frame.
+    /// </remarks>
+    public int DiffuseTextureId => TextureIdTrack is { Count: > 0 } t ? (int)t.Values[0]
+                                 : Slot(MdxTextureSlot.Diffuse) is var d && d >= 0 ? d
+                                 : TextureId;
+
+    /// <summary>
+    /// The flipbook frame this layer shows at <paramref name="timeMs"/>, or
+    /// <see cref="DiffuseTextureId"/> when the layer is not animated. <c>KMTF</c> keys are stepped,
+    /// never interpolated — a texture index between two frames is meaningless.
+    /// </summary>
+    public int TextureIdAt(int timeMs)
+    {
+        if (TextureIdTrack is not { Count: > 0 } t) return DiffuseTextureId;
+        int k = 0;
+        while (k + 1 < t.Count && t.Times[k + 1] <= timeMs) k++;
+        return (int)t.Values[k];
+    }
+
+    /// <summary>Distinct texture ids this layer cycles through, in key order. Empty when static.</summary>
+    public IEnumerable<int> FlipbookTextureIds =>
+        TextureIdTrack is { Count: > 0 } t ? t.Values.Select(v => (int)v).Distinct() : [];
 }
 
 public sealed class MdxMaterial

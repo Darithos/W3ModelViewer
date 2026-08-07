@@ -48,6 +48,15 @@ public partial class MainWindow : Window
         public required Brush Brush { get; init; }
         public required Vector3[] SkinPositions { get; init; }
         public Vector3[]? SkinNormals { get; init; }
+
+        /// <summary>
+        /// A KMTF texture flipbook, when the geoset's layer animates through one: the track that
+        /// picks the frame, and every frame decoded up front. Reforged animates water, waterfalls
+        /// and moonwells this way — fifty frames each — so decoding on demand would stutter.
+        /// </summary>
+        public MdxLayer? Flipbook { get; init; }
+        public Dictionary<int, BitmapSource>? Frames { get; init; }
+        public int CurrentFrame = -1;
     }
 
     public MainWindow()
@@ -264,9 +273,21 @@ public partial class MainWindow : Window
         var shown = _geosetItems.Where(i => i.IsVisible).Select(i => i.Geoset).ToList();
         int hidden = _geosetItems.Count - shown.Count;
         string hiddenNote = hidden > 0 ? $" (+{hidden} hidden)" : "";
+        // Effects are called out per model because their absence is otherwise unexplainable: a
+        // Reforged HD model's effects are almost always PopcornFX, which this tool can neither draw
+        // nor export, and the viewport for one of those is simply empty. Saying so beats leaving
+        // the user to wonder whether something is broken.
+        var fx = new List<string>();
+        if (model.ParticleEmitters.Count > 0) fx.Add($"{model.ParticleEmitters.Count} particle");
+        if (model.RibbonEmitters.Count > 0) fx.Add($"{model.RibbonEmitters.Count} ribbon");
+        if (model.Lights.Count > 0) fx.Add($"{model.Lights.Count} light");
+        string effects = fx.Count > 0 ? $", effects: {string.Join(" + ", fx)}" : "";
+        if (model.PopcornEmitterCount > 0)
+            effects += $", {model.PopcornEmitterCount} PopcornFX (not shown — Reforged's own system)";
+
         Status.Text = $"{entry.RelativePath}   —   {entry.ArtSet}, {shown.Count} geosets{hiddenNote}, " +
                       $"{shown.Sum(g => g.VertexCount):N0} verts, {shown.Sum(g => g.TriangleCount):N0} tris, " +
-                      $"{model.Sequences.Count} sequences";
+                      $"{model.Sequences.Count} sequences{effects}";
     }
 
     // ---------------- Geoset panel ----------------
@@ -374,11 +395,16 @@ public partial class MainWindow : Window
                 default: group.Children.Add(gm); break;   // opaque, drawn first
             }
 
+            var flipbook = _model.Materials[geo.MaterialId].Layers
+                                 .FirstOrDefault(l => l.TextureIdTrack is { Count: > 0 });
+
             _sceneMeshes.Add(new SceneMesh
             {
                 Geoset = geo, Mesh = mesh, Brush = brush,
                 SkinPositions = new Vector3[geo.VertexCount],
                 SkinNormals = geo.VertexCount <= 25_000 ? new Vector3[geo.VertexCount] : null,
+                Flipbook = flipbook,
+                Frames = flipbook is null ? null : DecodeFlipbook(flipbook),
             });
         }
         foreach (var gm in cutoutModels) group.Children.Add(gm);   // cutouts after all opaque
@@ -389,6 +415,32 @@ public partial class MainWindow : Window
         if (zoom) Viewport.ZoomExtents(0);
         ApplyPose();   // rebuilt meshes start at bind pose; re-apply the active frame, if any
     }
+
+    /// <summary>
+    /// Decodes every distinct frame of a texture flipbook, keyed by TEXS index. These layers are a
+    /// single blended texture with no PBR set, so the frames are loaded straight from the cache
+    /// rather than through the material compositor — there is nothing to composite.
+    /// </summary>
+    private Dictionary<int, BitmapSource> DecodeFlipbook(MdxLayer layer)
+    {
+        var frames = new Dictionary<int, BitmapSource>();
+        if (_model is null || _textures is null || _entry is null) return frames;
+
+        foreach (int id in layer.FlipbookTextureIds)
+        {
+            if ((uint)id >= (uint)_model.Textures.Count) continue;
+            var img = _textures.Load(_entry.CascName, _model.Textures[id], ViewerTeamColor);
+            if (img is null) continue;
+            var bmp = BitmapSource.Create(img.Width, img.Height, 96, 96, PixelFormats.Bgra32,
+                                          null, img.Pixels, img.Width * 4);
+            bmp.Freeze();
+            frames[id] = bmp;
+        }
+        return frames;
+    }
+
+    /// <summary>Player slot the viewport previews team colour with — the same one RebuildScene composites.</summary>
+    private const int ViewerTeamColor = 0;
 
     /// <summary>
     /// Whether a transparent-flagged geoset is a genuine cutout — its own UVs actually sample
@@ -592,6 +644,22 @@ public partial class MainWindow : Window
             float alpha = _animator.GeosetAlpha(sm.Geoset.Index, _sequence, t, _wallMs);
             sm.Brush.Opacity = alpha < 0.01f ? 0 : alpha;
             if (alpha < 0.01f) continue;                  // invisible: skip the skinning cost too
+
+            // Advance a texture flipbook. Its keys run on their own timeline from 0, not the
+            // sequence's, so the whole animation loops independently of which sequence is playing —
+            // water keeps flowing during Stand, Birth and Death alike.
+            if (sm is { Flipbook: { } fb, Frames: { Count: > 0 } frames }
+                && fb.TextureIdTrack is { Count: > 0 } track)
+            {
+                int span = Math.Max(1, track.Times[^1]);
+                int frame = fb.TextureIdAt((int)(_wallMs % span));
+                if (frame != sm.CurrentFrame && frames.TryGetValue(frame, out var bmp)
+                    && sm.Brush is ImageBrush ib)
+                {
+                    ib.ImageSource = bmp;
+                    sm.CurrentFrame = frame;
+                }
+            }
             if (_sequence is null) continue;              // rest pose: geometry already correct
 
             _animator.SkinGeoset(sm.Geoset, sm.SkinPositions, sm.SkinNormals);
