@@ -50,6 +50,13 @@ public sealed class M3ExportOptions
     public bool ConvertPbr { get; init; } = true;
 
     /// <summary>
+    /// Export PRE2 particle emitters as StarCraft II particle systems. Models with no emitters are
+    /// unaffected either way. Reforged's PopcornFX (CORN) emitters can never be exported — they
+    /// reference external baked effect files — and are reported as dropped regardless.
+    /// </summary>
+    public bool ExportEffects { get; init; } = true;
+
+    /// <summary>
     /// Path prefix baked into the .m3's texture references. SC2 resolves these against the mod or
     /// map archive ROOT; any root-relative path works, the folder name carries no meaning.
     /// <para>
@@ -193,6 +200,7 @@ public sealed class M3Exporter
         public string EmissivePath = "";
         public MdxGeosetAnim? VisibilityAnim;       // GEOA feeding this material's colour track
         public uint ColorAnimId;                    // LAYR color_value anim id, filled during write
+        public bool IsParticle;                     // built for an emitter's sprite, not a geoset
     }
 
     private sealed class SeqDef
@@ -322,7 +330,101 @@ public sealed class M3Exporter
         if (_cutoutCoverage.Count > 0)
             _log.Add($"{cutouts} of {_cutoutCoverage.Count} transparent-flagged geosets are real cutouts " +
                      $"(the rest sample no transparent texels and stay opaque so they keep writing depth)");
+
+        BuildEffects(textures, modelCascName);
     }
+
+    /// <summary>
+    /// Resolves each particle emitter to a material and a bone, and reports what cannot come across.
+    /// A particle system in StarCraft II draws through a standard material like any mesh does, so an
+    /// emitter needs one built from its sprite before it can be written.
+    /// </summary>
+    private void BuildEffects(Casc.Wc3TextureCache textures, string modelCascName)
+    {
+        // Reforged's PopcornFX emitters point at .pkb bakes that do ship in the archive, but their
+        // per-particle behaviour is compiled bytecode with no mapping onto PAR_'s fixed fields. Not
+        // yet converted, so say so rather than let a third of Warcraft III's effect models silently
+        // lose their effects.
+        if (_mdx.PopcornEmitterCount > 0)
+            _log.Add($"{_mdx.PopcornEmitterCount} PopcornFX (CORN) emitter(s) dropped — Reforged's "
+                     + "own effect system, not yet converted");
+
+        if (!_opt.ExportEffects)
+        {
+            if (_mdx.ParticleEmitters.Count > 0)
+                _log.Add($"{_mdx.ParticleEmitters.Count} particle emitter(s) skipped (effects export is off)");
+            return;
+        }
+
+        int skipped = 0;
+        foreach (var e in _mdx.ParticleEmitters)
+        {
+            // A PREM emitter spawns models rather than sprites and parses with no texture; there is
+            // nothing to draw, so it is dropped rather than exported as an invisible system.
+            if ((uint)e.TextureId >= (uint)_mdx.Textures.Count) { skipped++; continue; }
+            var tex = _mdx.Textures[e.TextureId];
+            if (tex.IsReplaceable || tex.FileName.Length == 0) { skipped++; continue; }
+
+            var image = textures.Load(modelCascName, tex, _opt.TeamColor);
+            if (image is null) { skipped++; continue; }
+
+            _emitters.Add(new ExportEmitter
+            {
+                Source = e,
+                MaterialIndex = AddParticleMaterial(e, image),
+                NodeIndex = e.NodeIndex,
+            });
+        }
+
+        if (_emitters.Count > 0)
+            _log.Add($"{_emitters.Count} particle emitter(s) exported as SC2 particle systems"
+                     + (skipped > 0 ? $" ({skipped} skipped: no usable sprite)" : ""));
+        else if (skipped > 0)
+            _log.Add($"{skipped} particle emitter(s) dropped — no usable sprite texture");
+    }
+
+    /// <summary>
+    /// A material for one emitter's sprite. Particles are never lit and never cut out: the sheet's
+    /// alpha is the shape of the flame, so the material is unshaded and blended by the emitter's own
+    /// blend mode rather than run through the geoset cutout machinery.
+    /// </summary>
+    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image)
+    {
+        var blend = e.Blend switch
+        {
+            MdxParticleBlend.Add or MdxParticleBlend.AlphaKey => CompositeBlend.Additive,
+            MdxParticleBlend.Modulate or MdxParticleBlend.Modulate2X => CompositeBlend.AlphaBlend,
+            _ => CompositeBlend.AlphaBlend,
+        };
+        string stem = TexStem(_mdx.Textures[e.TextureId].FileName, _materials.Count);
+
+        for (int i = 0; i < _materials.Count; i++)
+            if (_materials[i].IsParticle && _materials[i].DiffusePath == stem + "_diff.dds"
+                && _materials[i].Blend == blend)
+                return i;
+
+        var mat = new ExportMaterial
+        {
+            Name = stem,
+            Blend = blend,
+            TwoSided = true,          // a billboard is seen from either side
+            Unshaded = true,
+            IsParticle = true,
+            DiffusePath = AddTexture(stem + "_diff.dds", image),
+        };
+        _materials.Add(mat);
+        return _materials.Count - 1;
+    }
+
+    /// <summary>One emitter that survived to the write stage, with everything it needs resolved.</summary>
+    private sealed class ExportEmitter
+    {
+        public required MdxParticleEmitter2 Source;
+        public required int MaterialIndex;
+        public required int NodeIndex;
+    }
+
+    private readonly List<ExportEmitter> _emitters = [];
 
     /// <summary>
     /// Below this share of transparent texels under a geoset's own UVs, a "transparent" Reforged
@@ -1341,6 +1443,23 @@ public sealed class M3Exporter
         nullLayer.Count = 1;
         var iref = b.Add("IREF", 0, 64);
 
+        // ---- PAR_ particle systems ----
+        // Written straight from M3ParticleWriter's byte template so every field this exporter does
+        // not understand keeps the default StarCraft II already accepts. Emitters sit on the bone
+        // built from their MDX node, which is why parsing them as nodes matters.
+        M3Builder.Section? par = null;
+        if (_emitters.Count > 0)
+        {
+            par = b.Add("PAR_", M3ParticleWriter.Version, M3ParticleWriter.Size);
+            foreach (var em in _emitters)
+            {
+                int bone = (uint)em.NodeIndex < (uint)boneMap.Length ? boneMap[em.NodeIndex] : 0;
+                par.W.Write(M3ParticleWriter.Build(em.Source, bone, em.MaterialIndex,
+                                                   _opt.Scale, _nextAnimId));
+            }
+            par.Count = _emitters.Count;
+        }
+
         // ---- MODL V29 ----
         {
             var w = modl.W;
@@ -1369,8 +1488,10 @@ public sealed class M3Exporter
             if (camAddon is not null) b.Ref(modl, camAddon); else b.NullRef(modl);
             b.Ref(modl, matm);
             b.Ref(modl, mats);
-            for (int i = 0; i < 10; i++) b.NullRef(modl);
-            for (int i = 0; i < 17; i++) b.NullRef(modl);
+            for (int i = 0; i < 10; i++) b.NullRef(modl);   // materials_displacement .. materials_lensflare
+            // particle_systems is the first of the next 17 refs (through `turrets`).
+            if (par is not null) b.Ref(modl, par); else b.NullRef(modl);
+            for (int i = 0; i < 16; i++) b.NullRef(modl);
             b.Ref(modl, iref);
             w.Write(new byte[108]);
             for (int i = 0; i < 6; i++) b.NullRef(modl);

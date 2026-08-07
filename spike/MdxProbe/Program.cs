@@ -100,6 +100,14 @@ if (args.Contains("--layers"))
                     : "")));
             Console.WriteLine($"   filter={layer.FilterMode} shading={layer.ShadingFlags} pbr={layer.IsPbr} alphaTrack={(layer.AlphaTrack is not null ? "yes" : "no")} staticAlpha={layer.Alpha:0.###} teamColorMult={layer.TeamColorMultiplier:0.###}");
             Console.WriteLine($"   slots: {slots}");
+            if (layer.TextureIdTrack is { Count: > 0 } fb)
+            {
+                var ids = fb.Values.Select(v => (int)v).ToList();
+                string first = (uint)ids[0] < (uint)mdl.Textures.Count
+                    ? System.IO.Path.GetFileName(mdl.Textures[ids[0]].FileName) : "?";
+                Console.WriteLine($"   FLIPBOOK: {fb.Count} keys over {fb.Times[^1]}ms, "
+                                  + $"tex {ids[0]}..{ids[^1]} starting {first}");
+            }
             int did = layer.DiffuseTextureId;
             if ((uint)did < (uint)mdl.Textures.Count)
             {
@@ -179,6 +187,362 @@ if (args.Contains("--cutouts"))
             ? (cov >= 0.005f ? "CUTOUT (drawn after opaque)" : "opaque (downgraded)")
             : comp.Blend.ToString();
         Console.WriteLine($"  geoset {g.Index,2} mat {g.MaterialId,2}: Compose={comp.Blend,-9} coverage={cov * 100,6:0.00}%  -> {cls}");
+    }
+    return 0;
+}
+
+// --effects [n] censuses the chunks the reader currently skips across n real models. Effects work
+// starts here rather than from the spec: it says which emitter chunks actually ship, how often, and
+// on which models — so the export path is built for the data that exists, not the format's full
+// surface. Prints per-chunk model counts and the worst offenders.
+if (args.Contains("--effects"))
+{
+    int ei = Array.IndexOf(args, "--effects");
+    int limit = ei + 1 < args.Length && int.TryParse(args[ei + 1], out int n) ? n : 400;
+    using var s = new Wc3Storage(install);
+    var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
+    var models = index.Models.Where(m => !m.IsPortrait).Take(limit).ToList();
+
+    var chunkModels = new Dictionary<string, int>(StringComparer.Ordinal);
+    var chunkBytes = new Dictionary<string, long>(StringComparer.Ordinal);
+    var carriers = new List<(string Name, string Chunks)>();
+    int parsed = 0;
+    foreach (var entry in models)
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel mdl;
+        try { mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        parsed++;
+        if (mdl.SkippedChunks.Count == 0) continue;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string entryText in mdl.SkippedChunks)
+        {
+            int paren = entryText.IndexOf('(');
+            string tag = paren < 0 ? entryText : entryText[..paren];
+            long bytes = paren < 0 ? 0 : long.Parse(entryText[(paren + 1)..^1]);
+            if (seen.Add(tag)) chunkModels[tag] = chunkModels.GetValueOrDefault(tag) + 1;
+            chunkBytes[tag] = chunkBytes.GetValueOrDefault(tag) + bytes;
+        }
+        carriers.Add((entry.RelativePath, string.Join(" ", mdl.SkippedChunks)));
+    }
+
+    Console.WriteLine($"--- skipped-chunk census over {parsed:N0} parsed models ---");
+    Console.WriteLine($"  {"chunk",-6} {"models",8} {"% of set",9} {"total bytes",14}");
+    foreach (var kv in chunkModels.OrderByDescending(k => k.Value))
+        Console.WriteLine($"  {kv.Key,-6} {kv.Value,8:N0} {kv.Value * 100.0 / parsed,8:0.0}% {chunkBytes[kv.Key],14:N0}");
+
+    Console.WriteLine("\n--- models carrying the most effect data ---");
+    foreach (var c in carriers.OrderByDescending(c => c.Chunks.Length).Take(12))
+        Console.WriteLine($"  {c.Name}\n      {c.Chunks}");
+    return 0;
+}
+
+// --corn [n] answers one question with bytes: is Reforged's PopcornFX convertible at all? It reads
+// what every CORN emitter references, then checks whether the archive even contains the baked
+// effects those paths name. An emitter we cannot resolve to data is not a conversion problem.
+if (args.Contains("--corn"))
+{
+    int ci = Array.IndexOf(args, "--corn");
+    int limit = ci + 1 < args.Length && int.TryParse(args[ci + 1], out int cn) ? cn : 400;
+    using var s = new Wc3Storage(install);
+    var names = s.EnumerateAll();
+    var index = Wc3AssetIndex.FromNames(names);
+
+    var popcornAssets = names
+        .Where(n => Path.GetExtension(n).StartsWith(".pk", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+    Console.WriteLine($"--- archive: {names.Count:N0} files, {popcornAssets.Count:N0} with a .pk* extension ---");
+    foreach (var grp in popcornAssets.GroupBy(n => Path.GetExtension(n).ToLowerInvariant())
+                                     .OrderByDescending(g => g.Count()))
+        Console.WriteLine($"  {grp.Key,-8} {grp.Count(),6:N0}   e.g. {grp.First()}");
+
+    var refs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    var flagSet = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    int emitters = 0, models = 0, dumped = 0;
+    foreach (var entry in index.Models.Where(m => !m.IsPortrait).Take(limit))
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        var corn = Chunks(raw).FirstOrDefault(c => c.Tag == "CORN");
+        if (corn.Tag is null) continue;
+        models++;
+
+        int p = corn.Start, end = corn.Start + corn.Size;
+        while (p + 8 <= end)
+        {
+            int inclusive = BitConverter.ToInt32(raw, p);
+            if (inclusive < 8 || p + inclusive > end) break;
+            int nodeSize = BitConverter.ToInt32(raw, p + 4);
+            int payload = p + 4 + nodeSize;                     // node is self-sizing; payload follows
+
+            // Locate the .pkb path by content rather than by a spec offset: the two C4Colors ahead
+            // of it are floats that could be anything, and a wrong offset here would read garbage
+            // that still looks like a string.
+            int at = -1;
+            for (int q = payload; q + 4 < p + inclusive; q++)
+                if (raw[q] == '.' && raw[q + 1] is (byte)'p' or (byte)'P'
+                    && raw[q + 2] is (byte)'k' or (byte)'K') { at = q; break; }
+            if (at < 0) { p += inclusive; continue; }
+            int start = at;
+            while (start > payload && raw[start - 1] >= 0x20 && raw[start - 1] < 0x7f) start--;
+            int stop = at;
+            while (stop < p + inclusive && raw[stop] >= 0x20 && raw[stop] < 0x7f) stop++;
+            string path = Encoding.ASCII.GetString(raw, start, stop - start);
+
+            // The flags string follows the 260-byte path field.
+            int flagsAt = start + 260;
+            string flags = "";
+            if (flagsAt < p + inclusive)
+            {
+                int fe = flagsAt;
+                while (fe < p + inclusive && raw[fe] >= 0x20 && raw[fe] < 0x7f) fe++;
+                flags = Encoding.ASCII.GetString(raw, flagsAt, fe - flagsAt);
+            }
+
+            emitters++;
+            refs[path] = refs.GetValueOrDefault(path) + 1;
+            if (flags.Length > 0) flagSet[flags] = flagSet.GetValueOrDefault(flags) + 1;
+            if (dumped < 4)
+            {
+                dumped++;
+                Console.WriteLine($"\n  {entry.RelativePath}");
+                Console.WriteLine($"    payload starts {start - payload} B before the path "
+                                + $"(spec says 32 = two C4Colors)");
+                Console.WriteLine($"    path  = {path}");
+                Console.WriteLine($"    flags = {flags}");
+            }
+            p += inclusive;
+        }
+    }
+
+    Console.WriteLine($"\n--- {emitters:N0} CORN emitters across {models:N0} models "
+                    + $"referencing {refs.Count:N0} distinct effects ---");
+    int present = 0;
+    foreach (var kv in refs.OrderByDescending(k => k.Value).Take(25))
+    {
+        // Models name the .pkfx *source*; the archive ships the .pkb *bake* of it.
+        string leaf = Path.GetFileNameWithoutExtension(kv.Key.Replace('/', '\\')) + ".pkb";
+        bool found = names.Any(n => n.EndsWith(leaf, StringComparison.OrdinalIgnoreCase));
+        if (found) present++;
+        Console.WriteLine($"  {(found ? "IN ARCHIVE" : "not found ")} {kv.Value,4}x  {kv.Key}");
+    }
+    Console.WriteLine($"\n  {present} of the top {Math.Min(25, refs.Count)} effects exist as files in the archive");
+    // What a bake actually contains decides whether "bake it in" is engineering or reverse
+    // engineering. Dump the head of one so the answer rests on bytes.
+    string? sample = names.FirstOrDefault(n => n.EndsWith(".pkb", StringComparison.OrdinalIgnoreCase));
+    if (sample is not null && s.TryReadFile(sample) is { } pkb)
+    {
+        Console.WriteLine($"\n--- {sample} ({pkb.Length:N0} bytes) ---");
+        for (int row = 0; row < 6; row++)
+        {
+            int off = row * 16;
+            if (off >= pkb.Length) break;
+            int n = Math.Min(16, pkb.Length - off);
+            string hex = string.Join(" ", Enumerable.Range(0, n).Select(k => pkb[off + k].ToString("x2")));
+            string txt = string.Concat(Enumerable.Range(0, n)
+                .Select(k => pkb[off + k] >= 0x20 && pkb[off + k] < 0x7f ? (char)pkb[off + k] : '.'));
+            Console.WriteLine($"  {off:x4}  {hex,-47}  {txt}");
+        }
+        var strings = new List<string>();
+        for (int q = 0, run = 0; q < pkb.Length; q++)
+        {
+            if (pkb[q] >= 0x20 && pkb[q] < 0x7f) run++;
+            else { if (run >= 6) strings.Add(Encoding.ASCII.GetString(pkb, q - run, run)); run = 0; }
+        }
+        // Float tables dominate the printable runs, so filter to runs that look like identifiers:
+        // a bake that names its node types and attributes is readable; one that does not is not.
+        var idents = strings.Where(t => t.Count(char.IsLetter) >= t.Length * 0.7)
+                            .Distinct(StringComparer.Ordinal).ToList();
+        Console.WriteLine($"  {strings.Count} printable runs, {idents.Count} identifier-like:");
+        foreach (string t in idents) Console.WriteLine($"    {t}");
+        var assets = strings.Where(t => t.Contains('/') || t.Contains('.', StringComparison.Ordinal)
+                                        && t.Any(char.IsLetter) && t.Count(char.IsLetter) > 4)
+                            .Distinct(StringComparer.Ordinal).ToList();
+        Console.WriteLine($"  {assets.Count} asset-like strings:");
+        foreach (string t in assets.Take(40)) Console.WriteLine($"    {t}");
+
+        // A converted effect is only as good as the sprites it draws. Sweep every bake for texture
+        // references and check them against the archive: if the art is missing, nothing else matters.
+        Console.WriteLine("\n--- texture references across all bakes ---");
+        var texRefs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int bakes = 0;
+        foreach (string pk in popcornAssets.Where(n => n.EndsWith(".pkb", StringComparison.OrdinalIgnoreCase)))
+        {
+            var data = s.TryReadFile(pk);
+            if (data is null) continue;
+            bakes++;
+            for (int q = 0, run = 0; q < data.Length; q++)
+            {
+                if (data[q] >= 0x20 && data[q] < 0x7f) { run++; continue; }
+                if (run >= 8)
+                {
+                    string t = Encoding.ASCII.GetString(data, q - run, run);
+                    foreach (string ext in (string[])[".tif", ".dds", ".tga", ".png"])
+                    {
+                        int e = t.IndexOf(ext, StringComparison.OrdinalIgnoreCase);
+                        if (e < 0) continue;
+                        string tp = t[..(e + ext.Length)];
+                        int cut = tp.LastIndexOfAny([':', '>', '<', '=', '"', '\'', '$', '!', '&']);
+                        if (cut >= 0) tp = tp[(cut + 1)..];
+                        texRefs[tp] = texRefs.GetValueOrDefault(tp) + 1;
+                    }
+                }
+                run = 0;
+            }
+        }
+        var lookup = new HashSet<string>(names.Select(n => n.Replace('\\', '/')), StringComparer.OrdinalIgnoreCase);
+        int resolved = texRefs.Keys.Count(t => Resolves(t, lookup));
+        Console.WriteLine($"  {bakes:N0} bakes -> {texRefs.Count:N0} distinct textures, "
+                        + $"{resolved:N0} resolve in the archive ({resolved * 100.0 / Math.Max(1, texRefs.Count):0.0}%)");
+        foreach (var kv in texRefs.OrderByDescending(k => k.Value).Take(12))
+            Console.WriteLine($"  {(Resolves(kv.Key, lookup) ? "ok     " : "MISSING")} {kv.Value,4}x  {kv.Key}");
+
+        static bool Resolves(string t, HashSet<string> lookup)
+        {
+            string leaf = t.Replace('\\', '/');
+            int slash = leaf.LastIndexOf('/');
+            string file = slash < 0 ? leaf : leaf[(slash + 1)..];
+            string stem = Path.GetFileNameWithoutExtension(file);
+            // WC3 stores these as .dds under war3.w3mod:_hd.w3mod:, whatever the bake calls them.
+            return lookup.Any(n => n.EndsWith("/" + stem + ".dds", StringComparison.OrdinalIgnoreCase)
+                                || n.EndsWith(":" + stem + ".dds", StringComparison.OrdinalIgnoreCase)
+                                || n.EndsWith("/" + file, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    Console.WriteLine("\n--- popcornFlags seen ---");
+    foreach (var kv in flagSet.OrderByDescending(k => k.Value).Take(15))
+        Console.WriteLine($"  {kv.Value,5}x  {kv.Key}");
+    return 0;
+}
+
+// --fx [n] parses n models and asserts every emitter field decodes to something physically sane.
+// A struct read at the wrong offset still produces numbers; the only way to know the layout is
+// right is to check those numbers mean something across the whole game rather than one model.
+if (args.Contains("--fx"))
+{
+    int fi = Array.IndexOf(args, "--fx");
+    int limit = fi + 1 < args.Length && int.TryParse(args[fi + 1], out int fn) ? fn : 600;
+    using var s = new Wc3Storage(install);
+    var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
+
+    int parsed = 0, withFx = 0, par = 0, rib = 0, lit = 0, corn = 0, bad = 0;
+    int flipModels = 0, flipLayers = 0, flipFrames = 0;
+    var flipExamples = new List<string>();
+    var complaints = new List<string>();
+    void Check(bool ok, string model, string what)
+    {
+        if (ok) return;
+        bad++;
+        if (complaints.Count < 25) complaints.Add($"  {model}: {what}");
+    }
+
+    foreach (var entry in index.Models.Where(m => !m.IsPortrait).Take(limit))
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel m;
+        try { m = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        parsed++;
+
+        // Flipbook (KMTF) layers ride here too: a texture animation is an effect in everything but
+        // name, and the fountains' water is the case that proved the slot table must be terminated
+        // by a track tag rather than by its declared capacity.
+        int layersHere = m.Materials.Sum(mm => mm.Layers.Count(l => l.TextureIdTrack is { Count: > 0 }));
+        if (layersHere > 0)
+        {
+            flipModels++;
+            flipLayers += layersHere;
+            flipFrames += m.Materials.Sum(mm => mm.Layers.Sum(l => l.FlipbookTextureIds.Count()));
+            if (flipExamples.Count < 6) flipExamples.Add(entry.RelativePath);
+        }
+
+        if (!m.HasEffects) continue;
+        withFx++;
+        par += m.ParticleEmitters.Count; rib += m.RibbonEmitters.Count;
+        lit += m.Lights.Count; corn += m.PopcornEmitterCount;
+        string name = entry.RelativePath;
+
+        foreach (var e in m.ParticleEmitters)
+        {
+            Check(e.NodeIndex >= 0 && e.NodeIndex < m.Nodes.Count, name, $"{e.Name} node index {e.NodeIndex}");
+            Check(e.Rows is >= 1 and <= 64 && e.Columns is >= 1 and <= 64, name, $"{e.Name} sheet {e.Rows}x{e.Columns}");
+            Check(Enum.IsDefined(e.Blend), name, $"{e.Name} blend {(int)e.Blend}");
+            Check(Enum.IsDefined(e.ParticleType), name, $"{e.Name} type {(int)e.ParticleType}");
+            Check(e.TextureId >= -1 && e.TextureId < Math.Max(1, m.Textures.Count), name, $"{e.Name} texture {e.TextureId} of {m.Textures.Count}");
+            Check(e.Life is >= 0 and < 1000, name, $"{e.Name} life {e.Life}");
+            Check(e.EmissionRate is >= 0 and < 100000, name, $"{e.Name} rate {e.EmissionRate}");
+            Check(Sane(e.StartColor) && Sane(e.MiddleColor) && Sane(e.EndColor), name, $"{e.Name} colours out of 0..1");
+        }
+        foreach (var e in m.RibbonEmitters)
+        {
+            Check(e.MaterialId >= -1 && e.MaterialId < Math.Max(1, m.Materials.Count), name, $"{e.Name} material {e.MaterialId} of {m.Materials.Count}");
+            Check(e.EdgeLifetime is >= 0 and < 1000, name, $"{e.Name} edge life {e.EdgeLifetime}");
+            Check(e.Rows is >= 1 and <= 64 && e.Columns is >= 1 and <= 64, name, $"{e.Name} sheet {e.Rows}x{e.Columns}");
+            Check(Sane(e.Color), name, $"{e.Name} colour out of 0..1");
+        }
+        foreach (var e in m.Lights)
+        {
+            Check(Enum.IsDefined(e.LightType), name, $"{e.Name} light type {(int)e.LightType}");
+            Check(e.AttenuationEnd >= 0 && e.AttenuationEnd < 100000, name, $"{e.Name} atten end {e.AttenuationEnd}");
+            Check(Sane(e.Color), name, $"{e.Name} colour out of 0..1");
+        }
+    }
+
+    Console.WriteLine($"--- effect parse over {parsed:N0} models ({withFx:N0} carry effects) ---");
+    Console.WriteLine($"  particle emitters : {par:N0}");
+    Console.WriteLine($"  ribbon emitters   : {rib:N0}");
+    Console.WriteLine($"  lights            : {lit:N0}");
+    Console.WriteLine($"  popcorn (dropped) : {corn:N0}");
+    Console.WriteLine($"  flipbook layers   : {flipLayers:N0} across {flipModels:N0} models, {flipFrames:N0} frames");
+    foreach (string e in flipExamples) Console.WriteLine($"      {e}");
+    Console.WriteLine(bad == 0
+        ? "\n  every emitter field is within a sane range — layout confirmed"
+        : $"\n  {bad:N0} implausible values:");
+    foreach (string c in complaints) Console.WriteLine(c);
+    return bad == 0 ? 0 : 1;
+
+    static bool Sane(System.Numerics.Vector3 c) =>
+        c.X is >= -0.01f and <= 1.01f && c.Y is >= -0.01f and <= 1.01f && c.Z is >= -0.01f and <= 1.01f;
+}
+
+// --simfx <cascPath> [seconds] runs the viewer's effect simulation headlessly and reports what it
+// produced. Emitters are easy to "render" as nothing at all — a wrong cone, a zero rate or a
+// visibility track read backwards all just show an empty screen — so the numbers are checked here
+// rather than by squinting at the viewport.
+if (args.Contains("--simfx"))
+{
+    int si = Array.IndexOf(args, "--simfx");
+    string path = args[si + 1];
+    float seconds = si + 2 < args.Length && float.TryParse(args[si + 2], out float sec) ? sec : 3f;
+    using var s = new Wc3Storage(install);
+    var raw = s.TryReadFile(path);
+    if (raw is null) { Console.WriteLine($"not found: {path}"); return 1; }
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    Console.WriteLine($"{path}\n  {mdl.ParticleEmitters.Count} particle emitters, {mdl.RibbonEmitters.Count} ribbons, "
+                      + $"{mdl.Lights.Count} lights, {mdl.PopcornEmitterCount} popcorn (dropped)");
+    if (mdl.Sequences.Count == 0) { Console.WriteLine("  no sequences"); return 0; }
+
+    var animator = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
+    foreach (var seq in mdl.Sequences.Take(3))
+    {
+        var sim = new Wc3ModelViewer.Core.Formats.MdxEffectSimulator(mdl);
+        const float step = 1f / 30f;
+        int frames = Math.Max(1, (int)(seconds / step));
+        int peak = 0, peakEdges = 0;
+        double totalScale = 0; int sampled = 0;
+        for (int f = 0; f < frames; f++)
+        {
+            int t = seq.IntervalStart + (int)(f * step * 1000) % Math.Max(1, seq.DurationMs);
+            animator.Evaluate(seq, t, (long)(f * step * 1000));
+            sim.Update(step, animator, seq, t, (long)(f * step * 1000));
+            peak = Math.Max(peak, sim.Particles.Count);
+            foreach (var tr in sim.Trails) peakEdges = Math.Max(peakEdges, tr.Edges.Count);
+            foreach (var p in sim.Particles) { totalScale += sim.Appearance(p).Scale; sampled++; }
+        }
+        Console.WriteLine($"  [{seq.Name,-16}] peak {peak,5} particles, {peakEdges,4} ribbon edges, "
+                          + $"mean scale {(sampled == 0 ? 0 : totalScale / sampled),7:0.00}");
     }
     return 0;
 }
