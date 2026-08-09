@@ -60,7 +60,16 @@ Working end to end:
   headlessly: Blender imports the armature, skinned mesh and all actions.
 - **Custom models** — *Open file…* loads a loose `.mdx` from disk (Hive Workshop downloads etc.);
   textures resolve from the model's folder (`.blp` including JPEG-content, `.dds`), stock
-  references from the CASC.
+  references from your game install.
+- **Borrowed game textures are packaged** — most custom models ship only the art their author drew
+  and leave every Warcraft III texture they reuse as a bare path. Those are pulled out of your
+  installed game, converted like any other, and written into the export folder, so the package is
+  complete without hunting textures down by hand. Resolution does not depend on the author's
+  spelling: a reference that has been flattened to a file name, re-rooted through
+  `war3mapImported\`, left as an absolute path from the author's own disk, or written with the
+  source art's extension still finds the right file. Where a name matches several archive files the
+  export log says so and names the one it used, and anything genuinely missing is reported rather
+  than quietly exported as a magenta placeholder.
 
 ## Requirements
 
@@ -74,9 +83,12 @@ Working end to end:
 
 1. Download the latest zip from [Releases](../../releases), extract it anywhere, and run
    `Wc3ModelViewer.exe`. The release build is self-contained — no .NET installation required.
-2. Point it at your Warcraft III install folder (the one containing `.build.info`, e.g.
-   `C:\games\Warcraft III`) and click **Open**.
-3. Filter the list, click a model to preview it, double-click a sequence to play it.
+2. It opens your Warcraft III install by itself if it can find one, and remembers the folder you
+   last opened. Otherwise point it at the folder containing `.build.info` (e.g.
+   `C:\games\Warcraft III`) and click **Open**. Everything else waits on this, custom models
+   included — they borrow most of their textures from the installed game.
+3. Filter the list, click a model to preview it, double-click a sequence to play it. **Open file…**
+   loads a custom `.mdx` from disk instead.
 4. **Export…** chooses formats, geosets, animations, scale and output folder.
 
 To use an exported model in a map: copy the contents of the export folder — the `.m3` and the

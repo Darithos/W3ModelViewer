@@ -245,6 +245,17 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         };
         files.AddRange(pngs);
         _log.Add($"{prims.Count} geosets, {nodes.Count} joints, {materials.Count} materials");
+
+        // A loose custom model usually ships only its own art, so most of what just got packaged as
+        // PNG came out of the game install. Say so, and name what could not be found at all — an
+        // unresolved reference is written as a magenta placeholder, which looks like a real texture.
+        var provenance = textures.ProvenanceOf(mdx, modelCascName, options.TeamColor);
+        if (provenance.FromGameInstall > 0)
+            _log.Add($"{provenance.FromGameInstall} texture(s) taken from the game install");
+        if (provenance.Missing.Count > 0)
+            _log.Add($"{provenance.Missing.Count} texture(s) not found anywhere — exported as magenta: "
+                     + string.Join(", ", provenance.Missing.Take(5)));
+
         return new GltfExportResult { Files = files, Log = _log };
     }
 

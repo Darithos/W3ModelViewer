@@ -246,7 +246,45 @@ public sealed class M3Exporter
             ? $"{refs.Count} texture references, all produced by this export"
             : $"{orphans.Count} texture reference(s) name no exported file: {string.Join(", ", orphans)}");
 
+        ReportTextureSources(textureCache, modelCascName);
+
         return new M3ExportResult { M3 = m3, Textures = _textures, Log = _log, TextureReferences = refs };
+    }
+
+    /// <summary>
+    /// Says where the packaged textures came from. This matters most for a custom model opened off
+    /// disk: it usually ships only its own art and leaves the stock references to the game install,
+    /// so "12 textures taken from the game install" is the difference between a complete package and
+    /// one full of magenta placeholders the user only discovers in the StarCraft II editor.
+    /// </summary>
+    private void ReportTextureSources(Casc.Wc3TextureCache cache, string modelCascName)
+    {
+        var p = cache.ProvenanceOf(_mdx, modelCascName, _opt.TeamColor);
+        var byName = p.MatchedByName.ToList();
+
+        var parts = new List<string>();
+        if (p.BesideModel > 0) parts.Add($"{p.BesideModel} shipped with the model");
+        if (p.FromGameInstall > 0) parts.Add($"{p.FromGameInstall} from the game install");
+        if (parts.Count > 0)
+            // Files written and references resolved are different numbers and both matter: a
+            // flipbook resolves fifty frames but exports one, so reporting either alone reads as a
+            // miscount. Say both.
+            _log.Add($"{_textures.Count} texture file(s) written, from {p.Found.Count} resolved "
+                     + $"reference(s): {string.Join(", ", parts)}");
+
+        // A name-only match found real pixels but may have found the wrong file — texture names are
+        // not unique across the archive. Name them so a wrong guess is checkable rather than silent,
+        // and say how many files the name could have meant.
+        foreach (var o in byName)
+            _log.Add($"   {o.Reference} is not in the game install at that path; used {o.From}"
+                     + (o.IsAmbiguous
+                         ? $" — {o.Alternatives} files share that name, so check this one"
+                         : " (the only file with that name)"));
+
+        if (p.Missing.Count > 0)
+            _log.Add($"{p.Missing.Count} texture(s) could not be found beside the model or in the game "
+                     + $"install and export as magenta placeholders: {string.Join(", ", p.Missing.Take(8))}"
+                     + (p.Missing.Count > 8 ? $" (+{p.Missing.Count - 8} more)" : ""));
     }
 
     // ---------------------------------------------------------------- bones
