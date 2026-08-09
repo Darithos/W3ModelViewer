@@ -64,12 +64,50 @@ public partial class MainWindow : Window
         InitializeComponent();
         DetectInstallPath();
         CompositionTarget.Rendering += OnFrameTick;
+
+        // Open the install before anything else can happen. Every path through this app needs it —
+        // browsing obviously, but so does a custom model off disk, which nearly always leaves the
+        // Warcraft III textures it reuses as bare paths for the game to supply. Opening it up front
+        // means those are simply there, rather than a model that loads grey and an error to read.
+        bool opened = false;                       // Loaded can fire again if the window is re-parented
+        Loaded += async (_, _) =>
+        {
+            if (opened) return;
+            opened = true;
+            if (IsInstallPath(InstallPath.Text.Trim())) await OpenStorageAsync();
+            else Status.Text = "Point this at your Warcraft III folder — the one holding .build.info — "
+                               + "and click Open. Everything else needs it, including custom models, "
+                               + "which borrow their textures from the installed game.";
+        };
     }
 
-    /// <summary>Pre-fills the install path with the first common Warcraft III location that exists
-    /// (identified by its .build.info file). The XAML default stays if nothing is found.</summary>
+    /// <summary>Where the last successfully opened install is remembered between runs.</summary>
+    private static string SettingsFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "W3ModelViewer", "install-path.txt");
+
+    /// <summary>A Warcraft III folder is the one holding <c>.build.info</c>, which names the CASC build.</summary>
+    private static bool IsInstallPath(string path) =>
+        path.Length > 0 && File.Exists(Path.Combine(path, ".build.info"));
+
+    /// <summary>
+    /// Pre-fills the install path: the folder last opened successfully, else the first common
+    /// Warcraft III location that exists. The XAML default stays if nothing is found.
+    /// </summary>
     private void DetectInstallPath()
     {
+        try
+        {
+            if (File.Exists(SettingsFile) && File.ReadAllText(SettingsFile).Trim() is { Length: > 0 } saved
+                && IsInstallPath(saved))
+            {
+                InstallPath.Text = saved;
+                return;
+            }
+        }
+        catch (IOException) { /* a remembered path is a convenience; detection below still runs */ }
+        catch (UnauthorizedAccessException) { }
+
         string[] candidates =
         [
             @"C:\games\Warcraft III",
@@ -79,8 +117,19 @@ public partial class MainWindow : Window
         ];
         foreach (string c in candidates)
         {
-            if (File.Exists(Path.Combine(c, ".build.info"))) { InstallPath.Text = c; return; }
+            if (IsInstallPath(c)) { InstallPath.Text = c; return; }
         }
+    }
+
+    private static void RememberInstallPath(string path)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
+            File.WriteAllText(SettingsFile, path);
+        }
+        catch (IOException) { /* not being able to remember is not worth interrupting the user for */ }
+        catch (UnauthorizedAccessException) { }
     }
 
     // Supersampling factor: the viewport renders at this multiple of its on-screen size, then the Viewbox
@@ -112,7 +161,7 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         string path = InstallPath.Text.Trim();
-        if (!File.Exists(Path.Combine(path, ".build.info")))
+        if (!IsInstallPath(path))
         {
             Status.Text = "No .build.info there — pick the folder that holds Warcraft III.exe: " + path;
             return;
@@ -130,12 +179,15 @@ public partial class MainWindow : Window
             _storage?.Dispose();
             _storage = storage;
             _index = index;
-            _cascTextures = new Wc3TextureCache(storage);
+            _cascTextures = new Wc3TextureCache(storage, index);
+            RememberInstallPath(path);
+            OpenFileButton.IsEnabled = true;
             ApplyFilter();
             Status.Text = $"Loaded {index.Models.Count:N0} models " +
                           $"({index.Models.Count(m => m.ArtSet == Wc3ArtSet.Reforged):N0} HD, " +
-                          $"{index.Models.Count(m => m.ArtSet == Wc3ArtSet.Classic):N0} SD). " +
-                          "Type to filter, then click one to view.";
+                          $"{index.Models.Count(m => m.ArtSet == Wc3ArtSet.Classic):N0} SD) and " +
+                          $"{index.TextureLookup.Count:N0} textures. " +
+                          "Type to filter, click a model to view, or Open file… for a custom one.";
         }
         catch (Exception ex)
         {
@@ -193,11 +245,14 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Opens a loose .mdx from disk — custom models. Textures resolve from the model's own folder
-    /// first (.blp/.dds beside the file); stock references fall through to the CASC when open.
+    /// first (.blp/.dds beside the file); stock references fall through to the game install, which
+    /// is the usual case, since most custom models ship only the art their author made and leave
+    /// every borrowed Warcraft III texture as a bare path.
     /// </summary>
     private async Task OpenLooseFileAsync()
     {
-        if (_busy) return;
+        // The button is disabled without one, so this is a guard rather than a path users reach.
+        if (_busy || _storage is null) return;
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Open a Warcraft III model",
@@ -219,7 +274,10 @@ public partial class MainWindow : Window
                 RelativePath = Path.GetFileName(path),
                 ArtSet = model.IsReforged ? Wc3ArtSet.Reforged : Wc3ArtSet.Classic,
             };
-            var cache = new Wc3TextureCache(_storage);
+            // The catalog is what lets a custom model's re-pathed reference (war3mapImported\x.blp,
+            // a bare file name, an absolute path off the author's desktop) still find the stock
+            // texture it means — a loose model has no archive prefix to anchor a guess to.
+            var cache = new Wc3TextureCache(_storage, _index) { PreferHd = model.IsReforged };
             string dir = Path.GetDirectoryName(path) ?? "";
             if (dir.Length > 0)
             {
@@ -229,8 +287,11 @@ public partial class MainWindow : Window
                 if (Path.GetDirectoryName(dir) is { Length: > 0 } parent) cache.LocalRoots.Add(parent);
             }
             PresentModel(entry, model, cache);
-            if (_storage is null)
-                Status.Text += "   (no CASC open — stock game textures will be missing)";
+
+            // PresentModel has already resolved every texture to draw the model, so the cache can
+            // now say where each one came from. A custom model borrowing stock art is the normal
+            // case, and the count is the user's assurance that the export will package it.
+            Status.Text += "   —   " + DescribeTextureSources(cache, model);
         }
         catch (Exception ex)
         {
@@ -242,6 +303,24 @@ public partial class MainWindow : Window
         {
             SetBusy(false, null);
         }
+    }
+
+    /// <summary>
+    /// Summarises where a loose model's textures came from, for the status bar. Textures taken from
+    /// the game install are called out because they are the ones the user did not supply and might
+    /// not expect to be exported — and because a count of zero on a model that clearly borrows stock
+    /// art means the install is not open.
+    /// </summary>
+    private static string DescribeTextureSources(Wc3TextureCache cache, MdxModel model)
+    {
+        var p = cache.ProvenanceOf(model, "", ViewerTeamColor);
+
+        var parts = new List<string>();
+        if (p.BesideModel > 0) parts.Add($"{p.BesideModel} beside the model");
+        if (p.FromGameInstall > 0) parts.Add($"{p.FromGameInstall} from the game install");
+        if (parts.Count == 0) parts.Add("none resolved");
+        if (p.Missing.Count > 0) parts.Add($"{p.Missing.Count} missing");
+        return "textures: " + string.Join(", ", parts);
     }
 
     private void PresentModel(Wc3ModelEntry entry, MdxModel model, Wc3TextureCache textures)
@@ -765,6 +844,16 @@ public partial class MainWindow : Window
                         ? "preview the .m3 in the SC2 cutscene editor, or import the folder as-is"
                         : $"WARNING: {missing.Count} texture reference(s) do not resolve — "
                           + string.Join(", ", missing.Take(3));
+
+                    // That audit only proves each referenced file exists; a texture the converter
+                    // could not find was written as a magenta placeholder, which exists too. Say so
+                    // separately or the package looks complete when it is not.
+                    var missingTex = textures.ProvenanceOf(model, entry.CascName, options.TeamColor).Missing;
+                    if (missingTex.Count > 0)
+                        note = $"WARNING: {missingTex.Count} texture(s) exported as magenta placeholders — "
+                               + $"not beside the model and not in the game install: "
+                               + string.Join(", ", missingTex.Take(3))
+                               + (missingTex.Count > 3 ? $" (+{missingTex.Count - 3} more)" : "");
                 }
                 return (count, dir, note);
             });
@@ -790,6 +879,8 @@ public partial class MainWindow : Window
         _busy = busy;
         OpenButton.IsEnabled = !busy;
         AssetList.IsEnabled = !busy;
+        // Stays disabled while no install is open — see the button's XAML.
+        OpenFileButton.IsEnabled = !busy && _storage is not null;
         if (status is not null) Status.Text = status;
         Mouse.OverrideCursor = busy ? Cursors.Wait : null;
     }

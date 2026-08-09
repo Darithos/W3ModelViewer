@@ -20,9 +20,11 @@
                      VerticalContentAlignment="Center" Padding="4"/>
             <Button Grid.Column="2" x:Name="OpenButton" Content="Open" Width="90" Margin="8,0,0,0"
                     Padding="4" Click="OnOpenClick"/>
+            <!-- Disabled until the install is open: a custom model resolves most of its textures out
+                 of the game, so opening one first would only show it wrong. -->
             <Button Grid.Column="3" x:Name="OpenFileButton" Content="Open file…" Width="90" Margin="8,0,0,0"
-                    Padding="4" Click="OnOpenFileClick"
-                    ToolTip="Open a loose .mdx model from disk (custom models); its textures are found next to the file, stock references from the CASC"/>
+                    Padding="4" Click="OnOpenFileClick" IsEnabled="False"
+                    ToolTip="Open a loose .mdx model from disk (custom models); textures are found next to the file, and everything it borrows from Warcraft III comes out of your install"/>
             <Button Grid.Column="4" x:Name="ExportButton" Content="Export…" Width="90" Margin="8,0,0,0"
                     Padding="4" Click="OnExportClick" IsEnabled="False"
                     ToolTip="Export the loaded model to .m3 for StarCraft II (and optionally .gltf for Blender)"/>
@@ -30,7 +32,7 @@
 
         <!-- Status bar -->
         <Border DockPanel.Dock="Bottom" Background="#14161A" Padding="8,4">
-            <TextBlock x:Name="Status" Foreground="#9AA" Text="Enter your install path and click Open."/>
+            <TextBlock x:Name="Status" Foreground="#9AA" Text="Opening your Warcraft III install…"/>
         </Border>
 
         <Grid>

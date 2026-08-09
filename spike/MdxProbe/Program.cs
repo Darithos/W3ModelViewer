@@ -23,6 +23,18 @@ if (args.Contains("--validate"))
 // --tex resolves and identifies every texture a set of models references.
 if (args.Contains("--tex")) return MdxProbe.TexProbe.Run(install);
 
+// --loose <file-or-dir> [outDir] [--mangle] resolves and exports LOOSE models — the custom-model
+// case, where the .mdx has no archive prefix and its textures are stock game art the author never
+// shipped. --mangle re-spells every reference the way real custom models do and checks each still
+// resolves to the same file.
+if (args.Contains("--loose"))
+{
+    int li = Array.IndexOf(args, "--loose");
+    if (li + 1 >= args.Length) { Console.WriteLine("usage: --loose <file-or-dir> [outDir] [--mangle]"); return 1; }
+    string outDir = li + 2 < args.Length && !args[li + 2].StartsWith("--") ? args[li + 2] : null!;
+    return MdxProbe.LooseProbe.Run(install, args[li + 1], outDir, args.Contains("--mangle"));
+}
+
 // --export runs the full m3 export for a spread of models and verifies the output structurally.
 if (args.Contains("--export"))
 {

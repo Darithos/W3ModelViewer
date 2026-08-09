@@ -58,6 +58,34 @@ public sealed class Wc3AssetIndex
     /// <summary>Every relative texture path, mapped to the CASC names that provide it (SD and HD).</summary>
     public required IReadOnlyDictionary<string, List<string>> TextureLookup { get; init; }
 
+    private Dictionary<string, List<string>>? _byFileName;
+
+    /// <summary>
+    /// Every texture file name, mapped to the CASC names that provide it under any folder — the last
+    /// resort for a custom model whose author's tools rewrote the path but kept the name.
+    /// </summary>
+    /// <remarks>
+    /// Built on first use and kept here rather than in <see cref="Wc3TextureCache"/>: it is derived
+    /// purely from the catalog, and a per-cache copy would rebuild it for every model opened.
+    /// </remarks>
+    public IReadOnlyDictionary<string, List<string>> TextureLookupByFileName
+    {
+        get
+        {
+            if (_byFileName is not null) return _byFileName;
+            var byName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (relative, providers) in TextureLookup)
+            {
+                int slash = relative.LastIndexOfAny(['\\', '/']);
+                string leaf = slash < 0 ? relative : relative[(slash + 1)..];
+                if (leaf.Length == 0) continue;
+                if (!byName.TryGetValue(leaf, out var list)) byName[leaf] = list = [];
+                list.AddRange(providers);
+            }
+            return _byFileName = byName;
+        }
+    }
+
     public static Wc3AssetIndex FromNames(IReadOnlyList<string> names)
     {
         var modelNames = new List<(string CascName, string Relative, Wc3ArtSet ArtSet)>();
