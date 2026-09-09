@@ -89,8 +89,8 @@ Working end to end:
 
 ## Getting started
 
-1. Download the latest zip from [Releases](../../releases), extract it anywhere, and run
-   `Wc3ModelViewer.exe`. The release build is self-contained — no .NET installation required.
+1. Download `Wc3ModelViewer.exe` from [Releases](../../releases) and run it. It is a single
+   self-contained file — nothing to extract, no installer, no .NET installation required.
 2. It opens your Warcraft III install by itself if it can find one, and remembers the folder you
    last opened. Otherwise point it at the folder containing `.build.info` (e.g.
    `C:\games\Warcraft III`) and click **Open**. Everything else waits on this, custom models
@@ -113,7 +113,11 @@ that lands anywhere other than inside `Assets\` leaves the model untextured with
 dotnet build src/Wc3ModelViewer.slnx -c Release
 ```
 
-x64 only — the bundled native `CascLib.dll` is a 64-bit build.
+x64 only — the bundled native `CascLib.dll` is a 64-bit build. The single-file release build is:
+
+```
+dotnet publish src/Wc3ModelViewer/Wc3ModelViewer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true
+```
 
 ## Layout
 
