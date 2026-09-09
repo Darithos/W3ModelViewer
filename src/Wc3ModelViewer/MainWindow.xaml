@@ -35,6 +35,20 @@
             <TextBlock x:Name="Status" Foreground="#9AA" Text="Opening your Warcraft III install…"/>
         </Border>
 
+        <!-- Missing-texture banner. Sits above the status bar and only when something is wrong:
+             an unresolved texture draws as magenta, which is loud in the viewport but says nothing
+             about which reference failed or what to do about it. -->
+        <Border DockPanel.Dock="Bottom" x:Name="TextureWarning" Background="#4A2416" BorderBrush="#8A4A22"
+                BorderThickness="0,1,0,1" Padding="8,5" Visibility="Collapsed" Cursor="Hand"
+                MouseLeftButtonUp="OnTextureWarningClick">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="Map them →" Foreground="#FFC08A"
+                           FontWeight="Bold" Margin="12,0,0,0"/>
+                <TextBlock x:Name="TextureWarningText" Foreground="#FFD9BE"
+                           TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
+
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="300" MinWidth="180"/>
@@ -83,21 +97,8 @@
 
             <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch" Background="#333"/>
 
-            <!-- Geoset visibility panel -->
+            <!-- Geoset / texture panel -->
             <DockPanel Grid.Column="4" Margin="0,0,8,8">
-                <TextBlock DockPanel.Dock="Top" Text="Geosets" Foreground="#DDD"
-                           FontWeight="Bold" Margin="4,2,4,4"/>
-                <DockPanel DockPanel.Dock="Top" Margin="4,0,4,6">
-                    <ComboBox DockPanel.Dock="Right" x:Name="LodCombo" Width="70"
-                              SelectionChanged="OnLodChanged" Visibility="Collapsed"
-                              ToolTip="Level of detail (LOD 0 = full)"/>
-                    <StackPanel Orientation="Horizontal">
-                        <Button Content="All" Width="42" Padding="2" Click="OnShowAllGeosets"/>
-                        <Button Content="None" Width="42" Padding="2" Margin="4,0,0,0" Click="OnHideAllGeosets"/>
-                        <Button Content="Reset" Width="52" Padding="2" Margin="4,0,0,0" Click="OnResetGeosets"
-                                ToolTip="Restore the default set (hides GEOA-invisible geosets)"/>
-                    </StackPanel>
-                </DockPanel>
                 <!-- Animation playback panel -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="4,8,4,0">
                     <TextBlock Text="Animation" Foreground="#DDD" FontWeight="Bold" Margin="0,0,0,4"/>
@@ -120,19 +121,75 @@
                                 ValueChanged="OnFrameScrubbed" ToolTip="Scrub time"/>
                     </DockPanel>
                 </StackPanel>
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#14161A" BorderBrush="#333" BorderThickness="1">
-                    <ItemsControl x:Name="GeosetList">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <CheckBox IsChecked="{Binding IsVisible, Mode=TwoWay}" Margin="6,2"
-                                          Foreground="#CCC" ToolTip="{Binding Tip}">
-                                    <TextBlock Text="{Binding Label}" Foreground="{Binding LabelBrush}"
-                                               TextTrimming="CharacterEllipsis"/>
-                                </CheckBox>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                <TabControl x:Name="SidePanel" Background="Transparent" BorderThickness="0">
+                    <TabItem Header="Geosets">
+                        <DockPanel Margin="0,6,0,0">
+                            <DockPanel DockPanel.Dock="Top" Margin="4,0,4,6">
+                                <ComboBox DockPanel.Dock="Right" x:Name="LodCombo" Width="70"
+                                          SelectionChanged="OnLodChanged" Visibility="Collapsed"
+                                          ToolTip="Level of detail (LOD 0 = full)"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="All" Width="42" Padding="2" Click="OnShowAllGeosets"/>
+                                    <Button Content="None" Width="42" Padding="2" Margin="4,0,0,0" Click="OnHideAllGeosets"/>
+                                    <Button Content="Reset" Width="52" Padding="2" Margin="4,0,0,0" Click="OnResetGeosets"
+                                            ToolTip="Restore the default set (hides GEOA-invisible geosets)"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#14161A" BorderBrush="#333" BorderThickness="1">
+                                <ItemsControl x:Name="GeosetList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsVisible, Mode=TwoWay}" Margin="6,2"
+                                                      Foreground="#CCC" ToolTip="{Binding Tip}">
+                                                <TextBlock Text="{Binding Label}" Foreground="{Binding LabelBrush}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </CheckBox>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </TabItem>
+
+                    <!-- Every texture the model references, where each one resolved from, and a way
+                         to point any of them at a file by hand. This belongs in the viewer rather
+                         than the export dialog: a remapped texture has to be visible in the preview
+                         before anyone commits it to an export. -->
+                    <TabItem Header="Textures">
+                        <DockPanel Margin="0,6,0,0">
+                            <DockPanel DockPanel.Dock="Top" Margin="4,0,4,6">
+                                <Button DockPanel.Dock="Right" Content="Clear" Width="52" Padding="2"
+                                        Click="OnClearTextureOverrides"
+                                        ToolTip="Drop every texture mapped by hand and resolve again"/>
+                                <TextBlock x:Name="TextureSummary" Foreground="#9AA"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            </DockPanel>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Background="#14161A" BorderBrush="#333" BorderThickness="1">
+                                <ItemsControl x:Name="TextureList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="6,4" BorderBrush="#262A30" BorderThickness="0,0,0,1">
+                                                <DockPanel>
+                                                    <Button DockPanel.Dock="Right" Content="…" Width="26" Padding="0"
+                                                            Margin="6,0,0,0" VerticalAlignment="Top"
+                                                            Tag="{Binding}" Click="OnPickTexture"
+                                                            ToolTip="Choose a file for this reference"/>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Name}" Foreground="{Binding NameBrush}"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Reference}"/>
+                                                        <TextBlock Text="{Binding SourceLabel}" Foreground="{Binding SourceBrush}"
+                                                                   FontSize="10" TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding From}"/>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </TabItem>
+                </TabControl>
             </DockPanel>
         </Grid>
     </DockPanel>

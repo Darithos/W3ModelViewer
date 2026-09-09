@@ -347,6 +347,9 @@ public partial class MainWindow : Window
         PopulateGeosetPanel();
         RebuildScene(zoom: true);
         PopulateAnimCombo();
+        // After RebuildScene: the panel reports where each texture actually came from, which the
+        // cache only knows once something has asked it to resolve them.
+        PopulateTexturePanel();
         ExportButton.IsEnabled = true;
 
         var shown = _geosetItems.Where(i => i.IsVisible).Select(i => i.Geoset).ToList();
@@ -404,6 +407,145 @@ public partial class MainWindow : Window
     private void OnShowAllGeosets(object sender, RoutedEventArgs e) => SetAllGeosets(_ => true);
     private void OnHideAllGeosets(object sender, RoutedEventArgs e) => SetAllGeosets(_ => false);
     private void OnResetGeosets(object sender, RoutedEventArgs e) => SetAllGeosets(i => DefaultVisible(i.Geoset));
+
+    // ---------------- Texture panel ----------------
+
+    /// <summary>
+    /// One TEXS reference as the panel shows it: what the model asked for, what answered it, and
+    /// how confident that answer is.
+    /// </summary>
+    private sealed class TextureItem
+    {
+        public required MdxTexture Texture { get; init; }
+        public required string Reference { get; init; }
+        public required string Name { get; init; }
+        public required string SourceLabel { get; init; }
+        public required string From { get; init; }
+        public required Brush NameBrush { get; init; }
+        public required Brush SourceBrush { get; init; }
+    }
+
+    private static Brush Frozen(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>
+    /// Rebuilds the texture list from what the cache actually resolved, and raises the banner when
+    /// anything is still unmatched. Call after every load and after every remap.
+    /// </summary>
+    private void PopulateTexturePanel()
+    {
+        if (_model is null || _textures is null || _entry is null)
+        {
+            TextureList.ItemsSource = null;
+            TextureWarning.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var items = new List<TextureItem>();
+        var missing = new List<string>();
+        int chosen = 0;
+
+        foreach (var tex in _model.Textures)
+        {
+            // Replaceable slots are generated, not files; there is nothing to map.
+            if (tex.IsTeamColor || tex.IsTeamGlow || tex.FileName.Length == 0) continue;
+
+            // Resolve it here rather than trusting what the scene happened to need: RebuildScene
+            // only composes the materials of the geosets currently visible at the current LOD, so a
+            // texture belonging to a hidden geoset would never have been attempted and would report
+            // as missing. Load is cached, so asking costs nothing the second time.
+            _ = _textures.Load(_entry.CascName, tex, ViewerTeamColor);
+            var origin = _textures.OriginOf(_entry.CascName, tex);
+            string leaf = System.IO.Path.GetFileName(tex.FileName.Replace('/', '\\'));
+
+            string label;
+            Brush nameBrush = Frozen(0xCC, 0xCC, 0xCC), sourceBrush = Frozen(0x7A, 0x88, 0x92);
+            if (origin is null)
+            {
+                label = "not found — click … to map it";
+                nameBrush = Frozen(0xFF, 0xA0, 0x70);
+                sourceBrush = Frozen(0xFF, 0xA0, 0x70);
+                missing.Add(leaf);
+            }
+            else
+            {
+                var o = origin.Value;
+                label = o.Source switch
+                {
+                    TextureSource.ChosenByUser => "mapped by you",
+                    TextureSource.BesideModel => "beside the model",
+                    TextureSource.BesideModelByName => "found by name near the model",
+                    TextureSource.GameInstall => "game install",
+                    _ => o.Alternatives > 1
+                        ? $"game install, by name ({o.Alternatives} candidates)"
+                        : "game install, by name",
+                };
+                if (o.Source == TextureSource.ChosenByUser) sourceBrush = Frozen(0x8A, 0xD0, 0x8A);
+                else if (o.IsAmbiguous) sourceBrush = Frozen(0xD8, 0xC0, 0x70);
+                if (o.Source == TextureSource.ChosenByUser) chosen++;
+            }
+
+            items.Add(new TextureItem
+            {
+                Texture = tex, Reference = tex.FileName, Name = leaf,
+                SourceLabel = label, From = origin?.From ?? tex.FileName,
+                NameBrush = nameBrush, SourceBrush = sourceBrush,
+            });
+        }
+
+        TextureList.ItemsSource = items;
+        TextureSummary.Text = $"{items.Count} texture(s)"
+                              + (chosen > 0 ? $", {chosen} mapped by you" : "")
+                              + (missing.Count > 0 ? $", {missing.Count} missing" : "");
+
+        TextureWarning.Visibility = missing.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (missing.Count > 0)
+            TextureWarningText.Text = missing.Count == 1
+                ? $"1 texture could not be found: {missing[0]} — it draws as magenta until you map it."
+                : $"{missing.Count} textures could not be found: {string.Join(", ", missing.Take(4))}"
+                  + (missing.Count > 4 ? $" and {missing.Count - 4} more" : "")
+                  + " — they draw as magenta until you map them.";
+    }
+
+    /// <summary>The banner is a shortcut to the panel that can fix what it is complaining about.</summary>
+    private void OnTextureWarningClick(object sender, MouseButtonEventArgs e) => SidePanel.SelectedIndex = 1;
+
+    private void OnPickTexture(object sender, RoutedEventArgs e)
+    {
+        if (_textures is null || sender is not Button { Tag: TextureItem item }) return;
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a texture for " + item.Name,
+            Filter = "Textures (*.blp;*.dds;*.tga)|*.blp;*.dds;*.tga|All files (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        _textures.SetOverride(item.Reference, dlg.FileName);
+        ReloadTextures();
+    }
+
+    private void OnClearTextureOverrides(object sender, RoutedEventArgs e)
+    {
+        if (_textures is null || _textures.Overrides.Count == 0) return;
+        _textures.ClearOverrides();
+        ReloadTextures();
+    }
+
+    /// <summary>
+    /// Redraws with the current mapping. The composited materials and the cutout classification are
+    /// both derived from the pixels, so both caches have to go, not just the scene.
+    /// </summary>
+    private void ReloadTextures()
+    {
+        _cutoutCache.Clear();
+        RebuildScene();
+        PopulateTexturePanel();
+    }
 
     private void OnLodChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -550,6 +692,17 @@ public partial class MainWindow : Window
                 pixels[i] = pixels[i] >= MaterialCompositor.CutoutThreshold * 255 ? (byte)255 : (byte)0;
         }
 
+        // No additive blend either. What defines an additive layer is that black adds nothing, so
+        // carry brightness in the alpha channel: the brightest texels stay solid and glow, and the
+        // black field an effect card is mostly made of becomes transparent instead of a rectangle.
+        // WC3's Additive mode ignores the texture's own alpha, so overwriting it here loses nothing.
+        if (composite.Blend == CompositeBlend.Additive)
+        {
+            pixels = (byte[])pixels.Clone();
+            for (int i = 0; i < pixels.Length; i += 4)
+                pixels[i + 3] = Math.Max(pixels[i], Math.Max(pixels[i + 1], pixels[i + 2]));
+        }
+
         var bmp = BitmapSource.Create(img.Width, img.Height, 96, 96, PixelFormats.Bgra32, null, pixels, img.Width * 4);
         bmp.Freeze();
         // Absolute viewport + Tile = true GL_REPEAT semantics for out-of-range UVs (same as D3 viewer).
@@ -565,9 +718,15 @@ public partial class MainWindow : Window
 
     private static (Material Front, Material? Back) MakeMaterial(CompositeMaterial composite, Brush brush)
     {
-        Material material = composite.Blend == CompositeBlend.Additive || composite.Unshaded
-            ? new MaterialGroup { Children = { new DiffuseMaterial(Brushes.Black), new EmissiveMaterial(brush) } }
-            : new DiffuseMaterial(brush);
+        // An additive card is pure emission and nothing else. Giving it the opaque black
+        // DiffuseMaterial that an unshaded SURFACE needs is what made every glow, aura and spell
+        // card draw as a solid black or team-coloured rectangle standing through the model: the
+        // black diffuse is fully opaque, so the quad occluded everything behind it.
+        Material material = composite.Blend == CompositeBlend.Additive
+            ? new EmissiveMaterial(brush)
+            : composite.Unshaded
+                ? new MaterialGroup { Children = { new DiffuseMaterial(Brushes.Black), new EmissiveMaterial(brush) } }
+                : new DiffuseMaterial(brush);
         return (material, composite.TwoSided ? material : null);
     }
 
@@ -807,9 +966,8 @@ public partial class MainWindow : Window
             var entry = _entry;
             var textures = _textures;
 
-            // D3-exporter layout: <OutDir>\<ModelName>\<ModelName>.m3 (+ .gltf/.bin/PNGs) with the
-            // DDS textures under Textures\ — the same relative path the .m3 references, so both
-            // the SC2 loose-file preview and a drag-into-importer keep their textures.
+            // <OutDir>\<ModelName>\ holds the glTF set at the top and the m3 package under an
+            // Assets\ folder that mirrors the paths baked into the .m3.
             var (fileCount, unitDir, m3Note) = await Task.Run(() =>
             {
                 string dir = Path.Combine(outDir, options.ModelName);
@@ -827,9 +985,14 @@ public partial class MainWindow : Window
                 if (doM3)
                 {
                     var result = new M3Exporter(model, options).Export(textures, entry.CascName);
-                    string m3Path = Path.Combine(dir, options.ModelName + ".m3");
+                    // The .m3 and its textures go inside a real Assets\ folder mirroring the paths
+                    // baked into the file, so the package is one folder to merge rather than two
+                    // pieces to place correctly — see M3ExportOptions.TexturePrefix.
+                    string assetsDir = Path.Combine(dir, "Assets");
+                    Directory.CreateDirectory(assetsDir);
+                    string m3Path = Path.Combine(assetsDir, options.ModelName + ".m3");
                     File.WriteAllBytes(m3Path, result.M3);
-                    string texDir = Path.Combine(dir, options.TextureFolder);
+                    string texDir = Path.Combine(assetsDir, options.TextureFolder);
                     Directory.CreateDirectory(texDir);
                     foreach (var tex in result.Textures)
                         File.WriteAllBytes(Path.Combine(texDir, tex.FileName), tex.Data);
@@ -840,20 +1003,26 @@ public partial class MainWindow : Window
                     // broken reference would otherwise only show up as a shading bug in the editor.
                     var refs = M3TextureAudit.Verify(m3Path);
                     var missing = refs.Where(r => !r.Resolved).Select(r => r.Path).ToList();
-                    note = missing.Count == 0
-                        ? "preview the .m3 in the SC2 cutscene editor, or import the folder as-is"
-                        : $"WARNING: {missing.Count} texture reference(s) do not resolve — "
-                          + string.Join(", ", missing.Take(3));
 
                     // That audit only proves each referenced file exists; a texture the converter
-                    // could not find was written as a magenta placeholder, which exists too. Say so
-                    // separately or the package looks complete when it is not.
+                    // could not find was written as a magenta placeholder, which exists too. Both
+                    // are reported: they are different faults, and reporting only one lets an
+                    // export that has both look like it only has the second.
                     var missingTex = textures.ProvenanceOf(model, entry.CascName, options.TeamColor).Missing;
+
+                    var warnings = new List<string>();
+                    if (missing.Count > 0)
+                        warnings.Add($"{missing.Count} texture reference(s) do not resolve — "
+                                     + string.Join(", ", missing.Take(3)));
                     if (missingTex.Count > 0)
-                        note = $"WARNING: {missingTex.Count} texture(s) exported as magenta placeholders — "
-                               + $"not beside the model and not in the game install: "
-                               + string.Join(", ", missingTex.Take(3))
-                               + (missingTex.Count > 3 ? $" (+{missingTex.Count - 3} more)" : "");
+                        warnings.Add($"{missingTex.Count} texture(s) exported as magenta placeholders "
+                                     + "(not beside the model and not in the game install): "
+                                     + string.Join(", ", missingTex.Take(3))
+                                     + (missingTex.Count > 3 ? $" (+{missingTex.Count - 3} more)" : ""));
+
+                    note = warnings.Count == 0
+                        ? @"copy the Assets folder into your map/mod root (merge with the existing Assets\)"
+                        : "WARNING: " + string.Join("; ", warnings);
                 }
                 return (count, dir, note);
             });

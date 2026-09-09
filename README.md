@@ -33,12 +33,13 @@ Working end to end:
   visibility, PBR→specular texture conversion, written directly by the app: **no Blender, no
   add-ons, no external tools**. Verified in the StarCraft II editor: models load, animate and
   render textured.
-- **Copy/paste-ready export layout** — the export folder holds `<Name>.m3` next to
-  `textures\<Name>\*.dds`, which is exactly what you paste into a map's `Assets\` folder; the
-  baked references read `Assets/textures/<Name>/*.dds` and line up with no renaming. The per-model
-  subfolder keeps several imported units from colliding on a texture filename. Every texture path
-  is read back out of the written file and resolved against what landed on disk, because SC2 draws
-  a layer it cannot find as black rather than reporting anything.
+- **Copy/paste-ready export layout** — the export folder holds an `Assets\` folder containing
+  `<Name>.m3` and `textures\<Name>\*.dds`, mirroring the references baked into the file
+  (`Assets/textures/<Name>/*.dds`) exactly. Merge that one folder into your map or mod root and
+  everything lines up with no renaming. The per-model subfolder keeps several imported units from
+  colliding on a texture filename. Every texture path is read back out of the written file and
+  resolved against what landed on disk, because SC2 draws a layer it cannot find as black rather
+  than reporting anything.
 - **Bone palette splitting** — geosets are split into regions of at most 45 bones. SC2 skins each
   draw call from a fixed matrix palette, and Reforged geosets routinely reference 80+ bones, which
   renders correctly at rest but explodes into spikes as soon as anything animates.
@@ -59,8 +60,15 @@ Working end to end:
   animation, for editing in Blender (re-export `.m3` there with m3studio if desired). Verified
   headlessly: Blender imports the armature, skinned mesh and all actions.
 - **Custom models** — *Open file…* loads a loose `.mdx` from disk (Hive Workshop downloads etc.);
-  textures resolve from the model's folder (`.blp` including JPEG-content, `.dds`), stock
-  references from your game install.
+  textures resolve from the model's folder (`.blp` including JPEG-content, `.dds`), then by file
+  name anywhere in the folder tree beside it — a download that references
+  `Heroes\Human\Drenden\Drenden.blp` from the author's own disk still finds the `Drenden.blp` it
+  shipped, wherever in the package it sits. Stock references come from your game install.
+- **Texture panel and hand-mapping** — the *Textures* tab lists every reference the model makes,
+  what answered it, and how confident that answer was (beside the model, found by name, game
+  install, or a file you chose). Anything unresolved raises a banner rather than quietly drawing
+  magenta, and `…` points that reference at a file of your choosing. Mapping happens in the viewer,
+  so you see the result in the preview, and the export uses exactly what you previewed.
 - **Borrowed game textures are packaged** — most custom models ship only the art their author drew
   and leave every Warcraft III texture they reuse as a bare path. Those are pulled out of your
   installed game, converted like any other, and written into the export folder, so the package is
@@ -81,8 +89,8 @@ Working end to end:
 
 ## Getting started
 
-1. Download the latest zip from [Releases](../../releases), extract it anywhere, and run
-   `Wc3ModelViewer.exe`. The release build is self-contained — no .NET installation required.
+1. Download `Wc3ModelViewer.exe` from [Releases](../../releases) and run it. It is a single
+   self-contained file — nothing to extract, no installer, no .NET installation required.
 2. It opens your Warcraft III install by itself if it can find one, and remembers the folder you
    last opened. Otherwise point it at the folder containing `.build.info` (e.g.
    `C:\games\Warcraft III`) and click **Open**. Everything else waits on this, custom models
@@ -91,8 +99,10 @@ Working end to end:
    loads a custom `.mdx` from disk instead.
 4. **Export…** chooses formats, geosets, animations, scale and output folder.
 
-To use an exported model in a map: copy the contents of the export folder — the `.m3` and the
-`textures\` folder beside it — into your map's `Assets\` folder.
+To use an exported model in a map: copy the `Assets` folder from the export into your map's root,
+merging it with the map's existing `Assets` folder. Keep the `.m3` and its `textures\` folder
+together — the paths baked into the model are resolved from the map root, so a `textures\` folder
+that lands anywhere other than inside `Assets\` leaves the model untextured with no error.
 
 > Windows SmartScreen may warn on first run because the executable is not code-signed. Use
 > "More info → Run anyway", or build from source yourself (see below).
@@ -103,7 +113,11 @@ To use an exported model in a map: copy the contents of the export folder — th
 dotnet build src/Wc3ModelViewer.slnx -c Release
 ```
 
-x64 only — the bundled native `CascLib.dll` is a 64-bit build.
+x64 only — the bundled native `CascLib.dll` is a 64-bit build. The single-file release build is:
+
+```
+dotnet publish src/Wc3ModelViewer/Wc3ModelViewer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true
+```
 
 ## Layout
 

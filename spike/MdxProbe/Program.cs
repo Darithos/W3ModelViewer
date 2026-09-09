@@ -10,6 +10,7 @@ using Wc3ModelViewer.Core.Casc;
 string install = args.Length > 0 && !args[0].StartsWith("--") ? args[0] : @"C:\games\Warcraft III";
 Console.OutputEncoding = Encoding.UTF8;
 Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+Wc3ModelViewer.BlpJpegCodec.Install();      // as the app does; without it every BLP1-JPEG reads as missing
 
 // --validate [n] parses many real models and asserts the results are self-consistent.
 if (args.Contains("--validate"))
@@ -22,6 +23,49 @@ if (args.Contains("--validate"))
 
 // --tex resolves and identifies every texture a set of models references.
 if (args.Contains("--tex")) return MdxProbe.TexProbe.Run(install);
+
+// --pack <nameFilter> <outDir> exports models the way the app does and audits the package layout.
+if (args.Contains("--pack"))
+{
+    int ki = Array.IndexOf(args, "--pack");
+    if (ki + 2 >= args.Length) { Console.WriteLine("usage: --pack <nameFilter> <outDir>"); return 1; }
+    return MdxProbe.TextureDiag.Pack(install, args[ki + 1], args[ki + 2]);
+}
+
+// --audit <m3file> lists the texture paths baked into an exported model.
+if (args.Contains("--audit"))
+{
+    int ai = Array.IndexOf(args, "--audit");
+    if (ai + 1 >= args.Length) { Console.WriteLine("usage: --audit <m3file>"); return 1; }
+    foreach (string f in Directory.Exists(args[ai + 1])
+                 ? Directory.GetFiles(args[ai + 1], "*.m3", SearchOption.AllDirectories)
+                 : [args[ai + 1]])
+    {
+        Console.WriteLine($"=== {f} ===");
+        foreach (var r in Wc3ModelViewer.Core.Convert.M3TextureAudit.Verify(f))
+            Console.WriteLine($"  {r}");
+    }
+    return 0;
+}
+
+// --dds2png <file-or-dir> <outDir> decodes exported textures back to png for inspection.
+if (args.Contains("--dds2png"))
+{
+    int pi = Array.IndexOf(args, "--dds2png");
+    if (pi + 2 >= args.Length) { Console.WriteLine("usage: --dds2png <file-or-dir> <outDir>"); return 1; }
+    return MdxProbe.TextureDiag.Dump(args[pi + 1], args[pi + 2]);
+}
+
+// --diag <nameFilter> [outDir] dumps every texture decision for models matching a name.
+if (args.Contains("--diag"))
+{
+    int di = Array.IndexOf(args, "--diag");
+    if (di + 1 >= args.Length) { Console.WriteLine("usage: --diag <nameFilter> [outDir]"); return 1; }
+    string dOut = di + 2 < args.Length && !args[di + 2].StartsWith("--")
+        ? args[di + 2]
+        : Path.Combine(Path.GetTempPath(), "wc3-diag");
+    return MdxProbe.TextureDiag.Run(install, args[di + 1], dOut);
+}
 
 // --loose <file-or-dir> [outDir] [--mangle] resolves and exports LOOSE models — the custom-model
 // case, where the .mdx has no archive prefix and its textures are stock game art the author never
@@ -89,6 +133,84 @@ if (args.Contains("--battery"))
     return 0;
 }
 
+// --blend <file|dir|cascPath> lists geosets whose material declares a blend or additive layer but
+// which the compositor collapses to opaque — the "solid red card" symptom.
+if (args.Contains("--blend"))
+{
+    int bi = Array.IndexOf(args, "--blend");
+    if (bi + 1 >= args.Length) { Console.WriteLine("usage: --blend <file|dir|cascPath>"); return 1; }
+    return MdxProbe.BlendProbe.Run(install, args[bi + 1]);
+}
+
+// --blp <file|dir> <outDir> writes each BLP's colour and alpha channel as PNGs, so an alpha
+// channel can be inspected instead of guessed at from a histogram.
+if (args.Contains("--blp"))
+{
+    int pi = Array.IndexOf(args, "--blp");
+    if (pi + 2 >= args.Length) { Console.WriteLine("usage: --blp <file|dir> <outDir>"); return 1; }
+    return MdxProbe.BlpAlphaProbe.Run(args[pi + 1], args[pi + 2]);
+}
+
+// --motion <file|cascPath> [sequence] reports, per geoset, what actually animates it over a
+// sequence: vertex travel, GEOA alpha, layer alpha, flipbook or texture animation.
+if (args.Contains("--motion"))
+{
+    int mi = Array.IndexOf(args, "--motion");
+    if (mi + 1 >= args.Length) { Console.WriteLine("usage: --motion <file|cascPath> [sequence]"); return 1; }
+    string? seqName = mi + 2 < args.Length && !args[mi + 2].StartsWith("--") ? args[mi + 2] : null;
+    return MdxProbe.MotionProbe.Run(install, args[mi + 1], seqName);
+}
+
+// --tracks <file|cascPath> <geoset> prints sequence intervals and the scale keys of the bones a
+// geoset is skinned to — how WC3 hides a geoset outside the one animation it belongs to.
+if (args.Contains("--tracks"))
+{
+    int ti = Array.IndexOf(args, "--tracks");
+    if (ti + 2 >= args.Length) { Console.WriteLine("usage: --tracks <file|cascPath> <geosetIndex>"); return 1; }
+    return MdxProbe.TrackProbe.Run(install, args[ti + 1], int.Parse(args[ti + 2]));
+}
+
+// --scalescan [n] counts Blizzard's own bones that are hidden by a scale track confined to one
+// sequence — the evidence for what the engine does with a sequence that has no keys.
+if (args.Contains("--scalescan"))
+{
+    int si = Array.IndexOf(args, "--scalescan");
+    int n = si + 1 < args.Length && int.TryParse(args[si + 1], out int v) ? v : 400;
+    return MdxProbe.ScaleScan.Run(install, n);
+}
+
+// --sizescan [n] digests every geoset's animated extent across every sequence, for A/B diffing a
+// change to the track sampler.
+if (args.Contains("--sizescan"))
+{
+    int zi = Array.IndexOf(args, "--sizescan");
+    int n = zi + 1 < args.Length && int.TryParse(args[zi + 1], out int v) ? v : 200;
+    return MdxProbe.SizeScan.Run(install, n);
+}
+
+// --map <model.mdx> [reference file] resolves every texture reference, optionally remaps one to a
+// chosen file, and resolves again - the viewer's Textures panel, headless.
+if (args.Contains("--map"))
+{
+    int mi = Array.IndexOf(args, "--map");
+    if (mi + 1 >= args.Length) { Console.WriteLine("usage: --map <model.mdx> [reference file]"); return 1; }
+    string? refName = mi + 3 < args.Length ? args[mi + 2] : null;
+    string? refFile = mi + 3 < args.Length ? args[mi + 3] : null;
+    return MdxProbe.MapProbe.Run(install, args[mi + 1], refName, refFile);
+}
+
+// --uv <model.mdx> <geoset|-1> <outDir> draws a geoset's UV triangles over its composited
+// texture, so a mis-mapped face can be seen rather than deduced.
+if (args.Contains("--uv"))
+{
+    int ui = Array.IndexOf(args, "--uv");
+    if (ui + 3 >= args.Length) { Console.WriteLine("usage: --uv <model.mdx> <geoset|-1> <outDir>"); return 1; }
+    return MdxProbe.UvProbe.Run(install, args[ui + 1], int.Parse(args[ui + 2]), args[ui + 3]);
+}
+
+// --blppairs lists assets shipped as both .blp and .dds - ground truth for the BLP decoder.
+if (args.Contains("--blppairs")) return MdxProbe.BlpPairs.Run(install);
+
 // --layers <cascPath> dumps every material's layers: filter mode, shading flags, slot table and
 // the diffuse alpha histogram — the evidence for what a layer's alpha channel actually means.
 if (args.Contains("--layers"))
@@ -97,9 +219,13 @@ if (args.Contains("--layers"))
     string path = args[li + 1];
     using var s = new Wc3Storage(install);
     var tc = new Wc3ModelViewer.Core.Casc.Wc3TextureCache(s);
-    var raw = s.TryReadFile(path);
+    // A path that exists on disk is a loose custom model; it also needs its own folder searched.
+    var raw = File.Exists(path) ? File.ReadAllBytes(path) : s.TryReadFile(path);
+    if (File.Exists(path)) { tc.LocalRoots.Add(Path.GetDirectoryName(Path.GetFullPath(path))!); path = ""; }
     if (raw is null) { Console.WriteLine("not found"); return 1; }
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    Console.WriteLine($"skipped chunks: {(mdl.SkippedChunks.Count == 0 ? "(none)" : string.Join(", ", mdl.SkippedChunks))}");
+    Console.WriteLine("UV layers per geoset: " + string.Join(", ", mdl.Geosets.Select(g => $"g{g.Index}={g.UvLayers.Count}")));
     for (int mi = 0; mi < mdl.Materials.Count; mi++)
     {
         var mat = mdl.Materials[mi];
@@ -110,7 +236,7 @@ if (args.Contains("--layers"))
                 $"{kv.Key}=tex{kv.Value}" + ((uint)kv.Value < (uint)mdl.Textures.Count
                     ? $"({System.IO.Path.GetFileName(mdl.Textures[kv.Value].FileName)}{(mdl.Textures[kv.Value].IsReplaceable ? ",REPL" + mdl.Textures[kv.Value].ReplaceableId : "")})"
                     : "")));
-            Console.WriteLine($"   filter={layer.FilterMode} shading={layer.ShadingFlags} pbr={layer.IsPbr} alphaTrack={(layer.AlphaTrack is not null ? "yes" : "no")} staticAlpha={layer.Alpha:0.###} teamColorMult={layer.TeamColorMultiplier:0.###}");
+            Console.WriteLine($"   filter={layer.FilterMode} shading={layer.ShadingFlags} pbr={layer.IsPbr} alphaTrack={(layer.AlphaTrack is not null ? "yes" : "no")} staticAlpha={layer.Alpha:0.###} teamColorMult={layer.TeamColorMultiplier:0.###} texAnimId={layer.TextureAnimationId} coordId={layer.CoordId}");
             Console.WriteLine($"   slots: {slots}");
             if (layer.TextureIdTrack is { Count: > 0 } fb)
             {
@@ -132,7 +258,7 @@ if (args.Contains("--layers"))
                         byte a = img.Pixels[i];
                         if (a == 0) zero++; else if (a < 192) low++; else if (a == 255) full++;
                     }
-                    Console.WriteLine($"   diffuse {img.Width}x{img.Height}: alpha zero={100.0 * zero / n:0}% partial={100.0 * low / n:0}% opaque={100.0 * full / n:0}%");
+                    Console.WriteLine($"   diffuse {System.IO.Path.GetFileName(mdl.Textures[did].FileName)} {img.Width}x{img.Height}: alpha zero={100.0 * zero / n:0}% partial={100.0 * low / n:0}% opaque={100.0 * full / n:0}%");
                 }
             }
         }
@@ -140,14 +266,15 @@ if (args.Contains("--layers"))
     return 0;
 }
 
-// --geosets <cascPath> lists every geoset with its LOD, size, material and GEOA visibility —
-// the census that answers "is a geoset being dropped, or hidden, and why".
+// --geosets <cascPath|file> lists every geoset with its LOD, size, material and GEOA visibility —
+// the census that answers "is a geoset being dropped, or hidden, and why". A path that exists on
+// disk is read directly, so hand-made models outside the archives can be censused too.
 if (args.Contains("--geosets"))
 {
     int gi = Array.IndexOf(args, "--geosets");
     string path = args[gi + 1];
-    using var s = new Wc3Storage(install);
-    var raw = s.TryReadFile(path);
+    using var s = File.Exists(path) ? null : new Wc3Storage(install);
+    var raw = File.Exists(path) ? File.ReadAllBytes(path) : s!.TryReadFile(path);
     if (raw is null) { Console.WriteLine("not found"); return 1; }
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
     Console.WriteLine($"LOD levels present: {string.Join(", ", mdl.LodLevels)}");
@@ -186,7 +313,9 @@ if (args.Contains("--cutouts"))
     int lod = ci + 2 < args.Length && int.TryParse(args[ci + 2], out int l) ? l : 1;
     using var s = new Wc3Storage(install);
     var tc = new Wc3ModelViewer.Core.Casc.Wc3TextureCache(s);
-    var raw = s.TryReadFile(path);
+    // A path that exists on disk is a loose custom model; it also needs its own folder searched.
+    var raw = File.Exists(path) ? File.ReadAllBytes(path) : s.TryReadFile(path);
+    if (File.Exists(path)) { tc.LocalRoots.Add(Path.GetDirectoryName(Path.GetFullPath(path))!); path = ""; }
     if (raw is null) { Console.WriteLine("not found"); return 1; }
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
     Console.WriteLine($"LOD {lod} geosets — Compose blend, cutout coverage, viewer classification:");

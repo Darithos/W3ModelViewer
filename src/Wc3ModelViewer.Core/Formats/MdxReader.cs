@@ -11,9 +11,10 @@ namespace Wc3ModelViewer.Core.Formats;
 /// Reforged build 2.0.4.23745 rather than from the published specifications — those describe older
 /// builds and disagree with what ships today.
 /// <para>
-/// The two rules that matter: <b>the version field does not determine the layout</b> (SD and HD both
-/// report VERS 1200, and are told apart structurally), and <b>optional keyframe tracks are found by
-/// consuming tags until the owning object's inclusive size runs out</b>, never by peeking for a known
+/// The two rules that matter: <b>the version field does not determine the layout</b> (the game's own
+/// SD and HD models both report VERS 1200 and are told apart structurally, while hand-made models
+/// off the Hive report 800 and use the classic geoset trailer), and <b>optional keyframe tracks are
+/// found by consuming tags until the owning object's inclusive size runs out</b>, never by peeking for a known
 /// tag and rewinding — the latter breaks on any track the reader does not know.
 /// </para>
 /// </remarks>
@@ -310,8 +311,11 @@ public static class MdxReader
                     materialId = r.I32();
                     sectionGroupId = r.I32();
                     sectionGroupType = r.I32();
-                    lodId = r.I32();
-                    lodName = r.FixedString(80);
+                    if (HasLodFields(r))
+                    {
+                        lodId = r.I32();
+                        lodName = r.FixedString(80);
+                    }
                     (radius, min, max) = r.Bounds();
                     int extentCount = r.I32();
                     r.Skip(extentCount * 28);
@@ -343,6 +347,35 @@ public static class MdxReader
             LodId = lodId, LodName = lodName, BoundsRadius = radius, Min = min, Max = max,
         };
     }
+
+    /// <summary>
+    /// Decides whether a geoset's untagged trailer carries the Reforged LOD index and name. A
+    /// classic geoset runs from the selection flags straight into the bounding sphere; a Reforged
+    /// one inserts an int and a char[80] first. Nothing marks which is which, and the file version
+    /// cannot say — every hand-made SD model reports 800 while the game's own SD models report 1200
+    /// — so pick whichever layout lands the geoset's next sub-chunk tag where a tag belongs (UVAS
+    /// on an SD geoset, TANG on an HD one). Reading the Reforged trailer off a classic geoset
+    /// swallows 84 bytes of bounds data, turning float bits into an LOD index: every geoset lands
+    /// on its own bogus LOD, the LOD filter then keeps one of them, and UVAS is never reached, so
+    /// the model arrives untextured and nearly empty.
+    /// </summary>
+    private static bool HasLodFields(Cursor r)
+    {
+        return !TrailerFits(0) && TrailerFits(84);
+
+        // At `skip` bytes past the flags: the 28-byte bounding sphere, an extent count, and that
+        // many 28-byte extents, after which the geoset's next sub-chunk begins (or it ends).
+        bool TrailerFits(int skip)
+        {
+            int count = r.PeekI32(r.Position + skip + 28);
+            if ((uint)count > 0xFFFF) return false;
+            int at = skip + 32 + count * 28;
+            return r.Position + at == r.End || GeosetTags.Contains(r.PeekTag(at));
+        }
+    }
+
+    private static readonly string[] GeosetTags =
+        ["VRTX", "NRMS", "PTYP", "PCNT", "PVTX", "GNDX", "MTGC", "MATS", "TANG", "SKIN", "UVAS"];
 
     private static void ReadGeoa(MdxModel m, Cursor r)
     {
