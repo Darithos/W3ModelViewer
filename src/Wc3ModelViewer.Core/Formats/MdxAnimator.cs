@@ -92,7 +92,7 @@ public sealed class MdxAnimator
     {
         var tr = Sample(node.Translation, seq, timeMs, wall, Vector3.Zero, Vector3.Lerp, Hermite, Bezier);
         var q = SampleQuat(node.Rotation, seq, timeMs, wall);
-        var s = Sample(node.Scale, seq, timeMs, wall, Vector3.One, Vector3.Lerp, Hermite, Bezier);
+        var s = SampleScale(node.Scale, seq, timeMs, wall);
 
         bool hasTr = tr != Vector3.Zero;
         bool hasRot = !q.IsIdentity;
@@ -121,6 +121,55 @@ public sealed class MdxAnimator
     /// </summary>
     public float SampleFloat(MdxTrack<float>? track, MdxSequence? seq, int timeMs, float rest, long? wallMs = null)
         => Sample(track, seq, timeMs, wallMs ?? timeMs, rest, float.Lerp, HermiteF, BezierF);
+
+    /// <summary>
+    /// Samples a node's scale track, with one exception to the "no keys in this sequence means the
+    /// rest value" rule: a track that both opens AND closes at zero describes an object that is
+    /// collapsed except exactly where it is keyed.
+    /// </summary>
+    /// <remarks>
+    /// This is Warcraft III's idiom for showing an effect in one animation only — Drenden's
+    /// <c>LightningEffect</c> bone carries three keys, 0 -> 1.5 -> 0, all inside Attack, and nothing
+    /// anywhere else. Falling back to unit scale left the lightning burst at full size hanging off
+    /// the staff in every other animation. The condition is deliberately narrow rather than a
+    /// general "hold the nearest key": across 600 shipped Blizzard models not one scale track is
+    /// written this way (MdxProbe --scalescan), so stock art cannot change, while a broader rule
+    /// moved 523 visible geosets by amounts nothing available here can verify.
+    /// </remarks>
+    private Vector3 SampleScale(MdxTrack<Vector3>? track, MdxSequence? seq, int timeMs, long wall)
+    {
+        if (track is not null && seq is not null && CollapsesOutsideItsOwnSequence(track))
+        {
+            var (lo, hi) = WindowOf(track.Times, seq.IntervalStart, seq.IntervalEnd);
+            if (lo > hi) return Vector3.Zero;
+        }
+        return Sample(track, seq, timeMs, wall, Vector3.One, Vector3.Lerp, Hermite, Bezier);
+    }
+
+    private readonly Dictionary<MdxTrack<Vector3>, bool> _collapsingScales = [];
+
+    /// <summary>
+    /// True for a scale track that lives entirely inside ONE sequence and both opens and closes at
+    /// zero — an object the author collapsed everywhere except that animation.
+    /// </summary>
+    /// <remarks>
+    /// Both halves of the test earn their place. Zero ends alone also matched night-elf entangle
+    /// roots, whose keys span several sequences, and shrank three shipped models by 12-25%.
+    /// Requiring a single owning sequence as well leaves all 250 stock models sampled bit-identical
+    /// while still catching the custom-model idiom this exists for.
+    /// </remarks>
+    private bool CollapsesOutsideItsOwnSequence(MdxTrack<Vector3> track)
+    {
+        if (_collapsingScales.TryGetValue(track, out bool known)) return known;
+
+        bool value = track.Count > 1 && track.GlobalSequenceId < 0
+                     && track.Values[0].LengthSquared() < 1e-4f
+                     && track.Values[^1].LengthSquared() < 1e-4f
+                     && _model.Sequences.Any(s => track.Times[0] >= s.IntervalStart
+                                                  && track.Times[^1] <= s.IntervalEnd);
+        _collapsingScales[track] = value;
+        return value;
+    }
 
     /// <summary>Samples a vector track — emitter and ribbon colour tracks.</summary>
     public Vector3 SampleVector(MdxTrack<Vector3>? track, MdxSequence? seq, int timeMs, Vector3 rest, long? wallMs = null)

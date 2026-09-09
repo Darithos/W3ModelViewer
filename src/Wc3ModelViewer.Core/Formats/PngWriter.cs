@@ -12,7 +12,9 @@ public static class PngWriter
     public static byte[] Write(RgbaImage image)
     {
         using var ms = new MemoryStream();
-        ms.Write("\x89PNG\r\n\x1a\n"u8);
+        // Written as raw bytes, not a u8 literal: 0x89 is U+0089, which UTF-8 encodes as two bytes
+        // (C2 89) and corrupts the signature.
+        ms.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
 
         // IHDR: width, height, bit depth 8, color type 6 (RGBA), deflate, filter 0, no interlace.
         Span<byte> ihdr = stackalloc byte[13];

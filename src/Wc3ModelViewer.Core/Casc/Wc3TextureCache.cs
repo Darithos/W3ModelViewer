@@ -7,6 +7,10 @@ public enum TextureSource
 {
     /// <summary>A file shipped with the model, found in one of the cache's local roots.</summary>
     BesideModel,
+    /// <summary>A file found by name anywhere under a local root, the reference's folder being gone.</summary>
+    BesideModelByName,
+    /// <summary>A file the user picked by hand for this reference — beats every automatic match.</summary>
+    ChosenByUser,
     /// <summary>The installed game, matched on the reference's own path.</summary>
     GameInstall,
     /// <summary>The installed game, matched on file name only because the path did not exist.</summary>
@@ -40,10 +44,15 @@ public readonly record struct TextureOrigin(string Reference, TextureSource Sour
 public readonly record struct TextureProvenance(IReadOnlyList<TextureOrigin> Found,
                                                 IReadOnlyList<string> Missing)
 {
-    public int BesideModel => Found.Count(o => o.Source == TextureSource.BesideModel);
+    public int BesideModel => Found.Count(o => o.Source is TextureSource.BesideModel
+                                                          or TextureSource.BesideModelByName);
+
+    /// <summary>Textures the user pointed at explicitly.</summary>
+    public int ChosenByUser => Found.Count(o => o.Source == TextureSource.ChosenByUser);
 
     /// <summary>Textures pulled out of the installed game — what a custom model borrows.</summary>
-    public int FromGameInstall => Found.Count(o => o.Source != TextureSource.BesideModel);
+    public int FromGameInstall => Found.Count(o => o.Source is TextureSource.GameInstall
+                                                            or TextureSource.GameInstallByName);
 
     /// <summary>Of those, the ones matched on file name because the reference's path did not exist.</summary>
     public IEnumerable<TextureOrigin> MatchedByName =>
@@ -80,6 +89,39 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
     public List<string> LocalRoots { get; } = [];
 
     /// <summary>
+    /// Files the user picked for a reference, keyed by the reference exactly as the model spells it.
+    /// Set through <see cref="SetOverride"/> so the decoded image is dropped with it.
+    /// </summary>
+    private readonly Dictionary<string, string> _overrides = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The user's current choices, for saving and for showing in the UI.</summary>
+    public IReadOnlyDictionary<string, string> Overrides => _overrides;
+
+    /// <summary>
+    /// Points a reference at a specific file, or clears the choice when <paramref name="filePath"/>
+    /// is null. Every cached decode of that reference is discarded, so the next
+    /// <see cref="Load"/> re-resolves and the viewer redraws with the new art.
+    /// </summary>
+    public void SetOverride(string reference, string? filePath)
+    {
+        if (filePath is null) _overrides.Remove(reference);
+        else _overrides[reference] = filePath;
+
+        // Cache keys carry the model's archive prefix, so one reference can hold several entries.
+        foreach (string key in _cache.Keys.Where(k => k.EndsWith("|" + reference, StringComparison.OrdinalIgnoreCase)).ToList())
+        {
+            _cache.Remove(key);
+            _origins.Remove(key);
+        }
+    }
+
+    /// <summary>Forgets every user choice, and the images they produced.</summary>
+    public void ClearOverrides()
+    {
+        foreach (string reference in _overrides.Keys.ToList()) SetOverride(reference, null);
+    }
+
+    /// <summary>
     /// Prefer the Reforged tree when the catalog offers a reference under both art sets. Set for an
     /// HD model; SD and HD publish colliding paths (<c>textures\gutz.blp</c>) with different art.
     /// </summary>
@@ -103,10 +145,7 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
         if (texture.IsTeamColor || texture.IsTeamGlow)
         {
             var (b, g, r) = TeamColors[Math.Clamp(teamColor, 0, TeamColors.Length - 1)];
-            // Glow is additive in-game; a dimmed solid reads better than full brightness under WPF.
-            return texture.IsTeamGlow
-                ? RgbaImage.Solid(8, 8, (byte)(b / 3), (byte)(g / 3), (byte)(r / 3))
-                : RgbaImage.Solid(8, 8, b, g, r);
+            return texture.IsTeamGlow ? TeamGlow(b, g, r) : RgbaImage.Solid(8, 8, b, g, r);
         }
         if (texture.FileName.Length == 0) return null;
 
@@ -116,6 +155,35 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
         var image = LoadFile(modelCascName, texture.FileName, key);
         _cache[key] = image;
         return image;
+    }
+
+    /// <summary>
+    /// The team-glow slot, as the radial falloff the game's own <c>ReplaceableTextures\TeamGlow</c>
+    /// art is: full team colour at the centre, black at the rim. It is always drawn additively, so
+    /// the black rim adds nothing and the quad reads as a soft round glow.
+    /// </summary>
+    /// <remarks>
+    /// Generating a flat solid here instead turned every glow card into a solid coloured rectangle
+    /// the size of its whole quad — the most visible artefact on any custom hero, because authors
+    /// use this slot for auras, runes and weapon glows, and a flat fill has no shape to fall off.
+    /// </remarks>
+    private static RgbaImage TeamGlow(byte b, byte g, byte r, int size = 64)
+    {
+        var px = new byte[size * size * 4];
+        float centre = (size - 1) / 2f;
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float dx = (x - centre) / centre, dy = (y - centre) / centre;
+                float falloff = Math.Clamp(1 - MathF.Sqrt(dx * dx + dy * dy), 0, 1);
+                falloff *= falloff;                     // squared: a bright core and a soft rim
+                int o = (y * size + x) * 4;
+                px[o] = (byte)(b * falloff);
+                px[o + 1] = (byte)(g * falloff);
+                px[o + 2] = (byte)(r * falloff);
+                px[o + 3] = 255;                        // additive draw takes brightness as coverage
+            }
+        return new RgbaImage { Width = size, Height = size, Pixels = px };
     }
 
     /// <summary>Where a previously <see cref="Load"/>ed reference came from, or null if never resolved.</summary>
@@ -166,7 +234,15 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
 
     private RgbaImage? LoadFile(string modelCascName, string fileName, string key)
     {
-        // Local roots first: custom models carry their textures beside the .mdx.
+        // A file the user picked wins outright: they are correcting something this code got wrong,
+        // so no automatic match may override it.
+        if (_overrides.TryGetValue(fileName, out string? chosen) && File.Exists(chosen))
+        {
+            var picked = DecodeBytes(File.ReadAllBytes(chosen));
+            if (picked is not null) return Resolved(key, fileName, TextureSource.ChosenByUser, chosen, picked);
+        }
+
+        // Local roots next: custom models carry their textures beside the .mdx.
         foreach (string root in LocalRoots)
         {
             foreach (string candidate in LocalCandidates(root, fileName))
@@ -175,6 +251,16 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
                 var img = DecodeBytes(File.ReadAllBytes(candidate));
                 if (img is not null) return Resolved(key, fileName, TextureSource.BesideModel, candidate, img);
             }
+        }
+
+        // Then by file name anywhere under those roots. Downloads arrive organised however their
+        // author felt like — textures\, skins\, a folder per unit — while the reference still names
+        // a path from the author's own disk, so the folder in the reference proves nothing and only
+        // the file name survives.
+        foreach (string match in LocalByName(fileName))
+        {
+            var img = DecodeBytes(File.ReadAllBytes(match));
+            if (img is not null) return Resolved(key, fileName, TextureSource.BesideModelByName, match, img);
         }
 
         if (storage is not null)
@@ -237,6 +323,64 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
             // An exotic pixel format is a per-file condition; the caller keeps trying spellings.
         }
         return null;
+    }
+
+    /// <summary>Every image file under each local root, indexed by bare file name. Built once.</summary>
+    private Dictionary<string, List<string>>? _localIndex;
+
+    /// <summary>
+    /// A cap on the local sweep. The roots include the opened model's PARENT directory, which for a
+    /// model sitting loose in a downloads folder can be enormous; a custom model's own package is
+    /// a few dozen files, so a limit this size cannot cost a real one anything.
+    /// </summary>
+    private const int MaxLocalFiles = 20_000;
+
+    /// <summary>
+    /// Files under any local root whose name matches the reference's, ignoring the folders in it and
+    /// treating <c>.blp</c>/<c>.dds</c>/<c>.tga</c> as interchangeable — authors re-save between them.
+    /// </summary>
+    private IEnumerable<string> LocalByName(string fileName)
+    {
+        _localIndex ??= BuildLocalIndex();
+        int slash = fileName.LastIndexOfAny(['/', '\\']);
+        string stem = Path.GetFileNameWithoutExtension(slash < 0 ? fileName : fileName[(slash + 1)..]);
+        return _localIndex.TryGetValue(stem, out var matches) ? matches : [];
+    }
+
+    private Dictionary<string, List<string>> BuildLocalIndex()
+    {
+        var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        int budget = MaxLocalFiles;
+
+        foreach (string root in LocalRoots)
+        {
+            if (!Directory.Exists(root)) continue;
+            IEnumerable<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(root, "*", new EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    IgnoreInaccessible = true,
+                    MaxRecursionDepth = 8,
+                });
+            }
+            catch (IOException) { continue; }
+
+            foreach (string file in files)
+            {
+                if (budget-- <= 0) return index;
+                string ext = Path.GetExtension(file);
+                if (!ext.Equals(".blp", StringComparison.OrdinalIgnoreCase)
+                    && !ext.Equals(".dds", StringComparison.OrdinalIgnoreCase)
+                    && !ext.Equals(".tga", StringComparison.OrdinalIgnoreCase)) continue;
+
+                string stem = Path.GetFileNameWithoutExtension(file);
+                if (!index.TryGetValue(stem, out var list)) index[stem] = list = [];
+                if (!list.Contains(file, StringComparer.OrdinalIgnoreCase)) list.Add(file);
+            }
+        }
+        return index;
     }
 
     /// <summary>

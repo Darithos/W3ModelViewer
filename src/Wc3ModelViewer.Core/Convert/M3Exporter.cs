@@ -60,15 +60,14 @@ public sealed class M3ExportOptions
     /// Path prefix baked into the .m3's texture references. SC2 resolves these against the mod or
     /// map archive ROOT; any root-relative path works, the folder name carries no meaning.
     /// <para>
-    /// The default is chosen so the export folder's contents are copy/paste-ready into a map's
-    /// <c>Assets\</c> folder — the workflow this exporter targets. References are baked as
-    /// <c>Assets/textures/&lt;ModelName&gt;/*.dds</c>, while on disk the export writes the model
-    /// alongside <c>textures\&lt;ModelName&gt;\</c> (see <see cref="TextureFolder"/>, which strips
-    /// the <c>Assets/</c> head). Paste everything next to the .m3 into <c>Assets\</c> and the
-    /// layout matches the references exactly. Keeping <c>Assets\</c> OUT of the folder-on-disk is
-    /// what prevents the <c>Assets\Assets\…</c> double-nesting that silently untextured models
-    /// when the export folder itself contained an <c>Assets\</c> level. The per-model subfolder
-    /// keeps several imported units from colliding on a texture filename.
+    /// References are baked as <c>Assets/textures/&lt;ModelName&gt;/*.dds</c>, and the export writes
+    /// a real <c>Assets\</c> folder on disk holding exactly that layout, so the whole package is
+    /// one folder to merge into a map or mod root. An earlier layout wrote the .m3 and
+    /// <c>textures\</c> loose and relied on the user pasting the folder's *contents* into
+    /// <c>Assets\</c>; splitting a two-part copy is easy to get half-right, and a textures folder
+    /// that lands beside <c>Assets\</c> instead of inside it leaves every reference dangling —
+    /// which SC2 shows as an untextured model rather than an error. The per-model subfolder keeps
+    /// several imported units from colliding on a texture filename.
     /// </para>
     /// </summary>
     public string TexturePrefix
@@ -79,9 +78,9 @@ public sealed class M3ExportOptions
     private readonly string? _texturePrefix;
 
     /// <summary>
-    /// The on-disk texture folder, relative to the exported .m3 — <see cref="TexturePrefix"/>
-    /// minus the archive-side <c>Assets/</c> head, because the export folder's contents are what
-    /// gets pasted INTO <c>Assets\</c>. Always use this (never <see cref="TexturePrefix"/>) when
+    /// Where to write the .dds files, relative to the exported .m3 — <see cref="TexturePrefix"/>
+    /// minus the archive-side <c>Assets/</c> head, because the .m3 is itself written inside the
+    /// export's <c>Assets\</c> folder. Always use this (never <see cref="TexturePrefix"/>) when
     /// deciding where to write the .dds files.
     /// </summary>
     public string TextureFolder

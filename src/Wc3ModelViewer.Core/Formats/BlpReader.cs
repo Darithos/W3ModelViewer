@@ -27,6 +27,29 @@ public static class BlpReader
         return d[3] == '1' ? DecodeBlp1(d) : null;      // BLP2 is WoW-era; not seen on WC3 models
     }
 
+    /// <summary>
+    /// Assembles decoded component planes into BGRA. Warcraft III writes the components in the
+    /// order <b>B, G, R, A</b>; a three-component file carries no alpha and is opaque.
+    /// </summary>
+    private static RgbaImage? FromPlanes(JpegBaseline.Planes? planes)
+    {
+        if (planes is null || planes.Components.Length < 3) return null;
+
+        int n = planes.Width * planes.Height;
+        var px = new byte[n * 4];
+        byte[] b = planes.Components[0], g = planes.Components[1], r = planes.Components[2];
+        byte[]? a = planes.Components.Length >= 4 ? planes.Components[3] : null;
+
+        for (int i = 0; i < n; i++)
+        {
+            px[i * 4] = b[i];
+            px[i * 4 + 1] = g[i];
+            px[i * 4 + 2] = r[i];
+            px[i * 4 + 3] = a?[i] ?? (byte)255;
+        }
+        return new RgbaImage { Width = planes.Width, Height = planes.Height, Pixels = px };
+    }
+
     private static RgbaImage? DecodeBlp1(byte[] d)
     {
         uint compression = BitConverter.ToUInt32(d, 4);   // 0 = JPEG, 1 = palettized
@@ -41,8 +64,6 @@ public static class BlpReader
 
         if (compression == 0)
         {
-            if (JpegDecode is null) return null;
-
             // Shared JPEG header immediately after the mip tables, then each mip is header + payload.
             int headerSizeAt = 28 + 128;
             if (headerSizeAt + 4 > d.Length) return null;
@@ -53,15 +74,27 @@ public static class BlpReader
             Array.Copy(d, headerSizeAt + 4, jpeg, 0, jpegHeaderSize);
             Array.Copy(d, mip0Offset, jpeg, jpegHeaderSize, mip0Size);
 
-            var img = JpegDecode(jpeg);
+            // Decode it ourselves first. These streams carry four components with no marker saying
+            // what they are, so a general codec has to guess a colour space and transforms the
+            // planes; the planes are really just B, G, R and A. See JpegBaseline.
+            var img = FromPlanes(JpegBaseline.Decode(jpeg));
+            bool ownDecode = img is not null;
+            img ??= JpegDecode?.Invoke(jpeg);
             if (img is null) return null;
 
-            // WC3's JPEG components are stored B,G,R,A — a 4-component decode hands them back in
-            // that order; a 3-component decode already produced opaque BGR. No swizzle either way.
+            var px = img.Pixels;
             if (alphaBits == 0)
             {
-                var px = img.Pixels;
+                // No alpha channel in the file at all — whatever the fourth plane holds is noise.
                 for (int i = 3; i < px.Length; i += 4) px[i] = 255;
+            }
+            else if (!ownDecode)
+            {
+                // Only the platform fallback needs this. It reads the stream as a CMYK-family image
+                // and hands back the fourth plane inverted, so a solid skin arrives as "99% alpha
+                // zero" — invisible. Our own decoder returns the plane as written, which is already
+                // opacity, and inverting it there would punch the model full of holes instead.
+                for (int i = 3; i < px.Length; i += 4) px[i] = (byte)(255 - px[i]);
             }
             return img;
         }

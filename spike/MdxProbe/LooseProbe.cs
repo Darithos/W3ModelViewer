@@ -246,6 +246,8 @@ public static class LooseProbe
     private static string Tag(TextureSource s) => s switch
     {
         TextureSource.BesideModel => "local ",
+        TextureSource.BesideModelByName => "local?",
+        TextureSource.ChosenByUser => "chosen",
         TextureSource.GameInstallByName => "byname",
         _ => "game  ",
     };

@@ -116,6 +116,15 @@ public static class MaterialCompositor
                 && layer.Slot(MdxTextureSlot.TeamColor) >= 0 && image.HasTransparency())
                 result = LerpTeamColorUnder(image, textures, modelCascName, model, layer, teamColor);
 
+            // An opaque material must not carry transparency into the draw. FilterMode.None means
+            // "ignore alpha" in Warcraft III, and a classic skin's alpha channel is a team-colour
+            // mask, not coverage — so whatever it holds, the surface is solid. Letting it through
+            // punched holes wherever a mask texel happened to be dark: Drenden's face samples six
+            // such texels and rendered see-through over them. The multi-layer path below has always
+            // forced this on its base layer; the single-layer path silently did not.
+            if (blend == CompositeBlend.Opaque && result.HasTransparency())
+                result = WithOpaqueAlpha(result);
+
             return new CompositeMaterial
             {
                 Texture = result, Blend = blend, TwoSided = twoSided, Unshaded = unshaded,
@@ -136,10 +145,18 @@ public static class MaterialCompositor
             first = false;
         }
 
-        // A composited stack is opaque unless the whole thing floats (pure additive glows etc.).
-        var stackBlend = blend == CompositeBlend.Additive && loaded.All(l => l.Layer.FilterMode is MdxFilterMode.Additive or MdxFilterMode.AddAlpha)
-            ? CompositeBlend.Additive
-            : CompositeBlend.Opaque;
+        // The stack's coverage is its BOTTOM layer's: the layers above blend or add light onto what
+        // the base already covers, and cannot extend it. Requiring every layer to be additive before
+        // the stack may float classified the common effect card — a glow over a cutout, a flare over
+        // an alpha ramp — as opaque, and an opaque card is a solid rectangle standing through the
+        // model. Only a base that is genuinely opaque (FilterMode.None) makes the stack opaque.
+        var stackBlend = loaded[0].Layer.FilterMode switch
+        {
+            MdxFilterMode.Transparent => CompositeBlend.AlphaTest,
+            MdxFilterMode.Blend or MdxFilterMode.AddAlpha => CompositeBlend.AlphaBlend,
+            MdxFilterMode.Additive or MdxFilterMode.Modulate or MdxFilterMode.Modulate2x => CompositeBlend.Additive,
+            _ => CompositeBlend.Opaque,
+        };
 
         return new CompositeMaterial
         {
@@ -150,6 +167,17 @@ public static class MaterialCompositor
     }
 
     private static CompositeBlend Max(CompositeBlend a, CompositeBlend b) => (CompositeBlend)Math.Max((int)a, (int)b);
+
+    /// <summary>
+    /// A copy with every texel opaque. Copies rather than writes in place: the image belongs to the
+    /// texture cache and is shared with every other material that references the same file.
+    /// </summary>
+    private static RgbaImage WithOpaqueAlpha(RgbaImage image)
+    {
+        var px = (byte[])image.Pixels.Clone();
+        for (int i = 3; i < px.Length; i += 4) px[i] = 255;
+        return new RgbaImage { Width = image.Width, Height = image.Height, Pixels = px };
+    }
 
     /// <summary>
     /// Fraction of the texels <paramref name="geoset"/> actually samples whose alpha is below
@@ -243,7 +271,10 @@ public static class MaterialCompositor
             if (first)
             {
                 canvas[i] = src[i]; canvas[i + 1] = src[i + 1]; canvas[i + 2] = src[i + 2];
-                canvas[i + 3] = 255;
+                // A classic opaque base layer's alpha is the team-colour mask, not coverage, so it
+                // must not survive as transparency. Every other base layer's alpha IS the card's
+                // coverage — discarding it is what made effect cards draw as solid rectangles.
+                canvas[i + 3] = mode == MdxFilterMode.None ? (byte)255 : src[i + 3];
                 continue;
             }
             switch (mode)

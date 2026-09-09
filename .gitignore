@@ -21,3 +21,7 @@ Desktop.ini
 *.blp
 *.dds
 !native/*.dll
+
+# Local test corpora: downloaded custom models and their exports.
+sdcustommodels/
+sdcustommodels-export/
