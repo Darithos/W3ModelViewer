@@ -21,6 +21,55 @@ if (args.Contains("--validate"))
     return MdxProbe.Validate.Run(install, limit);
 }
 
+// --portrait <file> dumps a portrait model as SC2 will see it.
+if (args.Contains("--portrait"))
+{
+    int pj = Array.IndexOf(args, "--portrait");
+    if (pj + 1 >= args.Length) { Console.WriteLine("usage: --portrait <file>"); return 1; }
+    return MdxProbe.PortraitProbe.Run(args[pj + 1]);
+}
+
+// --extract <nameFilter> <outDir> writes matching archive models out as loose .mdx files.
+if (args.Contains("--extract"))
+{
+    int xi = Array.IndexOf(args, "--extract");
+    if (xi + 2 >= args.Length) { Console.WriteLine("usage: --extract <nameFilter> <outDir>"); return 1; }
+    using var xs = new Wc3Storage(install);
+    var xindex = xs.BuildIndex();
+    Directory.CreateDirectory(args[xi + 2]);
+    foreach (var e in xindex.Models.Where(m => m.RelativePath.Contains(args[xi + 1], StringComparison.OrdinalIgnoreCase)))
+    {
+        var raw = xs.TryReadFile(e.CascName);
+        if (raw is null) continue;
+        string dest = Path.Combine(args[xi + 2], $"{e.ArtSet}_{Path.GetFileName(e.RelativePath)}");
+        File.WriteAllBytes(dest, raw);
+        Console.WriteLine($"  {e.RelativePath} ({e.ArtSet}) -> {dest}");
+    }
+    return 0;
+}
+
+// --symmetry [n] reports which horizontal axis Warcraft III unit models mirror across.
+if (args.Contains("--symmetry"))
+{
+    int si = Array.IndexOf(args, "--symmetry");
+    int n = si + 1 < args.Length && int.TryParse(args[si + 1], out int sn) ? sn : 200;
+    return MdxProbe.SymmetryProbe.Run(install, n);
+}
+
+// --cloud <file.mdx> <out.txt> dumps LOD 0 bind-pose vertex positions for offline comparison.
+if (args.Contains("--cloud"))
+{
+    int ci = Array.IndexOf(args, "--cloud");
+    if (ci + 2 >= args.Length) { Console.WriteLine("usage: --cloud <file.mdx> <out.txt>"); return 1; }
+    var cm = Wc3ModelViewer.Core.Formats.MdxReader.Read(File.ReadAllBytes(args[ci + 1]));
+    using var cw = new StreamWriter(args[ci + 2]);
+    foreach (var gg in cm.Geosets.Where(g => g.LodId == 0))
+        foreach (var pp in gg.Positions)
+            cw.WriteLine($"{pp.X} {pp.Y} {pp.Z}");
+    Console.WriteLine($"wrote {args[ci + 2]}");
+    return 0;
+}
+
 // --tex resolves and identifies every texture a set of models references.
 if (args.Contains("--tex")) return MdxProbe.TexProbe.Run(install);
 
