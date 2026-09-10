@@ -112,9 +112,12 @@ internal static class M3ParticleWriter
         WriteF32(b, OffGravity, -e.Gravity * scale);
 
         // A plane emitter's width and length become the emission box. Zero means a point, which is
-        // what the great majority of Warcraft III emitters are.
+        // what the great majority of Warcraft III emitters are. Width and length swap because the
+        // exporter turns the model -90 degrees about Z on the way out (see M3Exporter.ToSc2) while
+        // the emitter's bone frame stays world-aligned, so what lay along the model's X now lies
+        // along its -Y.
         WriteI32(b, OffEmitShape, e.Width > 0 || e.Length > 0 ? 1 : 0);
-        Vector3Anim(b, OffEmitShapeSize, new Vector3(e.Width * scale, e.Length * scale, 0), nextAnimId());
+        Vector3Anim(b, OffEmitShapeSize, new Vector3(e.Length * scale, e.Width * scale, 0), nextAnimId());
 
         // `size` holds the three-stage scale ramp in one vector: start, middle, end.
         Vector3Anim(b, OffSize, new Vector3(e.StartScale * scale, e.MiddleScale * scale, e.EndScale * scale),

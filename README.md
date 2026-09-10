@@ -104,6 +104,12 @@ merging it with the map's existing `Assets` folder. Keep the `.m3` and its `text
 together — the paths baked into the model are resolved from the map root, so a `textures\` folder
 that lands anywhere other than inside `Assets\` leaves the model untextured with no error.
 
+Exported models are turned a quarter turn on the way out: Warcraft III builds a model facing +X and
+StarCraft II expects one facing -Y, so a model exported unturned walks and attacks square to the way
+the actor points it. A `_portrait.mdx` carries its camera through as an m3 camera under its original
+Warcraft III name (`Camera01` on most models) — name that camera in the portrait's data or SC2 frames
+the shot itself.
+
 > Windows SmartScreen may warn on first run because the executable is not code-signed. Use
 > "More info → Run anyway", or build from source yourself (see below).
 

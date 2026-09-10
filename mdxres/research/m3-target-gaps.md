@@ -377,7 +377,7 @@ CAM_ versions: v2=148, v3=180, v5=264. v5 layout:
  =264
 MODL.cameras @276, and MODL.cameras_addon @288 = Reference->U16_ with one 0xFFFF per camera (same rule as attachments; m3studio io_m3_export.py:1997).
 
-Camera ORIENTATION comes from the bone, not from CAM_: the camera looks down the bone's -Y (Blender/m3 convention: the bone's local axis), so you must synthesise a bone whose rest rotation aims from the WC3 camera Position toward its TargetPosition. WC3 CAMS chunk gives: Name (80 chars), Position VEC3, FieldOfView (radians), FarClip, NearClip, TargetPosition VEC3, plus optional KCTR (position track) and KTTR (target track) and KCRL (roll).
+Camera ORIENTATION comes from the bone, not from CAM_: the camera looks down the bone's **-Z**, with the bone's **+Y** as up, so you must synthesise a bone whose rest rotation aims from the WC3 camera Position toward its TargetPosition along -Z. This was written here as -Y (the Blender bone convention) and the writer followed it; the result was a portrait camera pointing 90 degrees off its subject — level shots stared straight at the ground and the in-game portrait came back solid black, while the SC2 editor's preview looked right because the preview frames the model with its own orbit camera and never reads CAM_. MEASURED, not assumed: over the 537 Blizzard/HotS models that carry a CAM_, the mean dot product between the camera bone's local -Z and the direction from the bone to the model's MSEC bounds centre is +0.986, while local -Y averages -0.041 (square to the shot) and +X/-X average 0.00; the bone's local +Y against world up averages +0.845. WC3 CAMS chunk gives: Name (80 chars), Position VEC3, FieldOfView (radians), FarClip, NearClip, TargetPosition VEC3, plus optional KCTR (position track) and KTTR (target track) and KCRL (roll).
   CAM_.field_of_view.init  = WC3 FieldOfView (already radians)
   CAM_.near_clip.init      = WC3 NearClip
   CAM_.far_clip.init       = WC3 FarClip
@@ -390,6 +390,20 @@ Naming for SC2: name the camera exactly what the SC2 actor expects. Blizzard's o
 Practical note for WC3: portrait animations live in <Model>_Portrait.mdx as sequences named 'Portrait', 'Portrait Talk', 'Portrait Listen'. Merge those sequences into the main .m3 SEQS list (SC2 has no separate portrait file concept) and name them 'Portrait', 'Talk', 'Listen' to match SC2's anim tokens.
 
 _evidence: https://github.com/Solstice245/m3studio/blob/main/structures.xml lines 2366-2394 (CAM_); cameras_addon at https://github.com/Solstice245/m3studio/blob/main/io_m3_export.py lines 1992-1997; https://github.com/SC2Mapster/m3addon/blob/master/structures.xml lines 2767-2795_
+
+## [certain] A Warcraft III model must be turned -90 degrees about Z on export: WC3 builds a model facing +X, StarCraft II expects one facing -Y.
+
+Exported unturned, a unit walks, attacks and idles square to the way its actor points it — reported as "moonwalking: they do turn, they just don't turn towards their facing". The turn is (x, y, z) -> (y, -x, z) and, because every WC3 node's local frame is world-axis aligned, each animated local rotation conjugates the same way: q=(x,y,z,w) -> (y,-x,z,w). Positions, normals, tangents, bone pivots, parent-local rest offsets, baked location keys, baked rotation keys, camera positions/targets and per-sequence bounds all go through it; the turn is a proper rotation, so triangle winding is untouched.
+
+MEASURED four ways:
+  1. Registration. The Reforged azuredragon, bandit, satyr and murloc meshes were histogram-matched against their hand-converted SC2 counterparts (AlleyV_Wc3R_*.m3, which work in-game) at each quarter turn: 270 degrees scored 0.013-0.025 mismatch, every other angle 0.44-0.66. After the exporter applies the turn, our own exports of the same four register onto those counterparts at 0 degrees with 0.015-0.026.
+  2. Mesh symmetry. A biped/quadruped is mirror-symmetric across the plane square to its facing. 170 of 200 sampled WC3 unit models mirror across Y=0 (facing along X); 714 of 877 Blizzard SC2 unit models mirror across X=0 (facing along Y).
+  3. Portrait cameras, which stand in front of their subject. Mean unit vector from model centre to camera: Blizzard SC2 (-0.20, -0.86), Warcraft III (+0.83, -0.11).
+  4. Foot geometry (toes lead). WC3 mean toe offset from body centre X +0.215 / Y -0.038; Blizzard SC2 X +0.017 / Y -0.062.
+
+Portrait models do not strictly need the turn — SC2 frames them with the camera the model carries, which turns with it — so applying it uniformly is safe and keeps one code path.
+
+_evidence: spike/MdxProbe --symmetry (WC3 side, reads the CASC install); the SC2 side measured against C:\games\StarCraft II\Mods\HotS.SC2Mod (Blizzard storm_* art and the AlleyV_Wc3R_* WC3 conversions)_
 
 ## [likely] The hard m3 limits are 65535 vertices PER REGION (face indices are region-relative uint16) and 256 bones PER REGION (per-vertex bone lookup indices are uint8). The writer's global 65536-vertex throw matches both Blender addons but is stricter than the format; splitting is done with extra REGN + extra BAT_ inside the SINGLE existing DIV_.
 
