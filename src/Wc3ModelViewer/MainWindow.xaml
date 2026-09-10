@@ -121,6 +121,24 @@
                                 ValueChanged="OnFrameScrubbed" ToolTip="Scrub time"/>
                     </DockPanel>
                 </StackPanel>
+                <!-- Player colour. The viewport is the only place a team-colour mask can be checked
+                     before the model is in StarCraft II, and the mask is per-material art that no
+                     single slot exercises — a colour that reads fine on a tabard can be invisible
+                     on a glow card. -->
+                <DockPanel DockPanel.Dock="Top" Margin="4,0,4,6">
+                    <TextBlock Text="Player:" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="TeamColorCombo" SelectionChanged="OnTeamColorChanged" SelectedIndex="0"
+                              ToolTip="Preview the model in this player's colour — team colour and team glow both follow it">
+                        <ComboBoxItem Content="1 — Red"/>
+                        <ComboBoxItem Content="2 — Blue"/>
+                        <ComboBoxItem Content="3 — Teal"/>
+                        <ComboBoxItem Content="4 — Purple"/>
+                        <ComboBoxItem Content="5 — Yellow"/>
+                        <ComboBoxItem Content="6 — Orange"/>
+                        <ComboBoxItem Content="7 — Green"/>
+                        <ComboBoxItem Content="8 — Pink"/>
+                    </ComboBox>
+                </DockPanel>
                 <TabControl x:Name="SidePanel" Background="Transparent" BorderThickness="0">
                     <TabItem Header="Geosets">
                         <DockPanel Margin="0,6,0,0">

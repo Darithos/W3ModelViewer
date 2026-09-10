@@ -311,7 +311,7 @@ public partial class MainWindow : Window
     /// not expect to be exported — and because a count of zero on a model that clearly borrows stock
     /// art means the install is not open.
     /// </summary>
-    private static string DescribeTextureSources(Wc3TextureCache cache, MdxModel model)
+    private string DescribeTextureSources(Wc3TextureCache cache, MdxModel model)
     {
         var p = cache.ProvenanceOf(model, "", ViewerTeamColor);
 
@@ -587,7 +587,7 @@ public partial class MainWindow : Window
             if ((uint)geo.MaterialId >= (uint)_model.Materials.Count) continue;
 
             var composite = MaterialCompositor.Compose(_model, _model.Materials[geo.MaterialId],
-                                                       _textures, _entry.CascName, teamColor: 0);
+                                                       _textures, _entry.CascName, ViewerTeamColor);
 
             // Reforged flags every HD layer transparent, so Compose returns AlphaTest for solid body
             // parts too. A geoset whose own UVs never touch a transparent texel is really opaque —
@@ -661,7 +661,18 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Player slot the viewport previews team colour with — the same one RebuildScene composites.</summary>
-    private const int ViewerTeamColor = 0;
+    private int ViewerTeamColor;
+
+    private void OnTeamColorChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Read the slot off the sender: WPF raises this while InitializeComponent is still running,
+        // before the x:Name field is assigned.
+        int slot = Math.Max((sender as ComboBox)?.SelectedIndex ?? 0, 0);
+        if (slot == ViewerTeamColor) return;
+        ViewerTeamColor = slot;
+        if (_suppressRebuild || _model is null) return;
+        RebuildScene();
+    }
 
     /// <summary>
     /// Whether a transparent-flagged geoset is a genuine cutout — its own UVs actually sample

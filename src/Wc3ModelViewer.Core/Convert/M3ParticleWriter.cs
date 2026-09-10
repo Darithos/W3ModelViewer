@@ -88,8 +88,19 @@ internal static class M3ParticleWriter
     /// <param name="boneIndex">m3 BONE index of the node that positions the emitter.</param>
     /// <param name="materialIndex">Index into the model's material-reference list.</param>
     /// <param name="nextAnimId">Supplies fresh animation ids; every anim ref needs a unique one.</param>
+    /// <param name="emitRateAnimId">
+    /// The id the exporter has reserved for <c>emit_rate</c>, so a per-sequence SDR3 track can gate
+    /// emission on the Warcraft III KP2V visibility track. Warcraft III switches emitters on and
+    /// off per animation; StarCraft II has no such switch, so a rate of zero stands in for it.
+    /// </param>
+    /// <param name="restEmitRate">
+    /// Rate to fall back on when no sequence drives the track — the emitter's rate during the
+    /// model's primary Stand animation, so an emitter Warcraft III only switches on for a death or
+    /// a spell stays silent at rest.
+    /// </param>
     public static byte[] Build(MdxParticleEmitter2 e, int boneIndex, int materialIndex,
-                               float scale, Func<uint> nextAnimId)
+                               float scale, Func<uint> nextAnimId, uint emitRateAnimId,
+                               float restEmitRate)
     {
         var b = new byte[Size];
         foreach (var (offset, raw) in Defaults) WriteU32(b, offset, raw);
@@ -105,7 +116,7 @@ internal static class M3ParticleWriter
         FloatAnim(b, OffEmitSpreadX, spread, nextAnimId());
         FloatAnim(b, OffEmitSpreadY, spread, nextAnimId());
         FloatAnim(b, OffLifespan, MathF.Max(e.Life, 0.001f), nextAnimId());
-        FloatAnim(b, OffEmitRate, MathF.Max(e.EmissionRate, 0), nextAnimId());
+        FloatAnim(b, OffEmitRate, MathF.Max(restEmitRate, 0), emitRateAnimId);
 
         // Warcraft III's gravity is a downward acceleration; StarCraft II's field is signed the
         // other way, which is why Blizzard's own emitters store it negative.

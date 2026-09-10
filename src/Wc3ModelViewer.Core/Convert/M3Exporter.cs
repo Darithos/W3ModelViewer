@@ -37,7 +37,11 @@ public sealed class M3ExportOptions
     /// <summary>Uniform scale. 1.0 keeps native WC3 units — what Renee's war3mod expects.</summary>
     public float Scale { get; init; } = 1f;
 
-    /// <summary>Player slot whose colour gets baked where a team-colour mask exists.</summary>
+    /// <summary>
+    /// Player slot for previews and for the glTF export. An <c>.m3</c> ignores it: StarCraft II
+    /// supplies the player colour itself through the material's team channel, so the same exported
+    /// file is correct for all eight players.
+    /// </summary>
     public int TeamColor { get; init; }
 
     /// <summary>Sample rate for baking animation keys.</summary>
@@ -197,9 +201,15 @@ public sealed class M3Exporter
         public string NormalPath = "";
         public string SpecularPath = "";
         public string EmissivePath = "";
+        public string TeamPath = "";                // bitmap whose alpha scales the live player colour
+        public int TeamBlendSlot;                   // 4 = emis1, 5 = emis2, 0 = no player colour
         public MdxGeosetAnim? VisibilityAnim;       // GEOA feeding this material's colour track
         public uint ColorAnimId;                    // LAYR color_value anim id, filled during write
         public bool IsParticle;                     // built for an emitter's sprite, not a geoset
+        public int FlipbookCells = 1;               // sprite-sheet cells the emitter walks through
+        public int ToggleBone = -1;                 // BAT_.bone whose batching flag hides this draw call
+        public uint BatchAnimId;                    // SDFG rides this id
+        public bool RestVisible = true;             // batching flag with no sequence driving it
     }
 
     private sealed class SeqDef
@@ -210,7 +220,11 @@ public sealed class M3Exporter
         public List<(uint Id, int[] FramesMs, Vector3[] Vals)> Vec3Tracks = [];
         public List<(uint Id, int[] FramesMs, Quaternion[] Vals)> QuatTracks = [];
         public List<(uint Id, int[] FramesMs, uint[] Vals)> ColorTracks = [];   // BGRA for SDCC
-        public bool Animated => Vec3Tracks.Count > 0 || QuatTracks.Count > 0 || ColorTracks.Count > 0;
+        public List<(uint Id, int[] FramesMs, float[] Vals)> FloatTracks = [];  // REAL for SDR3
+        public List<(uint Id, int[] FramesMs, uint[] Vals)> FlagTracks = [];    // FLAG for SDFG
+        public bool Animated => Vec3Tracks.Count > 0 || QuatTracks.Count > 0
+                                || ColorTracks.Count > 0 || FloatTracks.Count > 0
+                                || FlagTracks.Count > 0;
     }
 
     private readonly List<ExportBone> _bones = [];
@@ -228,6 +242,7 @@ public sealed class M3Exporter
         BuildRegions(textureCache, modelCascName);
         BuildAttachments();
         BuildCameras();
+        BuildBatchToggles();
         var sequences = BuildSequences();
 
         if (_regions.Count == 0)
@@ -270,6 +285,13 @@ public sealed class M3Exporter
             // miscount. Say both.
             _log.Add($"{_textures.Count} texture file(s) written, from {p.Found.Count} resolved "
                      + $"reference(s): {string.Join(", ", parts)}");
+
+        // Worth saying out loud: it is the difference between a unit that recolours per player in
+        // the editor and one that is permanently red, and nothing else in the export shows it.
+        int teamed = _materials.Count(m => m.TeamPath.Length > 0);
+        if (teamed > 0)
+            _log.Add($"{teamed} material(s) take their player colour live from StarCraft II "
+                     + "(Team Color Emissive Add) instead of having it painted in");
 
         // A name-only match found real pixels but may have found the wrong file — texture names are
         // not unique across the archive. Name them so a wrong guess is checkable rather than silent,
@@ -337,7 +359,8 @@ public sealed class M3Exporter
             float staticAlpha = anim?.AlphaTrack is null ? anim?.Alpha ?? 1f : 1f;
 
             var mdxMat = _mdx.Materials[g.MaterialId];
-            var composite = MaterialCompositor.Compose(_mdx, mdxMat, textures, modelCascName, _opt.TeamColor);
+            var composite = MaterialCompositor.Compose(_mdx, mdxMat, textures, modelCascName, _opt.TeamColor,
+                                                       bakeTeam: false);
 
             // Reforged marks every HD layer FilterMode.Transparent and shares one atlas between
             // solid body parts and cut-out cards, so the material alone cannot say whether *this*
@@ -398,18 +421,32 @@ public sealed class M3Exporter
         {
             // A PREM emitter spawns models rather than sprites and parses with no texture; there is
             // nothing to draw, so it is dropped rather than exported as an invisible system.
-            if ((uint)e.TextureId >= (uint)_mdx.Textures.Count) { skipped++; continue; }
-            var tex = _mdx.Textures[e.TextureId];
-            if (tex.IsReplaceable || tex.FileName.Length == 0) { skipped++; continue; }
+            // A team-glow emitter has no sprite file — its art *is* the player's colour, shaped by
+            // a falloff. Those used to be dropped as "no usable sprite"; now the falloff becomes the
+            // player-colour mask and the sprite itself is black, so StarCraft II supplies the colour.
+            bool glow = e.ReplaceableId == 2
+                        || ((uint)e.TextureId < (uint)_mdx.Textures.Count && _mdx.Textures[e.TextureId].IsTeamGlow);
 
-            var image = textures.Load(modelCascName, tex, _opt.TeamColor);
+            if (!glow && (uint)e.TextureId >= (uint)_mdx.Textures.Count) { skipped++; continue; }
+            var tex = glow ? new MdxTexture { ReplaceableId = 2, FileName = "" } : _mdx.Textures[e.TextureId];
+            if (!glow && (tex.IsReplaceable || tex.FileName.Length == 0)) { skipped++; continue; }
+
+            // Glow art is read at player 0 deliberately, whatever slot the preview is on: the mask
+            // is the falloff recovered as the art's brightest channel, and only player 0's colour
+            // has a 255 channel to divide out. Player 4's purple would hand back a mask barely half
+            // as bright, and the export would carry that dimming forever.
+            var image = textures.Load(modelCascName, tex, glow ? 0 : _opt.TeamColor);
             if (image is null) { skipped++; continue; }
+
+            var glowMask = glow ? MaterialCompositor.GlowMask(image) : null;
+            if (glow && glowMask is null) { skipped++; continue; }
 
             _emitters.Add(new ExportEmitter
             {
                 Source = e,
-                MaterialIndex = AddParticleMaterial(e, image),
+                MaterialIndex = AddParticleMaterial(e, glowMask is null ? image : BlackSprite, glowMask),
                 NodeIndex = e.NodeIndex,
+                RestEmissionRate = RestEmissionRateOf(e),
             });
         }
 
@@ -425,7 +462,10 @@ public sealed class M3Exporter
     /// alpha is the shape of the flame, so the material is unshaded and blended by the emitter's own
     /// blend mode rather than run through the geoset cutout machinery.
     /// </summary>
-    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image)
+    /// <summary>A sprite that contributes nothing itself — the player-colour channel draws it.</summary>
+    private static readonly RgbaImage BlackSprite = RgbaImage.Solid(8, 8, 0, 0, 0);
+
+    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image, TeamMask? teamMask)
     {
         var blend = e.Blend switch
         {
@@ -433,11 +473,13 @@ public sealed class M3Exporter
             MdxParticleBlend.Modulate or MdxParticleBlend.Modulate2X => CompositeBlend.AlphaBlend,
             _ => CompositeBlend.AlphaBlend,
         };
-        string stem = TexStem(_mdx.Textures[e.TextureId].FileName, _materials.Count);
+        string stem = TexStem((uint)e.TextureId < (uint)_mdx.Textures.Count
+                              ? _mdx.Textures[e.TextureId].FileName : "", _materials.Count);
 
         for (int i = 0; i < _materials.Count; i++)
             if (_materials[i].IsParticle && _materials[i].DiffusePath == stem + "_diff.dds"
-                && _materials[i].Blend == blend)
+                && _materials[i].Blend == blend
+                && _materials[i].FlipbookCells == Math.Max(e.Rows, 1) * Math.Max(e.Columns, 1))
                 return i;
 
         var mat = new ExportMaterial
@@ -447,10 +489,28 @@ public sealed class M3Exporter
             TwoSided = true,          // a billboard is seen from either side
             Unshaded = true,
             IsParticle = true,
+            FlipbookCells = Math.Max(e.Rows, 1) * Math.Max(e.Columns, 1),
             DiffusePath = AddTexture(stem + "_diff.dds", image),
         };
+        if (teamMask is not null)
+            mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, null));
         _materials.Add(mat);
         return _materials.Count - 1;
+    }
+
+    /// <summary>
+    /// The emission rate SC2 falls back to when nothing drives the track — sampled inside the
+    /// primary Stand sequence, the same rule the geoset visibility default follows. A death-only
+    /// emitter reads 0 here, so an unposed preview does not show the model mid-death.
+    /// </summary>
+    private float RestEmissionRateOf(MdxParticleEmitter2 e)
+    {
+        var primary = _mdx.Sequences.FirstOrDefault(s => s.Name.StartsWith("Stand", StringComparison.OrdinalIgnoreCase))
+                      ?? _mdx.Sequences.FirstOrDefault();
+        if (primary is null) return MathF.Max(e.EmissionRate, 0);
+        return EmitterVisible(e, primary, primary.IntervalStart)
+            ? MathF.Max(_animator.SampleFloat(e.EmissionRateTrack, primary, primary.IntervalStart, e.EmissionRate), 0)
+            : 0;
     }
 
     /// <summary>One emitter that survived to the write stage, with everything it needs resolved.</summary>
@@ -459,6 +519,8 @@ public sealed class M3Exporter
         public required MdxParticleEmitter2 Source;
         public required int MaterialIndex;
         public required int NodeIndex;
+        public uint EmitRateAnimId;                 // PAR_.emit_rate; the KP2V gate rides this id
+        public float RestEmissionRate;              // rate with no sequence driving it
     }
 
     private readonly List<ExportEmitter> _emitters = [];
@@ -520,8 +582,16 @@ public sealed class M3Exporter
             DefaultAlpha = animated ? (byte)Math.Clamp(restAlpha * 255f + 0.5f, 0, 255) : (byte)255,
         };
 
+        // Player colour is NOT painted into the art. StarCraft II carries it live, the way every
+        // Blizzard unit from the marine up does: a material layer sampling one channel, with that
+        // layer's MAT_ blend mode set to 4, "Team Color Emissive Add". Compose was asked not to
+        // bake it (it composited over black instead), so the diffuse below already holds exactly
+        // the part of the surface that is not the player's, and this mask holds the rest.
+        var teamMask = MaterialCompositor.TeamMaskOf(_mdx, mdxMat, textures, modelCascName);
+        if (teamMask is not null && teamMask.Coverage < TeamCoverageMin) teamMask = null;
+
         // Texture set. HD layers with PBR maps get the full conversion; everything else exports the
-        // composited diffuse (team colour already baked, layers already flattened).
+        // composited diffuse (layers already flattened).
         var hdLayer = mdxMat.Layers.FirstOrDefault(l => l.IsPbr);
         if (_opt.ConvertPbr && hdLayer is not null)
         {
@@ -532,10 +602,13 @@ public sealed class M3Exporter
 
             if (diffuse is not null)
             {
-                // Team colour is baked here too — composite.Texture already carries it for the
-                // opaque case, and it is the converted set's diffuse that must match.
+                // Compose's output is the albedo whenever it differs from the raw diffuse in a way
+                // that matters: it is opaque-ified for a solid material, and — the reason a
+                // cut-out material has to take it too — it has had the player's contribution
+                // subtracted. Handing the raw diffuse to a masked material would let SC2 add the
+                // player colour on top of art that still contains it.
                 var set = PbrConverter.Convert(
-                    composite.Blend == CompositeBlend.Opaque ? composite.Texture : diffuse,
+                    composite.Blend == CompositeBlend.Opaque || teamMask is not null ? composite.Texture : diffuse,
                     normal, orm, emissive);
 
                 mat.DiffusePath = AddTexture(stem + "_diff.dds", set.Diffuse);
@@ -547,8 +620,55 @@ public sealed class M3Exporter
         if (mat.DiffusePath.Length == 0)
             mat.DiffusePath = AddTexture(stem + "_diff.dds", composite.Texture);
 
+        // The mask gets a file of its own rather than riding the diffuse's spare alpha. Sharing was
+        // tried and it aliases: the SD footman's four materials all resolve to one `footman_diff`,
+        // and three of them are cutouts whose alpha1 layer reads that same alpha as coverage. One
+        // channel cannot be both a cutout and a team mask, and whichever material was written first
+        // would have silently decided which.
+        if (teamMask is not null)
+        {
+            var hdDiffuse = _opt.ConvertPbr && hdLayer is not null
+                ? LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Diffuse) : null;
+            mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, hdDiffuse));
+        }
+
         _materials.Add(mat);
         return _materials.Count - 1;
+    }
+
+    /// <summary>A mask below this share of the texture is noise, not art, and buys only a texture.</summary>
+    private const float TeamCoverageMin = 0.0005f;
+
+    /// <summary>
+    /// The mask as a bitmap StarCraft II can sample: black, with the scalar in the alpha channel.
+    /// </summary>
+    /// <param name="tintSource">
+    /// The Reforged diffuse, when this is HD art. Reforged <i>tints</i> the masked region rather
+    /// than replacing it — the footman's tabard keeps its folds in every player colour — so an
+    /// added player colour has to arrive already multiplied by the art's own brightness. Folding
+    /// that brightness into the mask is what makes an additive channel land where a multiply would.
+    /// Classic art needs none of it: there the player colour is a flat fill lying <i>under</i> the
+    /// skin, so <c>team x (1 - diffuse.a)</c> added to the composite reproduces Warcraft III exactly.
+    /// </param>
+    private static RgbaImage TeamMaskTexture(TeamMask mask, RgbaImage? tintSource)
+    {
+        int w = mask.Width, h = mask.Height;
+        var px = new byte[w * h * 4];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int m = mask.Values[y * w + x];
+                if (m != 0 && tintSource is not null)
+                {
+                    int sx = x * tintSource.Width / w, sy = y * tintSource.Height / h;
+                    int o = (sy * tintSource.Width + sx) * 4;
+                    int lum = (tintSource.Pixels[o + 2] * 77 + tintSource.Pixels[o + 1] * 151
+                             + tintSource.Pixels[o] * 28) >> 8;
+                    m = m * lum / 255;
+                }
+                px[(y * w + x) * 4 + 3] = (byte)m;
+            }
+        return new RgbaImage { Width = w, Height = h, Pixels = px };
     }
 
     private RgbaImage? LoadSlot(Casc.Wc3TextureCache textures, string modelCascName, MdxLayer layer, MdxTextureSlot slot)
@@ -644,6 +764,40 @@ public sealed class M3Exporter
         // SC2 picks a camera by name, so say which name its data has to ask for.
         foreach (var (cam, _) in _cameras)
             _log.Add($"camera '{(cam.Name.Length > 0 ? cam.Name : "Portrait")}' exported — SC2 selects it by that name");
+    }
+
+    /// <summary>
+    /// Gives every GEOA-driven material a bone of its own whose <c>batching</c> flag switches its
+    /// draw call off — the m3 answer to a Warcraft III geoset that appears in one animation only.
+    /// </summary>
+    /// <remarks>
+    /// Fading the material's colour alpha, which is what this exporter did on its own, cannot hide
+    /// anything additive: SC2 blend mode 3 weights the additive contribution by alpha, but a glow
+    /// card whose art is opaque RGB on black still adds its full colour at alpha 0 in the general
+    /// case, and Andromath's spell sparkle burned through every Stand because of it. A batch
+    /// toggle removes the draw call outright, whatever the blend mode.
+    /// <para>
+    /// The bone carries no geometry — it exists only to hold the flag — so it is appended after
+    /// the MDX nodes and the camera bones, where nothing indexes by node number any more.
+    /// Confirmed against 7,544 Blizzard batch bones: BAT_.bone points at a real bone on 5,600 of
+    /// 9,673 batches, and the batching anim ref reads interpolation 0, flags 6 when animated,
+    /// init 0 or 1 (the rest state) and null 1.
+    /// </para>
+    /// </remarks>
+    private void BuildBatchToggles()
+    {
+        if (!_opt.GeosetVisibility) return;
+        foreach (var m in _materials)
+        {
+            if (m.VisibilityAnim is null) continue;
+            m.RestVisible = m.DefaultAlpha >= 128;
+            _bones.Add(new ExportBone
+            {
+                Name = UniqueBoneName($"Batch_{m.Name}", _bones.Count),
+                Parent = -1,
+            });
+            m.ToggleBone = _bones.Count - 1;
+        }
     }
 
     // ---------------------------------------------------------------- facing
@@ -770,6 +924,8 @@ public sealed class M3Exporter
         for (int i = 0; i < _bones.Count; i++) boneIds[i] = (AnimId(), AnimId(), AnimId());
         _boneAnimIds = boneIds;
         foreach (var m in _materials) m.ColorAnimId = AnimId();
+        foreach (var em in _emitters) em.EmitRateAnimId = AnimId();
+        foreach (var m in _materials) if (m.ToggleBone >= 0) m.BatchAnimId = AnimId();
         _nextAnimId = AnimId;
 
         var wanted = _mdx.Sequences
@@ -797,6 +953,8 @@ public sealed class M3Exporter
             times.Add(seq.IntervalEnd);
 
             BakeBoneTracks(def, times, boneIds);
+            BakeEmitterTracks(def, times);
+            BakeBatchTracks(def, times);
             if (_opt.GeosetVisibility) BakeVisibilityTracks(def, times);
             BakeCameraTracks(def, times, boneIds);
 
@@ -884,6 +1042,23 @@ public sealed class M3Exporter
         }
     }
 
+    /// <summary>GEOA alpha as a hard on/off, onto the material's batch-toggle bone (SDFG).</summary>
+    private void BakeBatchTracks(SeqDef def, List<int> times)
+    {
+        if (!_opt.GeosetVisibility) return;
+        foreach (var mat in _materials)
+        {
+            if (mat.ToggleBone < 0 || mat.VisibilityAnim is null) continue;
+            var vals = new uint[times.Count];
+            for (int ti = 0; ti < times.Count; ti++)
+                vals[ti] = SampleGeosetAlpha(mat.VisibilityAnim, def.Source, times[ti]) >= 0.5f ? 1u : 0u;
+
+            uint rest = mat.RestVisible ? 1u : 0u;
+            if (NotAll(vals, v => v == rest))
+                def.FlagTracks.Add((mat.BatchAnimId, times.Select(t => t - def.Source.IntervalStart).ToArray(), vals));
+        }
+    }
+
     /// <summary>GEOA alpha → the owning material's layer colour track (BGRA, alpha animated).</summary>
     private void BakeVisibilityTracks(SeqDef def, List<int> times)
     {
@@ -938,6 +1113,47 @@ public sealed class M3Exporter
                 def.QuatTracks.Add((boneIds[boneIndex].Rot, frames, rots));
         }
     }
+
+    /// <summary>
+    /// Emission rate per sequence, gated by the emitter's KP2V visibility track.
+    /// </summary>
+    /// <remarks>
+    /// Warcraft III switches an emitter on and off per animation through KP2V — that is how one
+    /// model carries a death cloud, a walking dust puff and a standing shimmer without all three
+    /// running at once. Exported as a constant rate they all run all the time: the sea witch stood
+    /// in the middle of her own death effect, 64-cell cloud cards and all. SC2 has no per-animation
+    /// emitter switch, but PAR_.emit_rate is an animatable float, and a rate of zero is the same
+    /// thing.
+    /// </remarks>
+    private void BakeEmitterTracks(SeqDef def, List<int> times)
+    {
+        foreach (var em in _emitters)
+        {
+            var src = em.Source;
+            var rates = new float[times.Count];
+            for (int ti = 0; ti < times.Count; ti++)
+            {
+                float rate = _animator.SampleFloat(src.EmissionRateTrack, def.Source, times[ti], src.EmissionRate);
+                rates[ti] = EmitterVisible(src, def.Source, times[ti]) ? MathF.Max(rate, 0) : 0;
+            }
+            float rest = em.RestEmissionRate;
+            if (NotAll(rates, r => Math.Abs(r - rest) < 0.001f))
+                def.FloatTracks.Add((em.EmitRateAnimId, times.Select(t => t - def.Source.IntervalStart).ToArray(), rates));
+        }
+    }
+
+    /// <summary>
+    /// True when the emitter's KP2V track has it switched on at this point in this sequence.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the viewer's own sampler, so an exported model emits exactly where the app
+    /// shows it emitting. It is not interchangeable with a naive global-timeline lookup: WC3 reads
+    /// only the keys that fall INSIDE the playing sequence and falls back to the rest value when a
+    /// sequence contains none — so a torch whose two KP2V keys sit in Death still burns during
+    /// Stand. Clamping across the whole timeline instead reads that torch as off and silences it.
+    /// </remarks>
+    private bool EmitterVisible(MdxParticleEmitter2 e, MdxSequence? seq, int timeMs)
+        => _animator.SampleFloat(e.VisibilityTrack, seq, timeMs, 1f) >= 0.5f;
 
     private Vector3 SampleTrack(MdxTrack<Vector3>? track, MdxSequence seq, int timeMs)
     {
@@ -1296,6 +1512,8 @@ public sealed class M3Exporter
             for (int k = 0; k < def.Vec3Tracks.Count; k++) { ids.Add(def.Vec3Tracks[k].Id); refs.Add(2u << 16 | (uint)k); }
             for (int k = 0; k < def.QuatTracks.Count; k++) { ids.Add(def.QuatTracks[k].Id); refs.Add(3u << 16 | (uint)k); }
             for (int k = 0; k < def.ColorTracks.Count; k++) { ids.Add(def.ColorTracks[k].Id); refs.Add(4u << 16 | (uint)k); }
+            for (int k = 0; k < def.FloatTracks.Count; k++) { ids.Add(def.FloatTracks[k].Id); refs.Add(5u << 16 | (uint)k); }
+            for (int k = 0; k < def.FlagTracks.Count; k++) { ids.Add(def.FlagTracks[k].Id); refs.Add(11u << 16 | (uint)k); }
             if (def.Animated) { ids.Add(BndsAnimId); refs.Add(12u << 16); }
             stcIdLists[i] = ids.ToArray();
 
@@ -1329,7 +1547,7 @@ public sealed class M3Exporter
                 evnt.Count = 1;
             }
 
-            M3Builder.Section? sd3v = null, sd4q = null, sdcc = null, sdmb = null;
+            M3Builder.Section? sd3v = null, sd4q = null, sdcc = null, sdr3 = null, sdfg = null, sdmb = null;
             if (def.Vec3Tracks.Count > 0)
             {
                 sd3v = b.Add("SD3V", 0, 32);
@@ -1380,6 +1598,41 @@ public sealed class M3Exporter
                     sdcc.Count++;
                 }
             }
+            // SDR3 — plain animated floats. Slot 5 of STC_, so anim refs point at it with 5 << 16,
+            // the same (sd_type << 16) | index packing the vector and colour tracks use.
+            if (def.FloatTracks.Count > 0)
+            {
+                sdr3 = b.Add("SDR3", 0, 32);
+                foreach (var t in def.FloatTracks)
+                {
+                    var frames = b.AddI32s(t.FramesMs);
+                    var keys = b.Add("REAL", 0, 4);
+                    foreach (float v in t.Vals) keys.W.Write(v);
+                    keys.Count = t.Vals.Length;
+                    b.Ref(sdr3, frames);
+                    sdr3.W.Write(0u);
+                    sdr3.W.Write((uint)def.EndMs);
+                    b.Ref(sdr3, keys);
+                    sdr3.Count++;
+                }
+            }
+            // SDFG — on/off flags. Slot 11 of STC_, keys in a FLAG section holding 0 or 1.
+            if (def.FlagTracks.Count > 0)
+            {
+                sdfg = b.Add("SDFG", 0, 32);
+                foreach (var t in def.FlagTracks)
+                {
+                    var frames = b.AddI32s(t.FramesMs);
+                    var keys = b.Add("FLAG", 0, 4);
+                    foreach (uint v in t.Vals) keys.W.Write(v);
+                    keys.Count = t.Vals.Length;
+                    b.Ref(sdfg, frames);
+                    sdfg.W.Write(0u);
+                    sdfg.W.Write((uint)def.EndMs);
+                    b.Ref(sdfg, keys);
+                    sdfg.Count++;
+                }
+            }
             if (def.Animated)
             {
                 sdmb = b.Add("SDMB", 0, 32);
@@ -1407,7 +1660,9 @@ public sealed class M3Exporter
                 if (sd3v is not null) b.Ref(stc, sd3v); else b.NullRef(stc);
                 if (sd4q is not null) b.Ref(stc, sd4q); else b.NullRef(stc);
                 if (sdcc is not null) b.Ref(stc, sdcc); else b.NullRef(stc);
-                for (int k = 0; k < 7; k++) b.NullRef(stc);     // sdr3..sdfg
+                if (sdr3 is not null) b.Ref(stc, sdr3); else b.NullRef(stc);
+                for (int k = 0; k < 5; k++) b.NullRef(stc);     // sds6..sdu3
+                if (sdfg is not null) b.Ref(stc, sdfg); else b.NullRef(stc);
                 if (sdmb is not null) b.Ref(stc, sdmb); else b.NullRef(stc);
             }
         }
@@ -1522,14 +1777,33 @@ public sealed class M3Exporter
             // our exact material flags 0x80004008): diffuse RGB, alpha1 = the same bitmap with
             // A-only channels, same wrap. So the diffuse stays RGB always, and any material that
             // consumes its alpha (cutout or alpha-blend) gets the alpha1 mask layer.
-            bool alphaUsed = m.Blend is CompositeBlend.AlphaTest or CompositeBlend.AlphaBlend;
+            bool alphaUsed = m.Blend is CompositeBlend.AlphaTest or CompositeBlend.AlphaBlend
+                                      or CompositeBlend.Additive;
             matLayers[i][0] = WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: true,
-                                         defaultAlpha: m.DefaultAlpha);                                        // diff
+                                         defaultAlpha: m.DefaultAlpha,
+                                         flipbook: m.FlipbookCells > 1);                                       // diff
             if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: true);
             if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: true);
+            // The alpha layer samples the same sheet, so it needs the same flipbook flag or it
+            // reads the whole atlas while the diffuse reads one cell. Blizzard flags it more often
+            // than any other slot: 83% of alpha1 layers behind a multi-cell emitter carry 0x100.
             if (alphaUsed) matLayers[i][8] = WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, _nextAnimId(), wrap: true,
-                                                        colorChannels: ChannelsAlphaOnly);                     // alpha1
+                                                        colorChannels: ChannelsAlphaOnly,
+                                                        flipbook: m.FlipbookCells > 1);                        // alpha1
             if (m.NormalPath.Length > 0) matLayers[i][10] = WriteLayer(b, _opt.TexturePrefix + m.NormalPath, _nextAnimId(), wrap: true);
+            // Player colour. StarCraft II has no team-colour texture slot: it has a *blend mode*.
+            // Set blend_mode_emis1 (or emis2) to 4 and the engine adds the live player colour
+            // scaled by that emissive layer's single sampled channel — which is why the layer takes
+            // A-only channels. Blizzard does exactly this on 1,204 of the 8,161 materials across
+            // 2,018 Heroes unit models, and the emis2 spelling below is theirs verbatim: where a
+            // material already has a real emissive glow in emis1 (RGB, add), the team mask goes to
+            // emis2 (A-only, mode 4) rather than displacing it.
+            if (m.TeamPath.Length > 0)
+            {
+                m.TeamBlendSlot = m.EmissivePath.Length > 0 ? 5 : 4;
+                matLayers[i][m.TeamBlendSlot] = WriteLayer(b, _opt.TexturePrefix + m.TeamPath, _nextAnimId(),
+                                                           wrap: true, colorChannels: ChannelsAlphaOnly);
+            }
         }
         var nullLayer = b.Add("LAYR", 26, 464);
         WriteNullLayer(nullLayer.W);
@@ -1548,7 +1822,8 @@ public sealed class M3Exporter
             {
                 int bone = (uint)em.NodeIndex < (uint)boneMap.Length ? boneMap[em.NodeIndex] : 0;
                 par.W.Write(M3ParticleWriter.Build(em.Source, bone, em.MaterialIndex,
-                                                   _opt.Scale, _nextAnimId));
+                                                   _opt.Scale, _nextAnimId, em.EmitRateAnimId,
+                                                   em.RestEmissionRate));
             }
             par.Count = _emitters.Count;
         }
@@ -1612,8 +1887,18 @@ public sealed class M3Exporter
             w.Write(0f); w.Write(0f); w.Write(0f); w.Write(1f); w.Write(-1);
             WriteAnimHeader(w, 1, 6, _boneAnimIds[oi].Scl);
             WriteVec3(w, Vector3.One); WriteVec3(w, Vector3.One); w.Write(-1);
-            WriteAnimHeader(w, 0, 0, _nextAnimId());
-            w.Write(1u); w.Write(1u); w.Write(-1);
+            // batching: a BAT_ pointing at this bone is switched on and off by this flag.
+            var toggled = _materials.Find(m => m.ToggleBone == oi);
+            if (toggled is not null)
+            {
+                WriteAnimHeader(w, 0, 6, toggled.BatchAnimId);
+                w.Write(toggled.RestVisible ? 1u : 0u); w.Write(1u); w.Write(-1);
+            }
+            else
+            {
+                WriteAnimHeader(w, 0, 0, _nextAnimId());
+                w.Write(1u); w.Write(1u); w.Write(-1);
+            }
         }
         boneSec.Count = _bones.Count;
 
@@ -1654,8 +1939,10 @@ public sealed class M3Exporter
             bw.Write((ushort)0);
             bw.Write((ushort)0);        // priority_plane: Blizzard always writes 0 (WC3's priority lives in MAT_.priority)
             bw.Write((ushort)i); bw.Write((ushort)0); bw.Write((ushort)0);
-            bw.Write((ushort)_regions[r.SourceRegion].MaterialIndex);
-            bw.Write((short)-1);
+            int matIndex = _regions[r.SourceRegion].MaterialIndex;
+            bw.Write((ushort)matIndex);
+            int toggleBone = _materials[matIndex].ToggleBone;
+            bw.Write((short)(toggleBone >= 0 ? boneMap[toggleBone] : -1));
         }
         verts.Count = totalVerts * 32;
         faces.Count = totalFaces;
@@ -1707,6 +1994,14 @@ public sealed class M3Exporter
             bool translucent = m.Blend is CompositeBlend.AlphaBlend or CompositeBlend.Additive;
             if (cutout || translucent) flags |= 0x4000;         // transparent_shadows
             if (translucent) flags |= 0x10000;                  // transparent_depth_effects
+            // A glow, a smoke card or a team-colour ground disc has no business casting a shadow.
+            // Warcraft III hero models put a large additive quad flat on the ground for the team
+            // glow; exported without these bits SC2 shadows the quad, and the unit stands in a
+            // solid black square the size of the plane with nothing visible casting it. Blizzard
+            // agrees: across 18,305 of their models, no_shadows_cast is set on 95% of alpha-blend,
+            // 97% of add and 98% of alpha-add materials, against 16% of opaque ones — so this
+            // follows blend mode and deliberately leaves cutouts (blend 0 + alpha test) casting.
+            if (translucent) flags |= 0x20 | 0x80;              // no_shadows_cast | no_shadows_receive
             w.Write(flags);
             bool visibilityDriven = m.VisibilityAnim is not null || m.DefaultAlpha < 255;
             // A cutout stays in the *opaque* pass — blend_mode 0 does not ignore the alpha channel,
@@ -1714,10 +2009,21 @@ public sealed class M3Exporter
             // exactly this (hightemplar: blend 0, alpha_test 20, two_sided). Making cutouts
             // alpha-blended instead drops them out of the depth-writing pass, and then a body
             // sharing that material clips through itself and through everything drawn after it.
+            // Additive goes to 3 "Alpha Add", not 2 "Add". SC2's mode 2 has no alpha path at
+            // all — across 2,553 Blizzard materials using it, particle and geoset alike, not one
+            // carries an alpha layer — so everything drawn with it is fully and permanently
+            // opaque. Two bugs fell out of that: Warcraft III sprite sheets keep their shape in
+            // alpha over flat white RGB, so a cloud puff drew as a solid coloured square; and an
+            // additive card whose GEOA alpha hides it outside one animation could never hide,
+            // leaving a spell sparkle burning through every Stand. Mode 3 is the alpha-weighted
+            // additive Blizzard actually uses — 93% of their additive geoset materials and 99% of
+            // their additive particle materials pair it with an alpha layer, and they reach for it
+            // 5.5x more often than mode 2. Where a glow's alpha is solid 255 the two modes render
+            // identically, so this costs nothing on art that was already correct.
             w.Write(m.Blend switch                              // blend_mode
             {
                 CompositeBlend.AlphaBlend => 1u,
-                CompositeBlend.Additive => 2u,
+                CompositeBlend.Additive => 3u,
                 _ => 0u,
             });
             w.Write(m.Priority);
@@ -1743,7 +2049,11 @@ public sealed class M3Exporter
                 if (layer is not null) b.Ref(mats, layer); else b.Ref(mats, nullLayer);
             }
             w.Write(0u);                                        // material_class
-            w.Write(2u); w.Write(2u); w.Write(2u);              // blend_mode_layer/emis1/emis2
+            // blend_mode_layer/emis1/emis2. 2 is "Add", the default; 4 is "Team Color Emissive
+            // Add", which turns the layer in that slot into the player-colour channel.
+            w.Write(2u);
+            w.Write(m.TeamBlendSlot == 4 ? 4u : 2u);
+            w.Write(m.TeamBlendSlot == 5 ? 4u : 2u);
             w.Write(0u);                                        // spec_mode
             WriteAnimHeader(w, 1, 8, _nextAnimId());
             w.Write(0f); w.Write(0f); w.Write(-1);
@@ -1815,7 +2125,8 @@ public sealed class M3Exporter
     /// </param>
     /// <param name="colorChannels">Which texture channels the engine samples — see the constants above.</param>
     private M3Builder.Section WriteLayer(M3Builder b, string bitmapPath, uint colorAnimId, bool wrap,
-                                         byte defaultAlpha = 255, uint colorChannels = ChannelsRgb)
+                                         byte defaultAlpha = 255, uint colorChannels = ChannelsRgb,
+                                         bool flipbook = false)
     {
         var layer = b.Add("LAYR", 26, 464);
         var w = layer.W;
@@ -1825,7 +2136,11 @@ public sealed class M3Exporter
         if (pathSec is not null) b.Ref(layer, pathSec); else b.NullRef(layer);
         WriteAnimHeader(w, 1, 6, colorAnimId);                  // color_value — GEOA rides this id
         w.Write(0x00FFFFFFu | ((uint)defaultAlpha << 24)); w.Write(0u); w.Write(-1);
-        w.Write(wrap ? 204u : 192u);                            // uv_wrap_x/y | color_add | color_mult
+        // 0x100 particle_uv_flipbook makes a particle sample ONE cell of a sprite sheet. Without
+        // it SC2 maps the whole sheet onto every quad, so Warcraft III's 8x8 cloud atlas draws as a
+        // grid of 64 little puffs on each particle. Blizzard sets it on 82% of the materials behind
+        // a multi-cell emitter and on only 6% of those behind a single-cell one.
+        w.Write((wrap ? 204u : 192u) | (flipbook ? 0x100u : 0u));  // uv_wrap_x/y | color_add | color_mult
         w.Write(0u);                                            // uv_source (UV0)
         w.Write(colorChannels);
         WriteAnimHeader(w, 1, 0, _nextAnimId());

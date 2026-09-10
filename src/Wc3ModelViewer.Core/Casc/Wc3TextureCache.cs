@@ -144,8 +144,23 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
     {
         if (texture.IsTeamColor || texture.IsTeamGlow)
         {
-            var (b, g, r) = TeamColors[Math.Clamp(teamColor, 0, TeamColors.Length - 1)];
-            return texture.IsTeamGlow ? TeamGlow(b, g, r) : RgbaImage.Solid(8, 8, b, g, r);
+            int slot = Math.Clamp(teamColor, 0, TeamColors.Length - 1);
+            var (b, g, r) = TeamColors[slot];
+            if (!texture.IsTeamGlow) return RgbaImage.Solid(8, 8, b, g, r);
+
+            // The game ships the real glow art and it is nothing like a guess: 32x32, a radial
+            // falloff in the player's colour that peaks at 123/255, not 255. Reading it keeps the
+            // preview and the export honest about how bright a team glow actually is — and gives
+            // the exporter the falloff to hand StarCraft II. The synthetic fallback below still
+            // covers a loose model opened without the game install behind it.
+            string glowRef = $@"ReplaceableTextures\TeamGlow\TeamGlow{slot:00}.blp";
+            string glowKey = CacheKey(modelCascName, new MdxTexture { FileName = glowRef });
+            if (!_cache.TryGetValue(glowKey, out var glow))
+            {
+                glow = LoadFile(modelCascName, glowRef, glowKey);
+                _cache[glowKey] = glow;
+            }
+            return glow ?? TeamGlow(b, g, r);
         }
         if (texture.FileName.Length == 0) return null;
 

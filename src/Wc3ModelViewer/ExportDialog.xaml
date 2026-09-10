@@ -71,7 +71,8 @@
                     <ComboBoxItem Content="Green (player 7)"/>
                     <ComboBoxItem Content="Pink (player 8)"/>
                 </ComboBox>
-                <TextBlock Text="baked into the diffuse" Foreground="#889" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                <TextBlock Text="glTF only — an .m3 takes it live from StarCraft II"
+                           Foreground="#889" VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
 
             <TextBlock Text="Geometry" Foreground="#DDD" FontWeight="Bold" Margin="0,10,0,4"/>

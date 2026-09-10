@@ -143,6 +143,19 @@ Fixed 268-byte entries: `uint32 replaceableId, char[260] fileName, uint32 flags`
 
 * `replaceableId = 1` with an **empty** filename means **team colour**; `2` means team glow.
 
+### Team glow (replaceable 2), measured
+
+The game ships the real art at `ReplaceableTextures\TeamGlow\TeamGlow<nn>.blp`, one per player
+slot, and it is worth reading rather than guessing: **32x32, alpha 255 throughout, and a radial
+falloff in the player's colour that peaks at 123/255** — under half brightness. `TeamGlow00` is pure
+red (player 0's colour is 255,4,2) and `TeamGlow01` reads 0,32,123 at its centre against player 1's
+0,66,255, i.e. the same 0.482 falloff. So the brightest channel of `TeamGlow00` **is** the falloff
+in bytes, which is how `MaterialCompositor.GlowMask` extracts it.
+
+Usage across 400 unit models per art set: **SD 102 models, 115 geoset layers (Additive x92,
+None x23, never inside a multi-layer material) and 4 particle emitters. HD: 1.** Like team colour,
+this is classic-art machinery that Reforged abandoned.
+
 ### Where team colour actually comes from (measured, not assumed)
 
 Two different mechanisms, and only one of them is live in the shipping HD art:
@@ -153,17 +166,25 @@ Two different mechanisms, and only one of them is live in the shipping HD art:
   the upper layer's alpha is low the player colour shows through. 19 of the 102 classic unit models
   under `_addons\hd2.w3addon\…` use it — all Undead (abomination, acolyte, banshee, cryptfiend,
   frostwyrm, gargoyle, ghoul, meatwagon, necromancer, skeleton, …).
-* **Reforged HD** — the layer carries a `teamColorMultiplier` scalar and binds slot 4 to
-  `replaceableId 1`. **Measured across all 102 HD unit models: `teamColorMultiplier` is 0 on every
-  layer of every model**, and every HD body diffuse is 100% opaque in alpha (footman, grunt,
-  cryptfiend all read `alpha opaque=100%` outside genuine cutouts). So the HD art carries **no
-  per-texel team mask and no active team multiplier** — Blizzard bakes the team colour into the
-  diffuse RGB. The slot-4 binding is present on every material but unused.
+* **Reforged HD** — the mask is the **alpha channel of the ORM map** (slot 2). The `teamColorMultiplier`
+  scalar is 0 on every layer of every HD unit model and every HD body diffuse is 100% opaque in
+  alpha, so neither of *those* is the signal — but the ORM's fourth channel, which the
+  occlusion/roughness/metallic packing leaves free, holds the team region exactly. Measured on the
+  HD footman: `Human_Footman_Main_ORM` alpha is his tabard panels and shoulder emblems (10.5% of
+  the atlas), `Shield_ORM` alpha is the shield crest (7.7%) and nothing else, `Pauldron_ORM` is the
+  pauldron trim (5.4%), and `Helmet_ORM` / `Sword_ORM` / `Corpse_ORM` are alpha-empty — which is
+  right, none of those is player-coloured. Across 400 HD unit models: **486 ORM textures carry such
+  a mask, 330 are alpha-empty, 10 are neither.**
 
-The practical consequence for export: there is nothing to extract for an HD unit, and an exporter
-that invents a mask from the diffuse alpha will paint player colour over **cut-out holes**, because
-on HD that channel is coverage. This was tried and reverted — see
-`memory/reforged-hd-alpha-is-team-mask.md`.
+  The remaining **11** have *uniformly opaque* alpha, which must be rejected rather than read as
+  "team-colour everything": they are unauthored placeholders — hair, dragon wings, ship sails —
+  whose RGB is a degenerate constant too (`Human_Footman_Hair_ORM` is R 0, G 255, B 255 everywhere).
+  So the rule is: a mask needs both dark and bright texels to be real.
+  `MaterialCompositor.TeamMaskOf` implements exactly this, and its classic counterpart.
+
+The practical consequence for export: **do not** invent an HD mask from the diffuse alpha — on HD
+that channel is coverage, and using it paints player colour over cut-out holes. That was tried and
+reverted; see `memory/reforged-hd-alpha-is-team-mask.md`. Read the ORM's alpha instead.
 * HD entries name **`.tif`** files with **forward slashes**
   (`Units/Human/Knight/Human_Knight_Main_Diffuse.tif`) while the CASC actually stores **`.dds`**.
   Texture resolution must swap the extension and normalise separators.

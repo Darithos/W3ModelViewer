@@ -56,6 +56,24 @@ if (args.Contains("--symmetry"))
     return MdxProbe.SymmetryProbe.Run(install, n);
 }
 
+// --teamcolor [n] censuses where the team-colour signal lives across n models, SD and HD.
+if (args.Contains("--teamcolor"))
+{
+    int ti = Array.IndexOf(args, "--teamcolor");
+    var rest = args.Skip(ti + 1).Where(a => !a.StartsWith("--")).ToArray();
+    if (args.Contains("--dumpslots")) return MdxProbe.TeamProbe.DumpSlots(install, rest[0], rest[1]);
+    if (args.Contains("--orm")) return MdxProbe.TeamProbe.Orm(install, rest.Length > 0 ? int.Parse(rest[0]) : 400);
+    if (args.Contains("--composites"))
+        return MdxProbe.TeamProbe.Composites(install, rest[0], rest[1],
+                                             rest.Length > 2 && int.TryParse(rest[2], out int cs) ? cs : 0);
+    if (args.Contains("--sweep")) return MdxProbe.TeamProbe.Sweep(install, rest.Length > 0 ? int.Parse(rest[0]) : 25);
+    if (args.Contains("--glow")) return MdxProbe.TeamProbe.Glow(install, rest.Length > 0 ? int.Parse(rest[0]) : 400);
+    if (args.Contains("--rawtex")) return MdxProbe.TeamProbe.RawTex(install, rest[0], rest[1]);
+    if (rest.Length > 0 && !int.TryParse(rest[0], out _)) return MdxProbe.TeamProbe.Slots(install, rest);
+    int n = rest.Length > 0 ? int.Parse(rest[0]) : 200;
+    return MdxProbe.TeamProbe.Run(install, n);
+}
+
 // --cloud <file.mdx> <out.txt> dumps LOD 0 bind-pose vertex positions for offline comparison.
 if (args.Contains("--cloud"))
 {
@@ -68,6 +86,23 @@ if (args.Contains("--cloud"))
             cw.WriteLine($"{pp.X} {pp.Y} {pp.Z}");
     Console.WriteLine($"wrote {args[ci + 2]}");
     return 0;
+}
+
+// --emitters <file.mdx> dumps the PRE2 emitters that drive the SC2 particle conversion.
+if (args.Contains("--emitters"))
+{
+    int ei = Array.IndexOf(args, "--emitters");
+    if (ei + 1 >= args.Length) { Console.WriteLine("usage: --emitters <file.mdx>"); return 1; }
+    return MdxProbe.EmitterProbe.Run(args[ei + 1]);
+}
+
+// --geosetvis <file.mdx> [indices...] says what hides each geoset in each sequence.
+if (args.Contains("--geosetvis"))
+{
+    int gi = Array.IndexOf(args, "--geosetvis");
+    if (gi + 1 >= args.Length) { Console.WriteLine("usage: --geosetvis <file.mdx> [geoset indices]"); return 1; }
+    var want = args.Skip(gi + 2).TakeWhile(a => int.TryParse(a, out _)).Select(int.Parse).ToArray();
+    return MdxProbe.GeosetVisProbe.Run(args[gi + 1], want);
 }
 
 // --tex resolves and identifies every texture a set of models references.
@@ -754,12 +789,13 @@ if (args.Contains("--exportto"))
     int ei = Array.IndexOf(args, "--exportto");
     string outRoot = args[ei + 1], cascPath = args[ei + 2], mname = args[ei + 3];
     float sc = ei + 4 < args.Length && float.TryParse(args[ei + 4], out float f) ? f : 1f;
+    int slot = ei + 5 < args.Length && int.TryParse(args[ei + 5], out int sl) ? sl : 0;
     using var s = new Wc3Storage(install);
     var tex = new Wc3ModelViewer.Core.Casc.Wc3TextureCache(s);
     var raw = s.TryReadFile(cascPath);
     if (raw is null) { Console.WriteLine($"not found: {cascPath}"); return 1; }
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
-    var opts = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = 0, ModelName = mname, Scale = sc };
+    var opts = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = 0, ModelName = mname, Scale = sc, TeamColor = slot };
     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(tex, cascPath);
     string d = Path.Combine(outRoot, mname);
     string td = Path.Combine(d, opts.TextureFolder);

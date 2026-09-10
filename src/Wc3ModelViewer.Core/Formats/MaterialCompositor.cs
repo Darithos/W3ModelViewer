@@ -11,6 +11,41 @@ public enum CompositeBlend
     Additive,
 }
 
+/// <summary>
+/// Where one material shows player colour, as a per-texel scalar in its diffuse's UV space.
+/// </summary>
+/// <remarks>
+/// Warcraft III writes this signal down twice, in two unrelated places, and the exporter needs it
+/// as one thing — see <see cref="MaterialCompositor.TeamMaskOf"/>.
+/// </remarks>
+public sealed class TeamMask
+{
+    public required int Width { get; init; }
+    public required int Height { get; init; }
+
+    /// <summary>One byte per texel: 0 = no player colour, 255 = fully player-coloured.</summary>
+    public required byte[] Values { get; init; }
+
+    /// <summary>Fraction of texels carrying any player colour — 0 means the mask is dead weight.</summary>
+    public float Coverage
+    {
+        get
+        {
+            int hit = 0;
+            foreach (byte v in Values) if (v > 8) hit++;
+            return Values.Length == 0 ? 0f : (float)hit / Values.Length;
+        }
+    }
+
+    /// <summary>The mask value at a texel of a <paramref name="w"/> x <paramref name="h"/> image.</summary>
+    public byte At(int x, int y, int w, int h)
+    {
+        int sx = w == Width ? x : x * Width / w;
+        int sy = h == Height ? y : y * Height / h;
+        return Values[sy * Width + sx];
+    }
+}
+
 /// <summary>One material flattened to a single texture plus a draw mode.</summary>
 public sealed class CompositeMaterial
 {
@@ -51,8 +86,15 @@ public static class MaterialCompositor
     /// <summary>The engine's alpha-test threshold for filter mode Transparent.</summary>
     public const float CutoutThreshold = 0.75f;
 
+    /// <param name="bakeTeam">
+    /// True to paint the player's colour into the result, which is what a preview wants. False
+    /// substitutes <b>black</b> for it, which leaves exactly the part of the surface that is not
+    /// player-coloured — what an exporter must hand StarCraft II alongside
+    /// <see cref="TeamMaskOf"/>, so the engine can add the live player colour back itself.
+    /// </param>
     public static CompositeMaterial Compose(MdxModel model, MdxMaterial material,
-                                            Wc3TextureCache textures, string modelCascName, int teamColor = 0)
+                                            Wc3TextureCache textures, string modelCascName, int teamColor = 0,
+                                            bool bakeTeam = true)
     {
         // Layers whose textures we can resolve, with their images.
         var loaded = new List<(MdxLayer Layer, RgbaImage Image)>();
@@ -61,6 +103,13 @@ public static class MaterialCompositor
             int texId = layer.DiffuseTextureId;
             if ((uint)texId >= (uint)model.Textures.Count) continue;
             var img = textures.Load(modelCascName, model.Textures[texId], teamColor);
+            // The classic team layer is a flat player-colour fill, and a team-glow card is that same
+            // colour shaped by a falloff. An exporter wants what is left when the player's
+            // contribution is taken away — for both of those, nothing — so it composites over
+            // black and lets StarCraft II add the colour back through the mask.
+            if (img is not null && !bakeTeam
+                && (model.Textures[texId].IsTeamColor || model.Textures[texId].IsTeamGlow))
+                img = RgbaImage.Solid(8, 8, 0, 0, 0);
             if (img is not null) loaded.Add((layer, img));
         }
         if (loaded.Count == 0)
@@ -114,7 +163,14 @@ public static class MaterialCompositor
             // Classic SD still uses the alpha channel as a team-colour mask on opaque materials.
             if (blend == CompositeBlend.Opaque && !layer.IsPbr
                 && layer.Slot(MdxTextureSlot.TeamColor) >= 0 && image.HasTransparency())
-                result = LerpTeamColorUnder(image, textures, modelCascName, model, layer, teamColor);
+                result = LerpTeamColorUnder(image, TeamRgb(textures, modelCascName, model, layer, teamColor, bakeTeam));
+
+            // Reforged HD keeps the mask out of the diffuse entirely — it is the ORM's alpha, and
+            // the shader tints (multiplies) the diffuse there rather than replacing it, which is
+            // why the footman's tabard keeps its folds and wear in every player colour.
+            if (layer.IsPbr && TeamMaskOf(model, material, textures, modelCascName) is { } hdMask)
+                result = TintTeamColor(result, hdMask,
+                                       TeamRgb(textures, modelCascName, model, layer, teamColor, bakeTeam));
 
             // An opaque material must not carry transparency into the draw. FilterMode.None means
             // "ignore alpha" in Warcraft III, and a classic skin's alpha channel is a team-colour
@@ -158,9 +214,18 @@ public static class MaterialCompositor
             _ => CompositeBlend.Opaque,
         };
 
+        var stacked = new RgbaImage { Width = w, Height = h, Pixels = canvas };
+
+        // An HD layer inside a stack keeps its ORM mask; the exporter reads the mask either way, so
+        // this path has to remove the player's contribution here too or the two disagree.
+        var pbr = loaded.FirstOrDefault(l => l.Layer.IsPbr).Layer;
+        if (pbr is not null && TeamMaskOf(model, material, textures, modelCascName) is { } stackMask)
+            stacked = TintTeamColor(stacked, stackMask,
+                                    TeamRgb(textures, modelCascName, model, pbr, teamColor, bakeTeam));
+
         return new CompositeMaterial
         {
-            Texture = new RgbaImage { Width = w, Height = h, Pixels = canvas },
+            Texture = stacked,
             Blend = stackBlend, TwoSided = twoSided, Unshaded = unshaded,
             PrimaryTexturePath = primaryPath,
         };
@@ -241,15 +306,166 @@ public static class MaterialCompositor
         return total == 0 ? 0f : (float)cut / total;
     }
 
-    /// <summary>final = lerp(teamColour, diffuse, diffuse.a), emitted opaque.</summary>
-    private static RgbaImage LerpTeamColorUnder(RgbaImage diffuse, Wc3TextureCache textures,
-                                                string modelCascName, MdxModel model, MdxLayer layer, int teamColor)
+    /// <summary>
+    /// Where <paramref name="material"/> shows player colour, or null when it never does.
+    /// </summary>
+    /// <remarks>
+    /// Warcraft III records this twice, in two places that share nothing:
+    /// <list type="bullet">
+    /// <item><b>Classic SD</b> stacks an opaque <c>replaceableId 1</c> layer under the real diffuse
+    /// drawn with <c>Blend</c>, so the player's colour shows through wherever the diffuse's alpha
+    /// is low — the mask is <c>1 - diffuse.a</c>. 342 of 1,511 materials across 400 SD unit models
+    /// are built this way, 337 of them as that two-layer stack.</item>
+    /// <item><b>Reforged HD</b> puts it in the <b>alpha channel of the ORM map</b> — measured, not
+    /// assumed: the footman's <c>Main_ORM</c> alpha is exactly his tabard panels, his
+    /// <c>Shield_ORM</c> alpha exactly the crest, and his helmet and sword ORMs are alpha-empty.
+    /// Across 400 HD unit models, 486 ORM textures carry such a mask and 330 are empty. The
+    /// per-layer <c>teamColorMultiplier</c> is 0 on every shipping HD layer, and the diffuse alpha
+    /// is coverage, so neither of those is the signal.</item>
+    /// </list>
+    /// The 11 ORM textures (of 837) whose alpha is uniformly opaque are unauthored placeholders —
+    /// hair, dragon wings, ship sails, whose RGB is a degenerate constant too. Taking them at face
+    /// value would team-colour a whole head of hair, so a mask with no dark texels is rejected.
+    /// </remarks>
+    public static TeamMask? TeamMaskOf(MdxModel model, MdxMaterial material,
+                                       Wc3TextureCache textures, string modelCascName)
     {
+        foreach (var layer in material.Layers)
+        {
+            if (!layer.IsPbr) continue;
+            int ormId = layer.Slot(MdxTextureSlot.Orm);
+            if ((uint)ormId >= (uint)model.Textures.Count) continue;
+            var orm = textures.Load(modelCascName, model.Textures[ormId]);
+            if (orm is null) continue;
+            return FromAlpha(orm, invert: false);
+        }
+
+        // Team glow (replaceable 2): the whole card is the player's colour, shaped by the art's
+        // own falloff, so the mask *is* that falloff. 102 of 400 SD unit models use it — auras,
+        // weapon glows, the disc under a hero — against 1 of 400 HD ones.
+        foreach (var layer in material.Layers)
+        {
+            int glowId = layer.DiffuseTextureId;
+            if ((uint)glowId >= (uint)model.Textures.Count || !model.Textures[glowId].IsTeamGlow) continue;
+            var glow = textures.Load(modelCascName, model.Textures[glowId]);
+            if (glow is not null) return FromBrightness(glow);
+        }
+
+        // Classic: the mask lives in the diffuse that is drawn over the team layer.
+        bool hasTeamLayer = material.Layers.Any(l => (uint)l.DiffuseTextureId < (uint)model.Textures.Count
+                                                  && model.Textures[l.DiffuseTextureId].IsTeamColor);
+        foreach (var layer in material.Layers)
+        {
+            int texId = layer.DiffuseTextureId;
+            if ((uint)texId >= (uint)model.Textures.Count) continue;
+            var tex = model.Textures[texId];
+            if (tex.IsReplaceable) continue;
+            if (!hasTeamLayer && layer.Slot(MdxTextureSlot.TeamColor) < 0) continue;
+            var img = textures.Load(modelCascName, tex);
+            if (img is null) continue;
+            return FromAlpha(img, invert: true);
+        }
+        return null;
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<RgbaImage, TeamMask?[]> MaskCache = new();
+
+    /// <summary>
+    /// An image's alpha channel as a mask, or null when it carries no usable signal — all-empty
+    /// (nothing is player-coloured) or all-opaque (an unauthored placeholder map).
+    /// </summary>
+    private static TeamMask? FromAlpha(RgbaImage img, bool invert)
+    {
+        // Scanning a 2048-square ORM per geoset per rebuild is real time, and the answer only
+        // changes when the texture cache hands back a different image — which it does on reload and
+        // on a texture override, so keying the cache on the image itself is enough to stay honest.
+        var slot = MaskCache.GetValue(img, static _ => new TeamMask?[2]);
+        int k = invert ? 1 : 0;
+        if (slot[k] is { } hit) return hit;
+
+        int n = img.Pixels.Length / 4;
+        if (n == 0) return null;
+        var values = new byte[n];
+        int lo = 0, hi = 0;
+        for (int i = 0; i < n; i++)
+        {
+            byte a = img.Pixels[i * 4 + 3];
+            byte v = invert ? (byte)(255 - a) : a;
+            values[i] = v;
+            if (v < 64) lo++; else if (v > 192) hi++;
+        }
+        if (hi * 1000 < n || lo * 1000 < n) return null;
+        return slot[k] = new TeamMask { Width = img.Width, Height = img.Height, Values = values };
+    }
+
+    /// <summary>
+    /// A glow card's falloff, read straight off its art as the brightest channel per texel.
+    /// </summary>
+    /// <remarks>
+    /// The art is the player's colour times the falloff, and player 0's colour has a 255 channel
+    /// (<c>TeamColor00</c> is 255,4,2), so the brightest channel of <c>TeamGlow00</c> <i>is</i> the
+    /// falloff in bytes — no normalising, and it comes out right for the synthetic fallback too.
+    /// Unlike an ORM mask this one is not bimodal: the real art peaks at 123/255 and fades to 0, so
+    /// it would fail <see cref="FromAlpha"/>'s "needs bright texels" test. All it must not be is
+    /// empty.
+    /// </remarks>
+    public static TeamMask? GlowMask(RgbaImage glow) => FromBrightness(glow);
+
+    private static TeamMask? FromBrightness(RgbaImage img)
+    {
+        int n = img.Pixels.Length / 4;
+        if (n == 0) return null;
+        var values = new byte[n];
+        bool any = false;
+        for (int i = 0; i < n; i++)
+        {
+            byte v = Math.Max(img.Pixels[i * 4], Math.Max(img.Pixels[i * 4 + 1], img.Pixels[i * 4 + 2]));
+            values[i] = v;
+            any |= v > 8;
+        }
+        return any ? new TeamMask { Width = img.Width, Height = img.Height, Values = values } : null;
+    }
+
+    /// <summary>The flat player colour this layer's team slot resolves to; black when not baking.</summary>
+    private static (byte B, byte G, byte R) TeamRgb(Wc3TextureCache textures, string modelCascName,
+                                                    MdxModel model, MdxLayer layer, int teamColor, bool bakeTeam)
+    {
+        if (!bakeTeam) return (0, 0, 0);
         int tcId = layer.Slot(MdxTextureSlot.TeamColor);
         var tc = (uint)tcId < (uint)model.Textures.Count
             ? textures.Load(modelCascName, model.Textures[tcId], teamColor)
             : null;
-        byte tb = tc?.Pixels[0] ?? 18, tg = tc?.Pixels[1] ?? 3, tr = tc?.Pixels[2] ?? 255;
+        return (tc?.Pixels[0] ?? 18, tc?.Pixels[1] ?? 3, tc?.Pixels[2] ?? 255);
+    }
+
+    /// <summary>
+    /// <c>lerp(diffuse, diffuse * team, mask)</c> — a tint, not a replacement, so the art's detail
+    /// survives inside the masked region. With a black team colour this reduces to
+    /// <c>diffuse * (1 - mask)</c>, i.e. the diffuse with the player's contribution removed.
+    /// </summary>
+    private static RgbaImage TintTeamColor(RgbaImage diffuse, TeamMask mask, (byte B, byte G, byte R) team)
+    {
+        int w = diffuse.Width, h = diffuse.Height;
+        var px = (byte[])diffuse.Pixels.Clone();
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int m = mask.At(x, y, w, h);
+                if (m == 0) continue;
+                int i = (y * w + x) * 4;
+                px[i] = Mix(px[i], team.B, m);
+                px[i + 1] = Mix(px[i + 1], team.G, m);
+                px[i + 2] = Mix(px[i + 2], team.R, m);
+            }
+        return new RgbaImage { Width = w, Height = h, Pixels = px };
+
+        static byte Mix(byte d, byte t, int m) => (byte)((d * (255 - m) + d * t / 255 * m) / 255);
+    }
+
+    /// <summary>final = lerp(teamColour, diffuse, diffuse.a), emitted opaque.</summary>
+    private static RgbaImage LerpTeamColorUnder(RgbaImage diffuse, (byte B, byte G, byte R) team)
+    {
+        byte tb = team.B, tg = team.G, tr = team.R;
 
         var px = new byte[diffuse.Pixels.Length];
         var s = diffuse.Pixels;
