@@ -17,7 +17,8 @@ Working end to end:
 - **MDX parser** — classic and Reforged, validated against **86 real models** across every race,
   buildings and heroes with zero defects.
 - **Textured viewer** — DDS decode (BC1/BC3/BC5), multi-layer SD materials and HD team-colour
-  masks flattened per material, filter-mode-aware blending, LOD picker.
+  masks flattened per material, filter-mode-aware blending, LOD picker, and a player-colour picker
+  that recolours the model the way StarCraft II will.
 - **Animation player** — double-click a sequence to play; scrub, pause, speed control. CPU skinning
   of both schemes (classic matrix groups and Reforged 4-weight SKIN), GEOA geoset visibility.
 - **Effects** — particle emitters (`PRE2`/`PREM`), ribbons (`RIBB`) and lights (`LITE`) are parsed
@@ -50,11 +51,13 @@ Working end to end:
   alpha-blended material leaves SC2's depth-writing pass and then clips through itself. Cut-outs
   test at Blizzard's own threshold (32, as on raynor's hair) — the feathered band Reforged authors
   around every strand carries the object's colour, so discarding it thins hair and fur into holes.
-- **Team colour** — verified against the shipping art rather than assumed: Reforged HD units carry
-  **no** team-colour data (`teamColorMultiplier` is 0 on every layer of all 102 HD unit models, and
-  their diffuse alpha is coverage, not a mask), so their team colour is already baked into the
-  diffuse by Blizzard. Classic SD units do carry a real mask — an opaque `replaceableId 1` layer
-  under the diffuse — which is composited at export using the chosen player slot. See
+- **Team colour and team glow** — exported models take the player's colour **live from StarCraft
+  II**, so one file is correct for all eight players and recolours in the editor. Warcraft III hides
+  the mask in three different places and all three are read: classic units stack an opaque
+  `replaceableId 1` layer under the diffuse (mask = `1 - diffuse.a`), Reforged HD units put it in
+  the **alpha channel of the ORM map**, and team glow is the falloff of the game's own
+  `TeamGlow<nn>.blp`. It lands in SC2 as `blend_mode_emis* = 4`, "Team Color Emissive Add" — the
+  mechanism 1,204 of Blizzard's own Heroes materials use. Measured, not assumed; see
   `docs/mdx-format-verified.md` §5.
 - **glTF export** — skeleton, skinning, PNG textures and every sequence baked as a separate
   animation, for editing in Blender (re-export `.m3` there with m3studio if desired). Verified
