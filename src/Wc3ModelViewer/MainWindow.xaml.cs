@@ -733,10 +733,17 @@ public partial class MainWindow : Window
         // DiffuseMaterial that an unshaded SURFACE needs is what made every glow, aura and spell
         // card draw as a solid black or team-coloured rectangle standing through the model: the
         // black diffuse is fully opaque, so the quad occluded everything behind it.
+        //
+        // An unshaded surface still needs that black matte under its emission, but the matte must
+        // be the texture brush multiplied to black, not a solid black brush: only then does it carry
+        // the texture's alpha and the brush Opacity that GEOA drives. A solid matte ignored both, so
+        // ClericMissile's sword, faded to 0, stayed a pitch-black silhouette (MdxProbe --wpfblend).
         Material material = composite.Blend == CompositeBlend.Additive
             ? new EmissiveMaterial(brush)
             : composite.Unshaded
-                ? new MaterialGroup { Children = { new DiffuseMaterial(Brushes.Black), new EmissiveMaterial(brush) } }
+                ? new MaterialGroup { Children = {
+                      new DiffuseMaterial(brush) { Color = Colors.Black, AmbientColor = Colors.Black },
+                      new EmissiveMaterial(brush) } }
                 : new DiffuseMaterial(brush);
         return (material, composite.TwoSided ? material : null);
     }

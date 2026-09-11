@@ -219,13 +219,11 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         json.EndArray();
 
         // ---- animations: one per sequence, baked LINEAR ----
-        var wanted = mdx.Sequences
-            .Where(s => options.Sequences is null || options.Sequences.Contains(s.Name))
-            .ToList();
+        var wanted = M3Exporter.PlanSequences(mdx, options.Sequences, options.SequenceNames);
         if (wanted.Count > 0)
         {
             json.BeginArray("animations");
-            foreach (var seq in wanted) BakeAnimation(json, bin, seq, JointNode);
+            foreach (var (_, seq, name) in wanted) BakeAnimation(json, bin, seq, name, JointNode);
             json.EndArray();
             _log.Add($"{wanted.Count} sequences baked at {options.Fps} fps");
         }
@@ -319,12 +317,8 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         return (joints, weights);
     }
 
-    private void BakeAnimation(Json json, BinWriter bin, MdxSequence seq, Func<int, int> jointNode)
+    private void BakeAnimation(Json json, BinWriter bin, MdxSequence seq, string name, Func<int, int> jointNode)
     {
-        string name = options.SequenceNames?.GetValueOrDefault(seq.Name) is { Length: > 0 } custom
-            ? custom
-            : M3Exporter.MapSequenceName(seq.Name);
-
         int step = Math.Max(1000 / Math.Max(options.Fps, 1), 10);
         var timesMs = new List<int>();
         for (int t = seq.IntervalStart; t < seq.IntervalEnd; t += step) timesMs.Add(t);

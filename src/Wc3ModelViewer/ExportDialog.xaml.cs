@@ -32,9 +32,11 @@ public partial class ExportDialog : Window
         _entry = entry;
         _visibleGeosets = visibleGeosets;
 
-        _rows = model.Sequences
-            .Select(s => new SequenceRow(s.Name, $"{s.Name}  ({s.DurationMs / 1000.0:0.0}s)",
-                                         M3Exporter.MapSequenceName(s.Name)))
+        // The plan already drops exact copies and renumbers shared names, so each row is one
+        // distinct animation with a unique default name.
+        _rows = M3Exporter.PlanSequences(model)
+            .Select(p => new SequenceRow(p.Index, $"{p.Sequence.Name}  ({p.Sequence.DurationMs / 1000.0:0.0}s)",
+                                         p.Name))
             .ToList();
         SequenceChecks.ItemsSource = _rows;
 
@@ -102,10 +104,10 @@ public partial class ExportDialog : Window
 
         Options = new M3ExportOptions
         {
-            Sequences = selected.Select(r => r.Wc3Name).ToHashSet(StringComparer.Ordinal),
+            Sequences = selected.Select(r => r.Index).ToHashSet(),
             SequenceNames = selected
                 .Where(r => r.ExportName.Trim().Length > 0)
-                .ToDictionary(r => r.Wc3Name, r => r.ExportName.Trim(), StringComparer.Ordinal),
+                .ToDictionary(r => r.Index, r => r.ExportName.Trim()),
             Lod = lod,
             Scale = scale,
             TeamColor = TeamColorCombo.SelectedIndex,
@@ -120,10 +122,10 @@ public partial class ExportDialog : Window
         DialogResult = true;
     }
 
-    /// <summary>One sequence row: original name, checkbox, and an editable export name.</summary>
-    private sealed class SequenceRow(string wc3Name, string label, string defaultExportName) : INotifyPropertyChanged
+    /// <summary>One sequence row: its index in the model, checkbox, and an editable export name.</summary>
+    private sealed class SequenceRow(int index, string label, string defaultExportName) : INotifyPropertyChanged
     {
-        public string Wc3Name { get; } = wc3Name;
+        public int Index { get; } = index;
         public string Label { get; } = label;
 
         private bool _isChecked = true;
