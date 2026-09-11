@@ -447,6 +447,14 @@ public sealed class MdxAnimator
     /// The geoset's animated alpha at a time — how models hide weapons, corpses and alternate
     /// forms per sequence. 1 when the geoset has no animation entry.
     /// </summary>
+    /// <remarks>
+    /// A sequence holding none of the track's keys reads 1, not the chunk's static alpha. An animated
+    /// alpha has no static value in the MDL source, so the binary field beside a track is whatever
+    /// the converter wrote: every one of 40,830 stock tracks stores 1.0 there (MdxProbe --geoascan),
+    /// but hand-made models store 0 or leftovers. ClericMissile keys alpha 0 only in Birth and Death
+    /// and relies on this default to show its sword in Stand; falling back to its static 0 hid it in
+    /// the viewer and in the exported .m3. mdx-m3-viewer uses the same default of 1.
+    /// </remarks>
     public float GeosetAlpha(int geosetIndex, MdxSequence? seq, int timeMs, long? wallMs = null)
     {
         float alpha = 1f;
@@ -454,7 +462,7 @@ public sealed class MdxAnimator
         {
             if (ga.GeosetId != geosetIndex) continue;
             alpha = ga.AlphaTrack is not null
-                ? Sample(ga.AlphaTrack, seq, timeMs, wallMs ?? timeMs, ga.Alpha,
+                ? Sample(ga.AlphaTrack, seq, timeMs, wallMs ?? timeMs, 1f,
                          float.Lerp, HermiteF, BezierF)
                 : ga.Alpha;
             break;

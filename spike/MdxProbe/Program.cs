@@ -263,6 +263,18 @@ if (args.Contains("--scalescan"))
     return MdxProbe.ScaleScan.Run(install, n);
 }
 
+// --wpfblend renders the viewer's unshaded material offscreen: does its matte follow opacity and alpha?
+if (args.Contains("--wpfblend")) return MdxProbe.WpfBlendProbe.Run();
+
+// --geoascan [n] [looseDir...] censuses the static alpha a GEOA keeps beside its track, and the
+// sequences where that fallback decides whether a geoset is visible.
+if (args.Contains("--geoascan"))
+{
+    int gi = Array.IndexOf(args, "--geoascan");
+    int n = gi + 1 < args.Length && int.TryParse(args[gi + 1], out int v) ? v : 100_000;
+    return MdxProbe.GeoaScan.Run(install, n, args.Skip(gi + 1).Where(a => !int.TryParse(a, out _)));
+}
+
 // --sizescan [n] digests every geoset's animated extent across every sequence, for A/B diffing a
 // change to the track sampler.
 if (args.Contains("--sizescan"))

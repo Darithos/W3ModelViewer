@@ -610,15 +610,15 @@ public sealed class M3Exporter
         // A geoset hidden at rest (corpse, alternate form) must default to invisible: SC2 falls
         // back to the layer's colour_value default in any sequence that carries no key, and its
         // Archive-Browser preview shows the model *unposed*, on that very default. Sampling the
-        // track with a null sequence returns the GEOA's static alpha — typically 1 even for a
-        // corpse, which then draws its rotting mesh straight over the living body. Sample inside the
-        // primary Stand sequence instead, the same value the baked track carries: corpse 0, body 1.
+        // track with a null sequence returns the track's default of 1 — even for a corpse, which
+        // then draws its rotting mesh straight over the living body. Sample inside the primary
+        // Stand sequence instead, the same value the baked track carries: corpse 0, body 1.
         var primarySeq = _mdx.Sequences.FirstOrDefault(s => s.Name.StartsWith("Stand", StringComparison.OrdinalIgnoreCase))
                          ?? _mdx.Sequences.FirstOrDefault();
         float restAlpha = anim is null ? 1f
             : anim.AlphaTrack is null ? anim.Alpha
             : primarySeq is not null ? SampleGeosetAlpha(anim, primarySeq, primarySeq.IntervalStart)
-            : anim.Alpha;
+            : 1f;
 
         var mat = new ExportMaterial
         {
