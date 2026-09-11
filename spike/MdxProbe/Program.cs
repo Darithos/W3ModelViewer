@@ -351,6 +351,61 @@ if (args.Contains("--nodes"))
     return 0;
 }
 
+// --dupseqs [outDir] lists every model carrying two sequences with the same name and the export
+// plan M3Exporter.PlanSequences makes for it. The export options used to key sequences by name, so
+// the Chaos Blademaster's twin "Stand 2" crashed the export dialog. With an outDir it also exports
+// that model through the dialog's path.
+if (args.Contains("--dupseqs"))
+{
+    int di = Array.IndexOf(args, "--dupseqs");
+    string? dupOut = di + 1 < args.Length && !args[di + 1].StartsWith("--") ? args[di + 1] : null;
+    using var s = new Wc3Storage(install);
+    var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
+    int parsed = 0, hits = 0;
+    foreach (var entry in index.Models)
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel mdl;
+        try { mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        parsed++;
+        var dups = mdl.Sequences.GroupBy(q => q.Name, StringComparer.Ordinal).Where(g => g.Count() > 1).ToList();
+        if (dups.Count == 0) continue;
+        hits++;
+        Console.WriteLine($"{entry.RelativePath}  [{entry.ArtSet}]");
+        foreach (var g in dups)
+            Console.WriteLine($"    \"{g.Key}\" x{g.Count()}: " + string.Join(", ", g.Select(q => $"{q.IntervalStart}-{q.IntervalEnd}")));
+        var plan = Wc3ModelViewer.Core.Convert.M3Exporter.PlanSequences(mdl);
+        Console.WriteLine($"    plan ({plan.Count} of {mdl.Sequences.Count}): " + string.Join(" | ", plan.Select(p => $"#{p.Index} {p.Name}")));
+        if (plan.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != plan.Count)
+            Console.WriteLine("    !! plan still repeats a name");
+
+        // The Chaos Blademaster crashed the app's export dialog: run the dialog's exact path.
+        if (entry.RelativePath.Contains("herochaosblademaster", StringComparison.OrdinalIgnoreCase)
+            && dupOut is not null)
+        {
+            var opt = new Wc3ModelViewer.Core.Convert.M3ExportOptions
+            {
+                Sequences = plan.Select(p => p.Index).ToHashSet(),
+                // Two rows typed with the same name must still come out unique.
+                SequenceNames = plan.ToDictionary(p => p.Index, p => p.Name.StartsWith("Stand 1") || p.Name.StartsWith("Stand 01") ? "Stand 02" : p.Name),
+                Lod = 0,
+                ModelName = "HeroChaosBladeMaster",
+            };
+            var textures = new Wc3TextureCache(s) { PreferHd = entry.ArtSet == Wc3ArtSet.Reforged };
+            var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opt).Export(textures, entry.CascName);
+            Directory.CreateDirectory(dupOut);
+            File.WriteAllBytes(Path.Combine(dupOut, opt.ModelName + ".m3"), res.M3);
+            var gl = new Wc3ModelViewer.Core.Convert.GltfExporter(mdl, opt).Export(textures, entry.CascName);
+            Console.WriteLine($"    exported m3 {res.M3.Length:N0} B, {res.Textures.Count} textures; glTF ok ({gl.GetType().Name})");
+            Console.WriteLine("    typed-name plan: " + string.Join(" | ",
+                Wc3ModelViewer.Core.Convert.M3Exporter.PlanSequences(mdl, opt.Sequences, opt.SequenceNames).Select(p => p.Name)));
+        }
+    }
+    Console.WriteLine($"{hits} of {parsed} models have duplicate sequence names");
+    return 0;
+}
+
 // --billboards [n] [sd|hd] censuses billboarded nodes across the game: which billboard flags ship,
 // and for every card a node carries, the node-local axis it lies flat on and the side its texture
 // is drawn on (right = where u grows, up = where v shrinks, front = right x up). That front is the

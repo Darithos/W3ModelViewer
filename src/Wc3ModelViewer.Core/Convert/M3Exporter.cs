@@ -19,14 +19,17 @@ public enum M3AnimTestData
 /// <summary>What to export and how.</summary>
 public sealed class M3ExportOptions
 {
-    /// <summary>Names of the sequences to include, or null for all of them.</summary>
-    public HashSet<string>? Sequences { get; init; }
+    /// <summary>
+    /// Indices into <see cref="MdxModel.Sequences"/> to include, or null for all of them. Indices,
+    /// not names: 34 stock models repeat a sequence name (both Blademasters carry two "Stand 2").
+    /// </summary>
+    public HashSet<int>? Sequences { get; init; }
 
     /// <summary>
-    /// Per-sequence export names (WC3 name → m3 name). A sequence without an entry falls back to
-    /// the automatic SC2 mapping.
+    /// Per-sequence export names (sequence index → m3 name). A sequence without an entry falls
+    /// back to the automatic SC2 mapping.
     /// </summary>
-    public IReadOnlyDictionary<string, string>? SequenceNames { get; init; }
+    public IReadOnlyDictionary<int, string>? SequenceNames { get; init; }
 
     /// <summary>Geoset indices to export; null = every geoset at <see cref="Lod"/>.</summary>
     public HashSet<int>? Geosets { get; init; }
@@ -959,6 +962,64 @@ public sealed class M3Exporter
         return name + variant;
     }
 
+    /// <summary>One sequence as it will be exported: its index in the MDX and its unique m3 name.</summary>
+    public readonly record struct PlannedSequence(int Index, MdxSequence Sequence, string Name);
+
+    /// <summary>
+    /// Resolves which sequences to export and under what names. Two things in stock WC3 data
+    /// need handling (34 of 8,408 models):
+    /// <list type="bullet">
+    /// <item>Reforged exact copies — same name and same interval (both Blademasters' twin
+    /// "Stand 2", the satyrs' "Stand 3"). The copy carries nothing new and is dropped.</item>
+    /// <item>Classic variations that share a name but play different frames (the spiders' two
+    /// "Stand"). Both are kept; the later one moves to the next free two-digit variation
+    /// number, which is how Blizzard's own m3s name variations — they repeat a sequence name
+    /// in 1 of 17,440 files.</item>
+    /// </list>
+    /// A user-typed name that collides is renumbered the same way.
+    /// </summary>
+    public static List<PlannedSequence> PlanSequences(
+        MdxModel mdx, IReadOnlySet<int>? selected = null, IReadOnlyDictionary<int, string>? names = null)
+    {
+        var picked = new List<(int Index, MdxSequence Seq, string Name)>();
+        var intervals = new HashSet<(string, int, int)>();
+        for (int i = 0; i < mdx.Sequences.Count; i++)
+        {
+            var seq = mdx.Sequences[i];
+            if (selected is not null && !selected.Contains(i)) continue;
+            if (!intervals.Add((seq.Name, seq.IntervalStart, seq.IntervalEnd))) continue;
+            string name = names?.GetValueOrDefault(i)?.Trim() is { Length: > 0 } custom
+                ? custom
+                : MapSequenceName(seq.Name);
+            picked.Add((i, seq, name));
+        }
+
+        // Every name as first written is reserved up front, so a renumbered collider can never
+        // take a name a later sequence already owns ("Stand", "Stand", "Stand 01").
+        var used = new HashSet<string>(picked.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+        var firstSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var plan = new List<PlannedSequence>(picked.Count);
+        foreach (var (index, seq, name) in picked)
+        {
+            string final = name;
+            if (!firstSeen.Add(name))
+            {
+                string stem = name;
+                int n = 1;
+                int space = name.LastIndexOf(' ');
+                if (space > 0 && int.TryParse(name[(space + 1)..], out int v))
+                {
+                    stem = name[..space];
+                    n = v + 1;
+                }
+                while (used.Contains(final = $"{stem} {n:00}")) n++;
+                used.Add(final);
+            }
+            plan.Add(new PlannedSequence(index, seq, final));
+        }
+        return plan;
+    }
+
     private List<SeqDef> BuildSequences()
     {
         uint nextAnimId = 1;
@@ -977,18 +1038,11 @@ public sealed class M3Exporter
         foreach (var m in _materials) if (m.ToggleBone >= 0) m.BatchAnimId = AnimId();
         _nextAnimId = AnimId;
 
-        var wanted = _mdx.Sequences
-            .Where(s => _opt.Sequences is null || _opt.Sequences.Contains(s.Name))
-            .ToList();
-
         var defs = new List<SeqDef>();
         int step = Math.Max(1000 / Math.Max(_opt.Fps, 1), 10);
 
-        foreach (var seq in wanted)
+        foreach (var (_, seq, exportName) in PlanSequences(_mdx, _opt.Sequences, _opt.SequenceNames))
         {
-            string exportName = _opt.SequenceNames?.GetValueOrDefault(seq.Name) is { Length: > 0 } custom
-                ? custom
-                : MapSequenceName(seq.Name);
             var def = new SeqDef
             {
                 Name = exportName,
