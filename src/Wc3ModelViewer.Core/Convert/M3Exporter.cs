@@ -232,6 +232,7 @@ public sealed class M3Exporter
     private readonly List<ExportMaterial> _materials = [];
     private readonly List<(string Name, int Bone)> _attachments = [];
     private readonly List<(MdxCamera Camera, int Bone)> _cameras = [];
+    private readonly List<(int Bone, byte Type)> _billboards = [];
     private readonly List<ExportedTexture> _textures = [];
 
     // ---------------------------------------------------------------- public entry
@@ -239,6 +240,7 @@ public sealed class M3Exporter
     public M3ExportResult Export(Casc.Wc3TextureCache textureCache, string modelCascName)
     {
         BuildBones();
+        BuildBillboards();
         BuildRegions(textureCache, modelCascName);
         BuildAttachments();
         BuildCameras();
@@ -332,6 +334,53 @@ public sealed class M3Exporter
             });
         }
     }
+
+    /// <summary>
+    /// Carries Warcraft III's billboard flags over as BBSC entries, so a card that turns to face the
+    /// camera in Warcraft III — the priest's staff orb, most spell glows — still does in SC2.
+    /// </summary>
+    /// <remarks>
+    /// Without this the card is frozen in its rest pose: a flat picture of a ball that goes edge-on
+    /// as the camera moves. SC2 does not billboard through a bone flag but through the model's BBSC
+    /// list, which this exporter never wrote.
+    /// <para>
+    /// No basis correction is needed, and that is measured, not assumed. Of the flat cards on fully
+    /// billboarded nodes, 3,059 of 3,073 in SD and 308 of 308 in HD lie on node-local X, and the
+    /// dominant texture layout (2,604 SD, 282 HD; the rest are the same plane with the art rolled)
+    /// is right = +Y, up = +Z, facing +X. Blizzard's type 6 cards with identity up/forward read
+    /// right = +X, up = +Z, facing -Y in 331 of 346 cases. The facing
+    /// turn in <see cref="ToSc2(Vector3)"/> maps the first onto the second exactly, and bone rest
+    /// rotations stay identity, so identity up/forward quaternions are correct.
+    /// </para>
+    /// <para>
+    /// Lock Z maps to type 2, the axis-locked billboard Blizzard uses on 854 bones, with the same
+    /// handedness on its upright cards and names like <c>WorldZ</c> and <c>Dummy_Vertical</c>.
+    /// Lock X and Lock Y (96 SD nodes, mostly arrow missiles) have no measured SC2 equivalent and
+    /// are left unbillboarded rather than guessed.
+    /// </para>
+    /// </remarks>
+    private void BuildBillboards()
+    {
+        int unmapped = 0;
+        for (int i = 0; i < _mdx.Nodes.Count; i++)
+        {
+            var flags = _mdx.Nodes[i].Flags;
+            // Warcraft III honours one mode per node, full billboard first.
+            if ((flags & MdxNodeFlags.Billboarded) != 0) _billboards.Add((i, BillboardFull));
+            else if ((flags & MdxNodeFlags.BillboardLockZ) != 0) _billboards.Add((i, BillboardWorldZ));
+            else if ((flags & (MdxNodeFlags.BillboardLockX | MdxNodeFlags.BillboardLockY)) != 0) unmapped++;
+        }
+        if (_billboards.Count > 0)
+            _log.Add($"{_billboards.Count} billboarded bone(s) face the camera in SC2: "
+                     + string.Join(", ", _billboards.Take(6).Select(bb => _bones[bb.Bone].Name))
+                     + (_billboards.Count > 6 ? $" (+{_billboards.Count - 6} more)" : ""));
+        if (unmapped > 0)
+            _log.Add($"{unmapped} bone(s) billboard around their X or Y axis, which has no SC2 equivalent "
+                     + "— they keep their rest orientation");
+    }
+
+    private const byte BillboardWorldZ = 2;
+    private const byte BillboardFull = 6;
 
     private readonly HashSet<string> _usedBoneNames = new(StringComparer.OrdinalIgnoreCase);
 
@@ -1810,6 +1859,27 @@ public sealed class M3Exporter
         nullLayer.Count = 1;
         var iref = b.Add("IREF", 0, 64);
 
+        // ---- BBSC billboards ----
+        // camera_look_at stays 0: Warcraft III aligns a billboard with the view plane rather than
+        // aiming it at the camera's position, and the hand-converted War3_Priest.m3 that renders
+        // its orb correctly in game writes 0 for the same card.
+        M3Builder.Section? bbsc = null;
+        if (_billboards.Count > 0)
+        {
+            bbsc = b.Add("BBSC", 0, 48);
+            foreach (var (bone, type) in _billboards)
+            {
+                var w = bbsc.W;
+                b.NullRef(bbsc);                                    // dependents
+                w.Write((ushort)boneMap[bone]);
+                w.Write(type);
+                w.Write((byte)0);                                   // camera_look_at
+                w.Write(0f); w.Write(0f); w.Write(0f); w.Write(1f); // up
+                w.Write(0f); w.Write(0f); w.Write(0f); w.Write(1f); // forward
+            }
+            bbsc.Count = _billboards.Count;
+        }
+
         // ---- PAR_ particle systems ----
         // Written straight from M3ParticleWriter's byte template so every field this exporter does
         // not understand keeps the default StarCraft II already accepts. Emitters sit on the bone
@@ -1862,7 +1932,9 @@ public sealed class M3Exporter
             for (int i = 0; i < 16; i++) b.NullRef(modl);
             b.Ref(modl, iref);
             w.Write(new byte[108]);
-            for (int i = 0; i < 6; i++) b.NullRef(modl);
+            for (int i = 0; i < 4; i++) b.NullRef(modl);        // hittests, attachment volumes + addons
+            if (bbsc is not null) b.Ref(modl, bbsc); else b.NullRef(modl);
+            b.NullRef(modl);                                    // tmd_data
             w.Write(0u);
             b.NullRef(modl);
             modl.Count = 1;

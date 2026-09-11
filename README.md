@@ -59,6 +59,12 @@ Working end to end:
   `TeamGlow<nn>.blp`. It lands in SC2 as `blend_mode_emis* = 4`, "Team Color Emissive Add" — the
   mechanism 1,204 of Blizzard's own Heroes materials use. Measured, not assumed; see
   `docs/mdx-format-verified.md` §5.
+- **Billboards** — cards that Warcraft III turns to face the camera (the priest's staff orb, most
+  spell glows) face it in the viewer and in StarCraft II. They export as `BBSC` entries: a full
+  billboard becomes type 6, and a vertical-axis (Lock Z) billboard becomes type 2. No re-orientation
+  is needed, because the quarter turn on export lands Warcraft III's card layout exactly on
+  Blizzard's (measured over 2,604 WC3 cards and 346 SC2 ones). X- and Y-axis locks have no SC2
+  equivalent and keep their rest pose.
 - **glTF export** — skeleton, skinning, PNG textures and every sequence baked as a separate
   animation, for editing in Blender (re-export `.m3` there with m3studio if desired). Verified
   headlessly: Blender imports the armature, skinned mesh and all actions.

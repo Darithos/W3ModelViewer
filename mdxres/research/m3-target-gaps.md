@@ -689,6 +689,21 @@ _evidence: STC_ struct: https://github.com/Solstice245/m3studio/blob/main/struct
 
 _evidence: C:\Projects\D3 Model Viewer\src\D3ModelViewer.Core\Formats\M3Writer.cs (whole file, read in full); struct facts as cited in the other findings_
 
+## [measured] Billboards: WC3's Billboarded flag becomes a BBSC entry of type 6 with identity up/forward. No basis change is needed after the facing turn.
+
+Reported as "the priest's staff orb is a flat picture" (ClericWC1.mdx, and the stock SD priest). The orb is a four-vertex card on bone `Plane01`, flagged `Billboarded`. The exporter wrote no BBSC, so SC2 froze the card in its rest pose. The hand-converted `reference/War3_Priest.m3`, which renders correctly in game, lists `Plane01` and `Plane05` in BBSC (type 6, camera_look_at 0). Bone flags play no part: no BBSC bone in Blizzard's corpus sets billboard1/billboard2 (0x10/0x40).
+
+BBSC V0 (48 bytes): dependents Ref, bone u16, billboard_type u8 (0 WorldX, 1 WorldY, 2 WorldZ, 3 LocalX, 4 LocalY, 5 LocalZ, 6 Full), camera_look_at u8, up QUAT, forward QUAT. MODL `billboards` is the 5th of the six refs after `hittest_tight`.
+
+Axis convention, measured by UV correlation (the local axis u grows along = screen right, the one v shrinks along = screen up, their cross = the drawn face):
+- **SC2** (`spike/m3verify/m3billboard.py`, 3,586 of 18,504 HotS files carry BBSC): type 6 with identity quaternions reads `right=+x up=+z front=-y` on 331 of 346 cards. Blizzard type counts: 6 ×4,307, 2 ×854, 4 ×30, 0 ×10, 3 ×5, 5 ×4. camera_look_at is 1 on 4,580 and 0 on 630. When up/forward are not identity, they rotate bone-local into the billboard frame: the reference priest's ~102° X turn carries its +z-facing card onto -y.
+- **WC3** (`MdxProbe --billboards [n] sd|hd`): flat cards on fully billboarded nodes lie on node-local X in 3,059 of 3,073 SD and 308 of 308 HD cases. The dominant layout is `right=+y up=+z front=+x` (2,604 SD, 282 HD); the rest are the same plane with the art rolled.
+- `ToSc2` (x→-y, y→x) maps the WC3 layout onto the SC2 one exactly, and exported bones have identity rest rotation, so up = forward = identity.
+
+Axis locks: WC3 ships LockZ on 248 SD nodes, LockY on 88, LockX on 9. LockZ → type 2 (WorldZ). Blizzard's type-2 upright cards share the handedness above and carry names like `WorldZ`/`Dummy_Vertical`. LockX/LockY have no measured counterpart (Blizzard types 0/1 carry no geometry to measure), so they are left unbillboarded and the export log says so.
+
+Viewer: `MdxAnimator.Camera` billboards Billboarded and LockZ nodes (node-local +X to the viewer, +Y screen right, +Z up; animated rotation discarded, pivot position and inherited scale kept). Exporters leave it null. `MdxProbe --bbcheck <file> [seq] [--nocamera]` verifies facing through a sequence: ClericWC1's orb reads |front·toCamera| ≥ 0.999 over 30 views, against 0.025 without billboarding. Without billboarding the staff swinging upright in Stand tips the card flat.
+
 ## Open questions
 
 - Does the SC2 engine / Editor previewer actually reject 16-byte-unaligned section offsets, or is m3studio's `len % 16` padding harmless in practice? Test: export one model both ways and open both in the SC2 Editor Previewer. No source I found settles this; every Blizzard file is aligned, and m3addon rounds up, so aligning is the safe default regardless.

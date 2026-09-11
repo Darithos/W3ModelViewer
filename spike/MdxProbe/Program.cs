@@ -292,6 +292,274 @@ if (args.Contains("--uv"))
     return MdxProbe.UvProbe.Run(install, args[ui + 1], int.Parse(args[ui + 2]), args[ui + 3]);
 }
 
+// --nodes <cascPath|file> lists every node with its kind, parent and flags, plus which geosets are
+// skinned to it — how a billboarded card (a staff orb, a halo) is found and who draws it.
+if (args.Contains("--nodes"))
+{
+    int ni = Array.IndexOf(args, "--nodes");
+    string path = args[ni + 1];
+    using var s = File.Exists(path) ? null : new Wc3Storage(install);
+    var raw = File.Exists(path) ? File.ReadAllBytes(path) : s!.TryReadFile(path);
+    if (raw is null) { Console.WriteLine("not found"); return 1; }
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    Console.WriteLine($"VERS {mdl.Version}, {mdl.Nodes.Count} nodes, {mdl.Geosets.Count} geosets");
+    // SKIN indexes the BONE chunk; matrix groups index by ObjectId — the same mapping PackRegions uses.
+    var boneChunk = Enumerable.Range(0, mdl.Nodes.Count).Where(i => mdl.Nodes[i].Kind == Wc3ModelViewer.Core.Formats.MdxNodeKind.Bone).ToArray();
+    for (int n = 0; n < mdl.Nodes.Count; n++)
+    {
+        var node = mdl.Nodes[n];
+        var users = new List<string>();
+        foreach (var g in mdl.Geosets)
+        {
+            int verts = 0;
+            if (g.HasSkin)
+            {
+                for (int v = 0; v < g.VertexCount; v++)
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int ci = g.SkinBoneIndices[v * 4 + k];
+                        if (ci < boneChunk.Length && boneChunk[ci] == n && g.SkinBoneWeights[v * 4 + k] > 0) { verts++; break; }
+                    }
+            }
+            else
+            {
+                var groupHas = new bool[g.MatrixGroupSizes.Length];
+                for (int gi = 0, mi = 0; gi < g.MatrixGroupSizes.Length; mi += g.MatrixGroupSizes[gi++])
+                    for (int k = 0; k < g.MatrixGroupSizes[gi]; k++)
+                        if (mi + k < g.MatrixIndices.Length && g.MatrixIndices[mi + k] == node.ObjectId) groupHas[gi] = true;
+                foreach (byte vg in g.VertexGroups) if (vg < groupHas.Length && groupHas[vg]) verts++;
+            }
+            if (verts > 0) users.Add($"g{g.Index}:{verts}/{g.VertexCount}");
+        }
+        string flags = (node.Flags & ~(Wc3ModelViewer.Core.Formats.MdxNodeFlags.Bone)).ToString();
+        Console.WriteLine($"  [{n,3}] {node.Kind,-16} '{node.Name}' obj={node.ObjectId} parent={node.ParentId} "
+                          + $"flags={flags} pivot=({node.Pivot.X:0.#},{node.Pivot.Y:0.#},{node.Pivot.Z:0.#})"
+                          + (users.Count > 0 ? "  skins " + string.Join(" ", users) : ""));
+    }
+    return 0;
+}
+
+// --billboards [n] [sd|hd] censuses billboarded nodes across the game: which billboard flags ship,
+// and for every card a node carries, the node-local axis it lies flat on and the side its texture
+// is drawn on (right = where u grows, up = where v shrinks, front = right x up). That front is the
+// axis Warcraft III turns toward the camera, and it has to land on the axis SC2's BBSC turns.
+if (args.Contains("--billboards"))
+{
+    int bi = Array.IndexOf(args, "--billboards");
+    int limit = bi + 1 < args.Length && int.TryParse(args[bi + 1], out int bn) ? bn : 100000;
+    string set = args.Contains("hd") ? "hd" : args.Contains("sd") ? "sd" : "all";
+    using var s = new Wc3Storage(install);
+    var index = Wc3AssetIndex.FromNames(s.EnumerateAll());
+    var models = index.Models.Where(m => set == "all" || (set == "hd") == (m.ArtSet == Wc3ArtSet.Reforged))
+        .Take(limit).ToList();
+
+    var flagCount = new Dictionary<string, int>();
+    var faceCount = new Dictionary<string, int>();
+    var examples = new Dictionary<string, List<string>>();
+    int parsed = 0, carriers = 0;
+    foreach (var entry in models)
+    {
+        var raw = s.TryReadFile(entry.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel mdl;
+        try { mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        parsed++;
+        const Wc3ModelViewer.Core.Formats.MdxNodeFlags anyBb = Wc3ModelViewer.Core.Formats.MdxNodeFlags.Billboarded
+            | Wc3ModelViewer.Core.Formats.MdxNodeFlags.BillboardLockX | Wc3ModelViewer.Core.Formats.MdxNodeFlags.BillboardLockY
+            | Wc3ModelViewer.Core.Formats.MdxNodeFlags.BillboardLockZ;
+        if (!mdl.Nodes.Exists(n => (n.Flags & anyBb) != 0)) continue;
+        carriers++;
+        var boneChunk = Enumerable.Range(0, mdl.Nodes.Count).Where(i => mdl.Nodes[i].Kind == Wc3ModelViewer.Core.Formats.MdxNodeKind.Bone).ToArray();
+        var byObj = new Dictionary<int, int>();
+        for (int i = 0; i < mdl.Nodes.Count; i++) byObj.TryAdd(mdl.Nodes[i].ObjectId, i);
+
+        for (int ni = 0; ni < mdl.Nodes.Count; ni++)
+        {
+            var node = mdl.Nodes[ni];
+            var bb = node.Flags & anyBb;
+            if (bb == 0) continue;
+            string fk = $"{node.Kind}:{bb}";
+            flagCount[fk] = flagCount.GetValueOrDefault(fk) + 1;
+
+            // Vertices whose dominant influence is this node.
+            var pts = new List<(System.Numerics.Vector3 P, System.Numerics.Vector2 Uv)>();
+            foreach (var g in mdl.Geosets)
+            {
+                if (g.Uvs.Length < g.VertexCount) continue;
+                for (int v = 0; v < g.VertexCount; v++)
+                {
+                    int dom = -1;
+                    if (g.HasSkin)
+                    {
+                        int bw = 0;
+                        for (int k = 0; k < 4; k++)
+                        {
+                            int w = g.SkinBoneWeights[v * 4 + k], ci = g.SkinBoneIndices[v * 4 + k];
+                            if (w > bw && ci < boneChunk.Length) { bw = w; dom = boneChunk[ci]; }
+                        }
+                    }
+                    else if (v < g.VertexGroups.Length && g.MatrixGroupSizes.Length > 0)
+                    {
+                        int grp = Math.Min(g.VertexGroups[v], g.MatrixGroupSizes.Length - 1), at = 0;
+                        for (int q = 0; q < grp; q++) at += g.MatrixGroupSizes[q];
+                        if (g.MatrixGroupSizes[grp] == 1 && at < g.MatrixIndices.Length && byObj.TryGetValue(g.MatrixIndices[at], out int d)) dom = d;
+                    }
+                    if (dom == ni) pts.Add((g.Positions[v] - node.Pivot, g.Uvs[v]));
+                }
+            }
+            if (pts.Count < 3) { Bump("no card", entry.RelativePath, node.Name); continue; }
+
+            var mn = new System.Numerics.Vector3(float.MaxValue); var mx = new System.Numerics.Vector3(float.MinValue);
+            foreach (var p in pts) { mn = System.Numerics.Vector3.Min(mn, p.P); mx = System.Numerics.Vector3.Max(mx, p.P); }
+            var e = mx - mn; float big = Math.Max(e.X, Math.Max(e.Y, e.Z));
+            var flatAxes = new[] { e.X, e.Y, e.Z }.Select((x, i) => (x, i)).Where(t => t.x < 0.02f * big).Select(t => "xyz"[t.i]).ToArray();
+            if (flatAxes.Length != 1) { Bump($"{bb} not flat", entry.RelativePath, node.Name); continue; }
+
+            var mu = System.Numerics.Vector3.Zero; var muUv = System.Numerics.Vector2.Zero;
+            foreach (var p in pts) { mu += p.P; muUv += p.Uv; }
+            mu /= pts.Count; muUv /= pts.Count;
+            var cu = System.Numerics.Vector3.Zero; var cv = System.Numerics.Vector3.Zero;
+            foreach (var p in pts) { cu += (p.P - mu) * (p.Uv.X - muUv.X); cv -= (p.P - mu) * (p.Uv.Y - muUv.Y); }
+            static System.Numerics.Vector3 Dominant(System.Numerics.Vector3 c)
+            {
+                var a = System.Numerics.Vector3.Abs(c);
+                return a.X >= a.Y && a.X >= a.Z ? new(Math.Sign(c.X), 0, 0)
+                     : a.Y >= a.Z ? new(0, Math.Sign(c.Y), 0) : new(0, 0, Math.Sign(c.Z));
+            }
+            static string Name(System.Numerics.Vector3 a) =>
+                a.X != 0 ? (a.X > 0 ? "+x" : "-x") : a.Y != 0 ? (a.Y > 0 ? "+y" : "-y") : a.Z > 0 ? "+z" : a.Z < 0 ? "-z" : "0";
+            var right = Dominant(cu); var up = Dominant(cv);
+            string face = right == up ? "degenerate uv" : $"right={Name(right)} up={Name(up)} front={Name(System.Numerics.Vector3.Cross(right, up))}";
+            Bump($"{bb} flat={flatAxes[0]} {face}", entry.RelativePath, node.Name);
+        }
+
+        void Bump(string key, string model, string nodeName)
+        {
+            faceCount[key] = faceCount.GetValueOrDefault(key) + 1;
+            if (!examples.TryGetValue(key, out var l)) examples[key] = l = [];
+            if (l.Count < 3) l.Add($"{model} :: {nodeName}");
+        }
+    }
+
+    Console.WriteLine($"--- {carriers:N0} of {parsed:N0} {set} models carry billboarded nodes ---");
+    foreach (var kv in flagCount.OrderByDescending(k => k.Value)) Console.WriteLine($"  {kv.Value,6:N0}  {kv.Key}");
+    Console.WriteLine("\n--- cards by flag, flat axis and texture handedness ---");
+    foreach (var kv in faceCount.OrderByDescending(k => k.Value))
+        Console.WriteLine($"  {kv.Value,6:N0}  {kv.Key}\n          e.g. {string.Join("; ", examples[kv.Key])}");
+    return 0;
+}
+
+// --bbcheck <cascPath|file> [sequence] runs the viewer's animator with a camera and measures whether
+// each billboarded card actually faces it: for several camera bearings and times through the
+// sequence, the skinned card's texture-right and texture-up directions are compared with the
+// camera's right and up. A card that faces the camera reads ~+1.00 on both; one frozen in its
+// animated pose (the staff orb lying flat as a disc) reads anything.
+if (args.Contains("--bbcheck"))
+{
+    int ci = Array.IndexOf(args, "--bbcheck");
+    string path = args[ci + 1];
+    string? seqName = ci + 2 < args.Length && !args[ci + 2].StartsWith("--") ? args[ci + 2] : null;
+    using var s = File.Exists(path) ? null : new Wc3Storage(install);
+    var raw = File.Exists(path) ? File.ReadAllBytes(path) : s!.TryReadFile(path);
+    if (raw is null) { Console.WriteLine("not found"); return 1; }
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    var anim = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
+    var seq = mdl.Sequences.FirstOrDefault(q => seqName is null ? q.Name.StartsWith("Stand", StringComparison.OrdinalIgnoreCase)
+                                                               : q.Name.Equals(seqName, StringComparison.OrdinalIgnoreCase))
+              ?? mdl.Sequences.FirstOrDefault();
+    Console.WriteLine($"sequence: {seq?.Name ?? "(rest)"}; HasBillboards={anim.HasBillboards}");
+
+    // Card vertices per billboarded node: geoset + vertex indices whose single influence is the node.
+    const Wc3ModelViewer.Core.Formats.MdxNodeFlags bbFlags =
+        Wc3ModelViewer.Core.Formats.MdxNodeFlags.Billboarded | Wc3ModelViewer.Core.Formats.MdxNodeFlags.BillboardLockZ;
+    var byObj = new Dictionary<int, int>();
+    for (int i = 0; i < mdl.Nodes.Count; i++) byObj.TryAdd(mdl.Nodes[i].ObjectId, i);
+    var boneChunk = Enumerable.Range(0, mdl.Nodes.Count).Where(i => mdl.Nodes[i].Kind == Wc3ModelViewer.Core.Formats.MdxNodeKind.Bone).ToArray();
+    var cards = new List<(int Node, Wc3ModelViewer.Core.Formats.MdxGeoset G, List<int> Verts)>();
+    foreach (var g in mdl.Geosets)
+    {
+        var perNode = new Dictionary<int, List<int>>();
+        for (int v = 0; v < g.VertexCount; v++)
+        {
+            int dom = -1;
+            if (g.HasSkin)
+            {
+                int bw = 0;
+                for (int k = 0; k < 4; k++)
+                {
+                    int w = g.SkinBoneWeights[v * 4 + k], c = g.SkinBoneIndices[v * 4 + k];
+                    if (w > bw && c < boneChunk.Length) { bw = w; dom = boneChunk[c]; }
+                }
+            }
+            else if (v < g.VertexGroups.Length && g.MatrixGroupSizes.Length > 0)
+            {
+                int grp = Math.Min(g.VertexGroups[v], g.MatrixGroupSizes.Length - 1), at = 0;
+                for (int q = 0; q < grp; q++) at += g.MatrixGroupSizes[q];
+                if (g.MatrixGroupSizes[grp] == 1 && at < g.MatrixIndices.Length && byObj.TryGetValue(g.MatrixIndices[at], out int d)) dom = d;
+            }
+            if (dom >= 0 && (mdl.Nodes[dom].Flags & bbFlags) != 0)
+            {
+                if (!perNode.TryGetValue(dom, out var l)) perNode[dom] = l = [];
+                l.Add(v);
+            }
+        }
+        foreach (var kv in perNode) if (kv.Value.Count >= 3) cards.Add((kv.Key, g, kv.Value));
+    }
+
+    var bearings = new[] { 0f, 60f, 135f, 210f, 300f };
+    var elevations = new[] { 10f, 45f };
+    var pos = new Dictionary<int, System.Numerics.Vector3[]>();
+    foreach (var card in cards)
+    {
+        var node = mdl.Nodes[card.Node];
+        double worstFront = 1, sumRight = 0, sumUp = 0; int n = 0;
+        foreach (bool withCamera in new[] { false, true })
+        {
+            if (!withCamera) continue;
+            foreach (float bearing in bearings)
+            foreach (float elev in elevations)
+            foreach (float frac in new[] { 0f, 0.37f, 0.71f })
+            {
+                double b = bearing * Math.PI / 180, e = elev * Math.PI / 180;
+                // Camera sits out along (bearing, elevation) and looks back at the model.
+                var toCam = new System.Numerics.Vector3((float)(Math.Cos(e) * Math.Cos(b)), (float)(Math.Cos(e) * Math.Sin(b)), (float)Math.Sin(e));
+                var look = -toCam;
+                var right = System.Numerics.Vector3.Normalize(System.Numerics.Vector3.Cross(look, System.Numerics.Vector3.UnitZ));
+                var up = System.Numerics.Vector3.Cross(right, look);
+                anim.Camera = args.Contains("--nocamera") ? null : (look, System.Numerics.Vector3.UnitZ);
+                int t = seq is null ? 0 : seq.IntervalStart + (int)(frac * seq.DurationMs);
+                anim.Evaluate(seq, t, t);
+                if (!pos.TryGetValue(card.G.Index, out var buf)) pos[card.G.Index] = buf = new System.Numerics.Vector3[card.G.VertexCount];
+                anim.SkinGeoset(card.G, buf);
+
+                // Texture right/up directions of the skinned card, by UV correlation.
+                var mu = System.Numerics.Vector3.Zero; var muUv = System.Numerics.Vector2.Zero;
+                foreach (int v in card.Verts) { mu += buf[v]; muUv += card.G.Uvs[v]; }
+                mu /= card.Verts.Count; muUv /= card.Verts.Count;
+                var cu = System.Numerics.Vector3.Zero; var cv = System.Numerics.Vector3.Zero;
+                foreach (int v in card.Verts) { cu += (buf[v] - mu) * (card.G.Uvs[v].X - muUv.X); cv -= (buf[v] - mu) * (card.G.Uvs[v].Y - muUv.Y); }
+                if (cu.LengthSquared() < 1e-12f || cv.LengthSquared() < 1e-12f) continue;
+                var tr = System.Numerics.Vector3.Normalize(cu); var tu = System.Numerics.Vector3.Normalize(cv);
+                var front = System.Numerics.Vector3.Cross(tr, tu);
+                if (front.LengthSquared() < 1e-12f) continue;
+                front = System.Numerics.Vector3.Normalize(front);
+                var facing = (node.Flags & Wc3ModelViewer.Core.Formats.MdxNodeFlags.Billboarded) != 0
+                    ? toCam : System.Numerics.Vector3.Normalize(toCam with { Z = 0 });
+                worstFront = Math.Min(worstFront, Math.Abs(System.Numerics.Vector3.Dot(front, facing)));
+                sumRight += System.Numerics.Vector3.Dot(tr, right);
+                sumUp += System.Numerics.Vector3.Dot(tu, (node.Flags & Wc3ModelViewer.Core.Formats.MdxNodeFlags.Billboarded) != 0 ? up : System.Numerics.Vector3.UnitZ);
+                n++;
+            }
+        }
+        // Same card without a camera, for contrast: how far the animated pose is from facing.
+        anim.Camera = null;
+        Console.WriteLine($"  {node.Name,-14} ({(node.Flags & bbFlags)}) g{card.G.Index} {card.Verts.Count}v: "
+                          + $"worst |front.toCamera|={worstFront:0.000}  mean right.camRight={sumRight / Math.Max(1, n):+0.000;-0.000}  "
+                          + $"mean up.camUp={sumUp / Math.Max(1, n):+0.000;-0.000}  over {n} views");
+    }
+    return 0;
+}
+
 // --blppairs lists assets shipped as both .blp and .dds - ground truth for the BLP decoder.
 if (args.Contains("--blppairs")) return MdxProbe.BlpPairs.Run(install);
 
