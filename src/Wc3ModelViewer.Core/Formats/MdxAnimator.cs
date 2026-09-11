@@ -50,7 +50,19 @@ public sealed class MdxAnimator
         _boneChunkToNode = Enumerable.Range(0, model.Nodes.Count)
                                      .Where(i => model.Nodes[i].Kind == MdxNodeKind.Bone)
                                      .ToArray();
+
+        HasBillboards = model.Nodes.Exists(n => (n.Flags & (MdxNodeFlags.Billboarded | MdxNodeFlags.BillboardLockZ)) != 0);
     }
+
+    /// <summary>True when any node turns to face the camera, so its pose depends on the view.</summary>
+    public bool HasBillboards { get; }
+
+    /// <summary>
+    /// The view billboarded nodes turn to face: the camera's look direction and up vector, in model
+    /// space. Null (the default) leaves billboards in their animated pose, which is what an exporter
+    /// wants — the target engine billboards them itself.
+    /// </summary>
+    public (Vector3 Look, Vector3 Up)? Camera { get; set; }
 
     public IReadOnlyList<Matrix4x4> WorldMatrices => _world;
 
@@ -86,6 +98,57 @@ public sealed class MdxAnimator
 
         var local = LocalMatrix(node, seq, timeMs, wall);
         _world[i] = p >= 0 ? local * _world[p] : local;
+        if (Camera is { } cam && (node.Flags & (MdxNodeFlags.Billboarded | MdxNodeFlags.BillboardLockZ)) != 0)
+            _world[i] = Billboard(node, _world[i], cam.Look, cam.Up);
+    }
+
+    /// <summary>
+    /// Replaces a billboarded node's world rotation with one facing the camera, keeping the position
+    /// its pivot was carried to and the scale it inherited. Children compose onto the result, so
+    /// they turn with it, as in the game.
+    /// </summary>
+    /// <remarks>
+    /// Warcraft III aims node-local +X at the viewer with +Y to screen right and +Z up — the layout
+    /// 2,604 of the SD game's billboarded cards are drawn in (see
+    /// <c>mdxres/research/m3-target-gaps.md</c>). The animated rotation is discarded: the priest's
+    /// staff swings from horizontal at rest to upright, and a card that followed it would lie flat
+    /// on top of the staff as a thin disc. Lock Z only spins about world up, so the card stays
+    /// upright and faces the viewer's horizontal bearing.
+    /// </remarks>
+    private static Matrix4x4 Billboard(MdxNode node, Matrix4x4 world, Vector3 look, Vector3 up)
+    {
+        var toCamera = -look;
+        Vector3 x, z;
+        if ((node.Flags & MdxNodeFlags.Billboarded) != 0)
+        {
+            x = toCamera;
+            z = up - Vector3.Dot(up, Vector3.Normalize(toCamera)) * Vector3.Normalize(toCamera);
+        }
+        else
+        {
+            x = toCamera with { Z = 0 };
+            z = Vector3.UnitZ;
+        }
+        // A camera looking straight down a lock-Z card's axis (or with no usable up) leaves no
+        // direction to face; keep the animated pose rather than produce NaNs.
+        if (x.LengthSquared() < 1e-10f || z.LengthSquared() < 1e-10f) return world;
+        x = Vector3.Normalize(x);
+        z = Vector3.Normalize(z);
+        var y = Vector3.Cross(z, x);
+
+        var scale = new Vector3(
+            new Vector3(world.M11, world.M12, world.M13).Length(),
+            new Vector3(world.M21, world.M22, world.M23).Length(),
+            new Vector3(world.M31, world.M32, world.M33).Length());
+        var position = Vector3.Transform(node.Pivot, world);
+
+        var rotation = new Matrix4x4(
+            x.X, x.Y, x.Z, 0,
+            y.X, y.Y, y.Z, 0,
+            z.X, z.Y, z.Z, 0,
+            0, 0, 0, 1);
+        return Matrix4x4.CreateTranslation(-node.Pivot) * Matrix4x4.CreateScale(scale) * rotation
+             * Matrix4x4.CreateTranslation(position);
     }
 
     private Matrix4x4 LocalMatrix(MdxNode node, MdxSequence? seq, int timeMs, long wall)

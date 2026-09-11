@@ -782,8 +782,8 @@ public partial class MainWindow : Window
         if (idx <= 0)
         {
             ClearAnimationUi();
-            ApplyPose();          // back to rest pose
             RestoreRestPose();
+            ApplyPose();          // back to rest pose, with billboards facing the camera
             return;
         }
 
@@ -833,7 +833,13 @@ public partial class MainWindow : Window
     /// <summary>Per-render-frame tick: advances the active sequence and re-skins the scene.</summary>
     private void OnFrameTick(object? sender, EventArgs e)
     {
-        if (_sequence is null || !_playing) { _lastTick = _clock.Elapsed; return; }
+        if (_sequence is null || !_playing)
+        {
+            _lastTick = _clock.Elapsed;
+            // A paused or unanimated model still has to turn its billboards as the camera orbits.
+            if (_animator is { HasBillboards: true } && CameraBasis() != _poseCamera) ApplyPose();
+            return;
+        }
         var now = _clock.Elapsed;
         double dt = Math.Clamp((now - _lastTick).TotalSeconds, 0, 0.25);
         _lastTick = now;
@@ -886,6 +892,8 @@ public partial class MainWindow : Window
         if (_sequence is null && _sceneMeshes.Count == 0) return;
 
         int t = _sequence is null ? 0 : _sequence.IntervalStart + (int)_timeMs;
+        _animator.Camera = CameraBasis();
+        _poseCamera = _animator.Camera;
         _animator.Evaluate(_sequence, t, _wallMs);
 
         foreach (var sm in _sceneMeshes)
@@ -909,7 +917,8 @@ public partial class MainWindow : Window
                     sm.CurrentFrame = frame;
                 }
             }
-            if (_sequence is null) continue;              // rest pose: geometry already correct
+            // Rest pose: geometry is already correct — unless a billboard has to face the camera.
+            if (_sequence is null && !_animator.HasBillboards) continue;
 
             _animator.SkinGeoset(sm.Geoset, sm.SkinPositions, sm.SkinNormals);
 
@@ -930,6 +939,18 @@ public partial class MainWindow : Window
         }
         if (_sequence is not null)
             FrameLabel.Text = $"{(int)_timeMs:N0} / {_sequence.DurationMs:N0} ms";
+    }
+
+    private (System.Numerics.Vector3 Look, System.Numerics.Vector3 Up)? _poseCamera;
+
+    /// <summary>The viewport camera's look and up vectors — the view billboarded nodes turn to face.</summary>
+    private (System.Numerics.Vector3 Look, System.Numerics.Vector3 Up)? CameraBasis()
+    {
+        if (Viewport.Camera is not ProjectionCamera cam) return null;
+        var look = cam.LookDirection;
+        var up = cam.UpDirection;
+        return (new System.Numerics.Vector3((float)look.X, (float)look.Y, (float)look.Z),
+                new System.Numerics.Vector3((float)up.X, (float)up.Y, (float)up.Z));
     }
 
     /// <summary>Puts all meshes back to their stored bind-pose positions.</summary>
