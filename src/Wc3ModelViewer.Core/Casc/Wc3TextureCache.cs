@@ -288,11 +288,14 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
         if (storage is not null)
         {
             // The prefix guess handles every model browsed out of the archive, and costs one open.
-            foreach (string candidate in Candidates(modelCascName, fileName))
-            {
-                var img = TryDecodeFromStorage(candidate);
-                if (img is not null) return Resolved(key, fileName, TextureSource.GameInstall, candidate, img);
-            }
+            // The reference is tried as written first, then under the tileset spellings the archive
+            // actually stores it as (see TilesetAliases).
+            foreach (string reference in TilesetAliases(fileName).Prepend(fileName))
+                foreach (string candidate in Candidates(modelCascName, reference))
+                {
+                    var img = TryDecodeFromStorage(candidate);
+                    if (img is not null) return Resolved(key, fileName, TextureSource.GameInstall, candidate, img);
+                }
 
             // Then the catalog, which needs no prefix to be guessed right. This is the path a loose
             // custom model takes: it has no archive prefix of its own, and its author's spelling of
@@ -403,6 +406,33 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
             }
         }
         return index;
+    }
+
+    /// <summary>
+    /// Lordaeron Summer's folder under <c>terrainart\</c> and its file prefix — the default tileset
+    /// every cliff reference resolves against outside a map.
+    /// </summary>
+    private const string DefaultTilesetFolder = @"terrainart\lordaeronsummer\lords_";
+
+    /// <summary>
+    /// Where the archive really keeps a cliff texture a model asks for by its engine name.
+    /// </summary>
+    /// <remarks>
+    /// Cliff pieces reference <c>ReplaceableTextures\Cliff\Cliff1_Diffuse.tif</c> (or the exporter's
+    /// <c>Doodads\Terrain\#ignore_Cliffs\Cliff1_ORM.tif</c>), and no file of that name exists: the
+    /// engine binds the map tileset's cliff, which the archive stores per tileset as
+    /// <c>terrainart\lordaeronsummer\lords_cliff1_diffuse.dds</c>,
+    /// <c>terrainart\barrens\barrens_cliff1_diffuse.dds</c> and so on (22 tilesets, two cliff types,
+    /// SD without the map suffix). Classic cliff models carry replaceable ID 11 instead, which
+    /// <see cref="Formats.Wc3ReplaceableTextures"/> turns into the same <c>Cliff1</c> reference, so
+    /// both arrive here.
+    /// </remarks>
+    private static IEnumerable<string> TilesetAliases(string fileName)
+    {
+        string leaf = SafeLeaf(fileName.Replace('/', '\\'));
+        var m = System.Text.RegularExpressions.Regex.Match(
+            leaf, @"^cliff([01])((?:_[a-z]+)?)\.[a-z]+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (m.Success) yield return DefaultTilesetFolder + "cliff" + m.Groups[1].Value + m.Groups[2].Value + ".dds";
     }
 
     /// <summary>

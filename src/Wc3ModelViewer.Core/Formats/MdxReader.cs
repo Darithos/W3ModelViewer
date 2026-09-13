@@ -71,6 +71,7 @@ public static class MdxReader
         }
 
         ResolvePivots(model);
+        Wc3ReplaceableTextures.Substitute(model);
         return model;
     }
 

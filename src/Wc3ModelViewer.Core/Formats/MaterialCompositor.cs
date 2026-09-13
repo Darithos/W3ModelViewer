@@ -139,7 +139,9 @@ public static class MaterialCompositor
         foreach (var (layer, _) in loaded)
         {
             int texId = layer.DiffuseTextureId;
-            if ((uint)texId < (uint)model.Textures.Count && !model.Textures[texId].IsReplaceable)
+            if ((uint)texId < (uint)model.Textures.Count
+                && !model.Textures[texId].IsTeamColor && !model.Textures[texId].IsTeamGlow
+                && model.Textures[texId].FileName.Length > 0)
             {
                 primaryPath = model.Textures[texId].FileName;
                 break;
@@ -359,7 +361,7 @@ public static class MaterialCompositor
             int texId = layer.DiffuseTextureId;
             if ((uint)texId >= (uint)model.Textures.Count) continue;
             var tex = model.Textures[texId];
-            if (tex.IsReplaceable) continue;
+            if (tex.IsTeamColor || tex.IsTeamGlow || tex.FileName.Length == 0) continue;
             if (!hasTeamLayer && layer.Slot(MdxTextureSlot.TeamColor) < 0) continue;
             var img = textures.Load(modelCascName, tex);
             if (img is null) continue;
