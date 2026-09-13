@@ -21,6 +21,57 @@ if (args.Contains("--validate"))
     return MdxProbe.Validate.Run(install, limit);
 }
 
+// --fullsweep [n] [--no-anim] parses (and by default animates) every Reforged model in the storage,
+// not just the curated unit sample --validate uses.
+if (args.Contains("--fullsweep"))
+{
+    int limit = args.Select((a, i) => (a, i)).Where(t => t.a == "--fullsweep")
+                    .Select(t => t.i + 1 < args.Length && int.TryParse(args[t.i + 1], out int n) ? n : int.MaxValue)
+                    .First();
+    return MdxProbe.FullSweep.Run(install, limit, args.Contains("--no-anim"));
+}
+
+// --prefixes lists every archive prefix the storage reports models under, with counts and whether
+// the index calls it SD or HD — the check for content a new patch ships in a tree the index has
+// never seen (Definitive Edition added units\human\scarletfootman with no _hd.w3mod at all).
+if (args.Contains("--prefixes"))
+{
+    using var ps = new Wc3Storage(install);
+    var all = ps.EnumerateAll();
+    var byPrefix = all.Where(n => n.EndsWith(".mdx", StringComparison.OrdinalIgnoreCase))
+        .GroupBy(n => n.LastIndexOf(':') is int c && c >= 0 ? n[..c] : "(none)")
+        .OrderByDescending(g => g.Count());
+    Console.WriteLine($"{all.Count:N0} files in storage");
+    foreach (var g in byPrefix)
+    {
+        var (_, set) = Wc3AssetIndex.StripArchivePrefix(g.First());
+        Console.WriteLine($"  {g.Count(),7:N0}  {set,-9} {g.Key}   e.g. {g.First()[(g.Key.Length + 1)..]}");
+    }
+
+    // Is _de.w3mod a re-publish of _hd.w3mod, or new art? Sample the paths both trees ship.
+    static string Rel(string n) => n[(n.LastIndexOf(':') + 1)..].ToLowerInvariant();
+    static Dictionary<string, string> Tree(IEnumerable<string> names) =>
+        names.GroupBy(Rel).ToDictionary(g => g.Key, g => g.First());
+    var de = Tree(all.Where(n => n.StartsWith("war3.w3mod:_de.w3mod:", StringComparison.OrdinalIgnoreCase) && n.EndsWith(".mdx", StringComparison.OrdinalIgnoreCase)));
+    var hd = Tree(all.Where(n => n.StartsWith("war3.w3mod:_hd.w3mod:", StringComparison.OrdinalIgnoreCase) && n.EndsWith(".mdx", StringComparison.OrdinalIgnoreCase)));
+    var sd = Tree(all.Where(n => n.StartsWith("war3.w3mod:", StringComparison.OrdinalIgnoreCase) && n.IndexOf(':', 11) < 0 && n.EndsWith(".mdx", StringComparison.OrdinalIgnoreCase)));
+    Console.WriteLine($"\nde-only: {de.Keys.Count(k => !hd.ContainsKey(k) && !sd.ContainsKey(k)):N0}   de&hd: {de.Keys.Count(hd.ContainsKey):N0}   de&sd only: {de.Keys.Count(k => sd.ContainsKey(k) && !hd.ContainsKey(k)):N0}   hd-only (no de): {hd.Keys.Count(k => !de.ContainsKey(k)):N0}");
+    Console.WriteLine("de-only examples: " + string.Join(", ", de.Keys.Where(k => !hd.ContainsKey(k) && !sd.ContainsKey(k)).Take(12)));
+    Console.WriteLine("hd-only examples: " + string.Join(", ", hd.Keys.Where(k => !de.ContainsKey(k)).Take(8)));
+    int same = 0, differ = 0, sampled = 0;
+    var differing = new List<string>();
+    foreach (var k in de.Keys.Where(hd.ContainsKey).OrderBy(k => k.GetHashCode()).Take(120))
+    {
+        var a = ps.TryReadFile(de[k]); var b = ps.TryReadFile(hd[k]);
+        if (a is null || b is null) continue;
+        sampled++;
+        if (a.AsSpan().SequenceEqual(b)) same++; else { differ++; if (differing.Count < 10) differing.Add($"{k} ({a.Length:N0} vs {b.Length:N0})"); }
+    }
+    Console.WriteLine($"sampled {sampled} shared de/hd models: {same} byte-identical, {differ} differ");
+    foreach (var d in differing) Console.WriteLine("  differs: " + d);
+    return 0;
+}
+
 // --portrait <file> dumps a portrait model as SC2 will see it.
 if (args.Contains("--portrait"))
 {
@@ -62,7 +113,9 @@ if (args.Contains("--teamcolor"))
     int ti = Array.IndexOf(args, "--teamcolor");
     var rest = args.Skip(ti + 1).Where(a => !a.StartsWith("--")).ToArray();
     if (args.Contains("--dumpslots")) return MdxProbe.TeamProbe.DumpSlots(install, rest[0], rest[1]);
-    if (args.Contains("--orm")) return MdxProbe.TeamProbe.Orm(install, rest.Length > 0 ? int.Parse(rest[0]) : 400);
+    if (args.Contains("--maskdbg")) return MdxProbe.TeamProbe.MaskDebug(install, rest[0]);
+    if (args.Contains("--orm")) return MdxProbe.TeamProbe.Orm(install, rest.Length > 0 ? int.Parse(rest[0]) : 400,
+                                                             args.Contains("--de") ? Wc3ArtSet.Definitive : Wc3ArtSet.Reforged);
     if (args.Contains("--composites"))
         return MdxProbe.TeamProbe.Composites(install, rest[0], rest[1],
                                              rest.Length > 2 && int.TryParse(rest[2], out int cs) ? cs : 0);
@@ -392,7 +445,7 @@ if (args.Contains("--dupseqs"))
                 Lod = 0,
                 ModelName = "HeroChaosBladeMaster",
             };
-            var textures = new Wc3TextureCache(s) { PreferHd = entry.ArtSet == Wc3ArtSet.Reforged };
+            var textures = new Wc3TextureCache(s) { PreferHd = entry.IsHd };
             var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opt).Export(textures, entry.CascName);
             Directory.CreateDirectory(dupOut);
             File.WriteAllBytes(Path.Combine(dupOut, opt.ModelName + ".m3"), res.M3);
@@ -798,6 +851,234 @@ if (args.Contains("--effects"))
     return 0;
 }
 
+// --popcorn <file.pkb | file.mdx | cascName> shows a bake's parsed layers and the stand-in emitters
+// the approximation makes of a model's CORN emitters.
+// --pkrun <pkb|cascName> [seconds] runs one PopcornFX bake through the script runtime and prints
+// what each layer produces; --pksweep <bakeDir> [n] runs every dumped bake for three seconds.
+if (args.Contains("--pkrun"))
+{
+    int pi = Array.IndexOf(args, "--pkrun");
+    float secs = pi + 2 < args.Length && float.TryParse(args[pi + 2], System.Globalization.CultureInfo.InvariantCulture, out float ps) ? ps : 1.5f;
+    return MdxProbe.PkRunProbe.Run(install, args[pi + 1], secs);
+}
+if (args.Contains("--pkdis"))
+{
+    int pi = Array.IndexOf(args, "--pkdis");
+    return MdxProbe.PkRunProbe.Disassemble(install, args[pi + 1], pi + 2 < args.Length ? args[pi + 2] : null);
+}
+// --pkrec <pkb> <classSubstring> dumps every field of the bake's records whose class matches.
+if (args.Contains("--pkrec"))
+{
+    int pi = Array.IndexOf(args, "--pkrec");
+    var bake = Wc3ModelViewer.Core.Formats.Popcorn.PkBakeFile.Load(File.ReadAllBytes(args[pi + 1]));
+    for (int r = 0; r < bake.Count; r++)
+    {
+        if (!bake.ClassOf(r).Contains(args[pi + 2], StringComparison.OrdinalIgnoreCase)) continue;
+        Console.WriteLine($"record {r} {bake.ClassOf(r)}");
+        foreach (var (f, enc, bytes) in bake.FieldsOf(r))
+        {
+            string floats = bytes.Length % 4 == 0 && bytes.Length <= 64
+                ? string.Join(" ", Enumerable.Range(0, bytes.Length / 4).Select(i => BitConverter.ToSingle(bytes, i * 4).ToString("G5", System.Globalization.CultureInfo.InvariantCulture))) : "";
+            string ints = bytes.Length % 4 == 0 && bytes.Length <= 64
+                ? string.Join(" ", Enumerable.Range(0, bytes.Length / 4).Select(i => BitConverter.ToInt32(bytes, i * 4))) : "";
+            Console.WriteLine($"  {f,3} {enc,-4} {Convert.ToHexString(bytes.AsSpan(0, Math.Min(bytes.Length, 32)))}  f[{floats}] i[{ints}]");
+        }
+    }
+    return 0;
+}
+// --export1 <cascName> <outDir> exports one archive model as the app does (PopcornFX stand-ins attached).
+if (args.Contains("--export1"))
+{
+    int pi = Array.IndexOf(args, "--export1");
+    using var es = new Wc3Storage(install);
+    var raw = es.TryReadFile(args[pi + 1]) ?? throw new FileNotFoundException(args[pi + 1]);
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    if (args.Contains("--noburst")) Wc3ModelViewer.Core.Formats.PopcornApproximation.EmitBursts = false;
+    if (args.Contains("--burst")) Wc3ModelViewer.Core.Formats.PopcornApproximation.EmitBursts = true;
+    if (args.Contains("--noplace")) Wc3ModelViewer.Core.Formats.PopcornApproximation.PlaceEmitters = false;
+    if (args.Contains("--count")) Wc3ModelViewer.Core.Formats.PopcornApproximation.CountBursts = true;
+    foreach (string l in Wc3ModelViewer.Core.Formats.PopcornApproximation.Attach(mdl, es.TryReadFile, args[pi + 1])) Console.WriteLine("  attach | " + l);
+    foreach (var pe in mdl.ParticleEmitters.Where(p => p.IsPopcorn))
+        Console.WriteLine($"  {pe.Name,-32} {pe.Orientation,-12} tex {Path.GetFileName(mdl.Textures[pe.TextureId].FileName),-26} at {pe.SpawnOffset:F0} box {pe.SpawnHalfExtents:F0} dir {pe.EmitDirection:F2} " +
+                          $"speed {pe.Speed:F0} spread {pe.Latitude:F0} life {pe.Life:F2} rate {pe.EmissionRate:F1} beam {pe.BeamLength:F0} scale {pe.StartScale:F0}/{pe.MiddleScale:F0}/{pe.EndScale:F0} " +
+                          $"alpha {pe.StartAlpha}/{pe.MiddleAlpha}/{pe.EndAlpha} rateKeys {pe.EmissionRateTrack?.Count ?? 0}"
+                          + (pe.OrbitAngularVelocity != 0 ? $" orbit {pe.OrbitAngularVelocity:F2} rad/s" : "")
+                          + (pe.FaceDirection is { } fd ? $" face {fd:F2}" : ""));
+    {
+        var anim = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
+        foreach (var seq in mdl.Sequences)
+            foreach (var pe in mdl.ParticleEmitters.Where(p => p.IsPopcorn))
+            {
+                var on = new List<string>();
+                for (int t = seq.IntervalStart; t <= seq.IntervalEnd; t += 33)
+                {
+                    float rate = anim.SampleFloat(pe.EmissionRateTrack, seq, t, pe.EmissionRate);
+                    bool vis = anim.SampleFloat(pe.VisibilityTrack, seq, t, 1f) >= 0.5f;
+                    if (vis && rate > 0) on.Add($"{t - seq.IntervalStart}:{rate:F0}");
+                }
+                Console.WriteLine($"  seq '{seq.Name}' {pe.Name}: emits at [{string.Join(" ", on.Take(8))}{(on.Count > 8 ? " ..." : "")}] keys [{(pe.EmissionRateTrack is { } tr ? string.Join(" ", tr.Times.Zip(tr.Values, (a, b) => $"{a}:{b:F0}")) : "")}]"
+                                  + (pe.EmitCountTrack is { } ct ? $" countKeys [{string.Join(" ", ct.Times.Zip(ct.Values, (a, b) => $"{a}:{b:F0}"))}]" : ""));
+            }
+    }
+    var opts = new Wc3ModelViewer.Core.Convert.M3ExportOptions
+    {
+        Lod = mdl.LodLevels.FirstOrDefault(),
+        ModelName = Array.IndexOf(args, "--name") is int ni && ni >= 0 ? args[ni + 1] : Path.GetFileNameWithoutExtension(args[pi + 1]),
+        Scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
+    };
+    var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(new Wc3TextureCache(es) { PreferHd = mdl.IsReforged }, args[pi + 1]);
+    string dir = Path.Combine(args[pi + 2], opts.ModelName);
+    Directory.CreateDirectory(Path.Combine(dir, opts.TextureFolder));
+    File.WriteAllBytes(Path.Combine(dir, opts.ModelName + ".m3"), res.M3);
+    foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(dir, opts.TextureFolder, t.FileName), t.Data);
+    foreach (string l in res.Log) Console.WriteLine("  | " + l);
+    Console.WriteLine($"-> {Path.Combine(dir, opts.ModelName + ".m3")}");
+    return 0;
+}
+// --calib <outDir> [--scale s] writes a size-calibration model: three particle systems of known size
+// on the SD Holy Light's sprites and no geometry. Next to a 0.025-scale unit (~2.3 SC2 units tall):
+//   Size2   at the origin: a camera-facing card written with size 2.0 — matches a unit's height if
+//           PAR_.size is a full width, is twice that if it is a radius.
+//   Size1   2.5 units to the +X side: the same at size 1.0.
+//   Beam    2.5 units to the -X side, born 4 units up: a fixed-tail streak, size 0.5 and
+//           instance_tail 8 — 4 units long if the tail counts sizes, 8 if it counts units; it spans
+//           4..8 if the tail runs forward from the particle, 0..4 if it trails behind it.
+// The systems ride root bones: the first calibration hung them from the SD model's node 0, the
+// beam cylinder bone whose scale animates through Birth, and the cards ballooned frame by frame.
+if (args.Contains("--calib"))
+{
+    int pi = Array.IndexOf(args, "--calib");
+    float scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.025f;
+    string calibName = Array.IndexOf(args, "--name") is int cni && cni >= 0 ? args[cni + 1] : "SizeCalib";
+    using var cs = new Wc3Storage(install);
+    const string src = "war3.w3mod:abilities\\spells\\human\\holybolt\\holyboltspecialart.mdx";
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(cs.TryReadFile(src) ?? throw new FileNotFoundException(src));
+    int haloTex = mdl.ParticleEmitters[2].TextureId, beamTex = mdl.ParticleEmitters[0].TextureId;
+    mdl.Geosets.Clear(); mdl.GeosetAnims.Clear(); mdl.ParticleEmitters.Clear();
+    // WC3 scale is a half-width; the writer doubles it: size = 2 * StartScale * scale.
+    float half(float sc2Size) => sc2Size / (2 * scale);
+    Wc3ModelViewer.Core.Formats.MdxParticleEmitter2 card(string name, float size, float x, int tex) => new()
+    {
+        Name = name, NodeIndex = -1, TextureId = tex, Blend = Wc3ModelViewer.Core.Formats.MdxParticleBlend.Add,
+        Speed = 0, Life = 2f, EmissionRate = 1f, Rows = 1, Columns = 1, MiddleTime = 0.5f,
+        StartScale = half(size), MiddleScale = half(size), EndScale = half(size),
+        StartAlpha = 255, MiddleAlpha = 255, EndAlpha = 255, Unshaded = true,
+        SpawnOffset = new System.Numerics.Vector3(x / scale, 0, size / (2 * scale)),
+        SpawnImmediately = true,
+    };
+    mdl.ParticleEmitters.Add(card("Size2", 2f, 0, haloTex));
+    mdl.ParticleEmitters.Add(card("Size1", 1f, 2.5f, haloTex));
+    mdl.ParticleEmitters.Add(new()
+    {
+        Name = "Beam", NodeIndex = -1, TextureId = beamTex, Blend = Wc3ModelViewer.Core.Formats.MdxParticleBlend.Add,
+        Orientation = Wc3ModelViewer.Core.Formats.MdxParticleOrientation.Ray,
+        BeamLength = 8 * 0.5f / scale,                       // 8 sizes of 0.5 = 4 units if tail counts sizes
+        Speed = 0.01f / scale, Life = 2f, EmissionRate = 1f, Rows = 1, Columns = 1, MiddleTime = 0.5f,
+        StartScale = half(0.5f), MiddleScale = half(0.5f), EndScale = half(0.5f),
+        StartAlpha = 255, MiddleAlpha = 255, EndAlpha = 255, Unshaded = true,
+        SpawnOffset = new System.Numerics.Vector3(-2.5f / scale, 0, 4f / scale),
+        EmitDirection = System.Numerics.Vector3.UnitZ, SpawnImmediately = true,
+    });
+    var copts = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = mdl.LodLevels.FirstOrDefault(), ModelName = calibName, Scale = scale };
+    var cres = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, copts).Export(new Wc3TextureCache(cs), src);
+    string cdir = Path.Combine(args[pi + 1], copts.ModelName);
+    Directory.CreateDirectory(Path.Combine(cdir, copts.TextureFolder));
+    File.WriteAllBytes(Path.Combine(cdir, copts.ModelName + ".m3"), cres.M3);
+    foreach (var t in cres.Textures) File.WriteAllBytes(Path.Combine(cdir, copts.TextureFolder, t.FileName), t.Data);
+    foreach (string l in cres.Log) Console.WriteLine("  | " + l);
+    Console.WriteLine($"-> {Path.Combine(cdir, copts.ModelName + ".m3")}");
+    return 0;
+}
+// --pkmeasure <bakeDir> times PkRendererStats.Measure over every dumped bake and reports failures.
+if (args.Contains("--pkmeasure"))
+{
+    int pi = Array.IndexOf(args, "--pkmeasure");
+    var files = Directory.GetFiles(args[pi + 1], "*.pkb");
+    var times = new List<(double Ms, string Name)>();
+    int failed = 0, renderers = 0;
+    foreach (string f in files)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try { renderers += Wc3ModelViewer.Core.Formats.Popcorn.PkRendererStats.Measure(Wc3ModelViewer.Core.Formats.Popcorn.PkEffectDef.Load(File.ReadAllBytes(f))).Count; }
+        catch (Exception e) { failed++; Console.WriteLine($"  FAIL {Path.GetFileName(f)}: {e.GetType().Name} {e.Message}"); }
+        times.Add((sw.Elapsed.TotalMilliseconds, Path.GetFileName(f)));
+    }
+    times.Sort();
+    Console.WriteLine($"{files.Length} bakes, {failed} failed, {renderers} renderers; median {times[times.Count / 2].Ms:F0} ms, p95 {times[(int)(times.Count * 0.95)].Ms:F0} ms, max {times[^1].Ms:F0} ms ({times[^1].Name})");
+    return failed == 0 ? 0 : 1;
+}
+// --pkbakes <nameFilter> loads matching models as the app does and prints which bake each CORN resolved to.
+if (args.Contains("--pkbakes"))
+{
+    int pi = Array.IndexOf(args, "--pkbakes");
+    using var bs = new Wc3Storage(install);
+    foreach (var e in bs.BuildIndex().Models.Where(m => m.RelativePath.Contains(args[pi + 1], StringComparison.OrdinalIgnoreCase)))
+    {
+        var raw = bs.TryReadFile(e.CascName);
+        if (raw is null) continue;
+        var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+        Wc3ModelViewer.Core.Formats.PopcornApproximation.Attach(mdl, bs.TryReadFile, e.CascName);
+        Console.WriteLine($"{e.ArtSet,-10} {e.CascName}");
+        foreach (var c in mdl.PopcornEmitters)
+            Console.WriteLine($"    corn '{c.Name}' {c.EffectPath} -> {c.BakeName} ({c.Runtime?.Layers.Count} layers)");
+    }
+    return 0;
+}
+// --pktex <textureRelPath> <out.png> [modelCascName] decodes a bake texture as the viewer resolves it.
+if (args.Contains("--pktex"))
+{
+    int pi = Array.IndexOf(args, "--pktex");
+    using var ts = new Wc3Storage(install);
+    var cache = new Wc3TextureCache(ts) { PreferHd = true };
+    string model = pi + 3 < args.Length ? args[pi + 3] : "";
+    var img = cache.Load(model, new Wc3ModelViewer.Core.Formats.MdxTexture { ReplaceableId = 0, FileName = args[pi + 1], Flags = 0 });
+    if (img is null) { Console.WriteLine("not found"); return 1; }
+    File.WriteAllBytes(args[pi + 2], Wc3ModelViewer.Core.Formats.PngWriter.Write(img));
+    Console.WriteLine($"{img.Width}x{img.Height} -> {args[pi + 2]}");
+    return 0;
+}
+if (args.Contains("--pksweep"))
+{
+    int pi = Array.IndexOf(args, "--pksweep");
+    int n = pi + 2 < args.Length && int.TryParse(args[pi + 2], out int pn) ? pn : int.MaxValue;
+    return MdxProbe.PkRunProbe.Sweep(args[pi + 1], n);
+}
+
+// --dumpbakes <outDir> writes every .pkb bake in the archive to disk, named after its archive path,
+// so the compiled scripts can be studied as a corpus.
+if (args.Contains("--dumpbakes"))
+{
+    int di = Array.IndexOf(args, "--dumpbakes");
+    string outDir = args[di + 1];
+    Directory.CreateDirectory(outDir);
+    using var ds = new Wc3Storage(install);
+    int written = 0;
+    foreach (string n in ds.EnumerateAll().Where(n => n.EndsWith(".pkb", StringComparison.OrdinalIgnoreCase)))
+    {
+        var raw = ds.TryReadFile(n);
+        if (raw is null) continue;
+        string flat = n.Replace("war3.w3mod:", "").Replace(':', '_').Replace('\\', '~').Replace('/', '~');
+        File.WriteAllBytes(Path.Combine(outDir, flat), raw);
+        written++;
+    }
+    Console.WriteLine($"{written} bakes -> {outDir}");
+    return 0;
+}
+
+if (args.Contains("--popcornsweep"))
+{
+    int si = Array.IndexOf(args, "--popcornsweep");
+    int n = si + 1 < args.Length && int.TryParse(args[si + 1], out int sn) ? sn : int.MaxValue;
+    return MdxProbe.PopcornProbe.Sweep(install, n);
+}
+
+if (args.Contains("--popcorn"))
+{
+    int pi = Array.IndexOf(args, "--popcorn");
+    if (pi + 1 >= args.Length) { Console.WriteLine("usage: --popcorn <file.pkb | file.mdx | cascName>"); return 1; }
+    return MdxProbe.PopcornProbe.Run(install, args[pi + 1]);
+}
+
 // --corn [n] answers one question with bytes: is Reforged's PopcornFX convertible at all? It reads
 // what every CORN emitter references, then checks whether the archive even contains the baked
 // effects those paths name. An emitter we cannot resolve to data is not a conversion problem.
@@ -1080,8 +1361,9 @@ if (args.Contains("--simfx"))
     var raw = s.TryReadFile(path);
     if (raw is null) { Console.WriteLine($"not found: {path}"); return 1; }
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
-    Console.WriteLine($"{path}\n  {mdl.ParticleEmitters.Count} particle emitters, {mdl.RibbonEmitters.Count} ribbons, "
-                      + $"{mdl.Lights.Count} lights, {mdl.PopcornEmitterCount} popcorn (dropped)");
+    Wc3ModelViewer.Core.Formats.PopcornApproximation.Attach(mdl, s.TryReadFile, path);
+    Console.WriteLine($"{path}\n  {mdl.ParticleEmitters.Count} particle emitters ({mdl.ParticleEmitters.Count(e => e.IsPopcorn)} from PopcornFX), "
+                      + $"{mdl.RibbonEmitters.Count} ribbons, {mdl.Lights.Count} lights, {mdl.PopcornEmitterCount} popcorn");
     if (mdl.Sequences.Count == 0) { Console.WriteLine("  no sequences"); return 0; }
 
     var animator = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
@@ -1130,6 +1412,8 @@ if (args.Contains("--exportto"))
     var raw = s.TryReadFile(cascPath);
     if (raw is null) { Console.WriteLine($"not found: {cascPath}"); return 1; }
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    foreach (string note in Wc3ModelViewer.Core.Formats.PopcornApproximation.Attach(mdl, s.TryReadFile, cascPath))
+        Console.WriteLine("   popcorn: " + note);
     var opts = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = 0, ModelName = mname, Scale = sc, TeamColor = slot };
     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(tex, cascPath);
     string d = Path.Combine(outRoot, mname);

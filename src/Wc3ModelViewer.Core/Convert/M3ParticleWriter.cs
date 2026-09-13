@@ -34,6 +34,7 @@ internal static class M3ParticleWriter
     // float 20 bytes, colour 20, vector3 36, int16 16.
     private const int OffBone = 0;
     private const int OffMaterialIndex = 4;
+    private const int OffAdditionalFlags = 8;
     private const int OffEmitSpeed = 12;
     private const int OffEmitSpeedRandom = 32;
     private const int OffEmitSpreadX = 92;
@@ -51,9 +52,11 @@ internal static class M3ParticleWriter
     private const int OffEmitRate = 404;
     private const int OffEmitShape = 424;
     private const int OffEmitShapeSize = 428;
+    private const int OffEmitCount = 704;
     private const int OffFlipbookCols = 728;
     private const int OffFlipbookRows = 730;
     private const int OffParticleType = 772;
+    private const int OffInstanceTail = 776;
     private const int OffFlags = 1232;
 
     /// <summary>
@@ -98,25 +101,47 @@ internal static class M3ParticleWriter
     /// model's primary Stand animation, so an emitter Warcraft III only switches on for a death or
     /// a spell stays silent at rest.
     /// </param>
+    /// <param name="emitCountAnimId">
+    /// The id reserved for <c>emit_count</c> when the emitter carries a count burst
+    /// (<see cref="MdxParticleEmitter2.EmitCountTrack"/>), else 0 and the field stays static.
+    /// </param>
     public static byte[] Build(MdxParticleEmitter2 e, int boneIndex, int materialIndex,
                                float scale, Func<uint> nextAnimId, uint emitRateAnimId,
-                               float restEmitRate)
+                               float restEmitRate, uint emitCountAnimId = 0)
     {
         var b = new byte[Size];
         foreach (var (offset, raw) in Defaults) WriteU32(b, offset, raw);
 
         WriteI32(b, OffBone, boneIndex);
+
+        // `additional_flags`. Warcraft III particles live in world space unless the emitter says
+        // "model space" — smoke stays where it was puffed while the unit walks on — where a
+        // StarCraft II system is hosted to its emitter unless "world space" is set (68% of
+        // Blizzard's billboard emitters set it). The randomise bits gate whether the random
+        // values written below apply at all: Blizzard sets the speed bit on 75% of the emitters
+        // that carry a speed random, and leaves the rest of the word clear.
+        uint additional = 0;
+        if (!e.ModelSpace) additional |= 0x8;                          // world_space
+        if (e.Speed != 0 && Math.Abs(e.Variation) > 0) additional |= 0x1;  // emit_speed_randomize
+        WriteU32(b, OffAdditionalFlags, additional);
         WriteI32(b, OffMaterialIndex, materialIndex);
 
         // Warcraft III emits into a cone of `latitude` degrees about the node axis; StarCraft II
         // spreads by two independent angles. A cone is the symmetric case of that.
-        float spread = Math.Clamp(e.Latitude, 0, 180);
+        // The angles are radians: Blizzard's own War3 conversion of Holy Light writes BlizParticle03's
+        // 5° latitude as 0.0873. Degrees here turned a 30° cone into 30 radians.
+        float spread = float.DegreesToRadians(Math.Clamp(e.Latitude, 0, 180));
         FloatAnim(b, OffEmitSpeed, e.Speed * scale, nextAnimId());
         FloatAnim(b, OffEmitSpeedRandom, e.Speed * scale * Math.Abs(e.Variation), nextAnimId());
         FloatAnim(b, OffEmitSpreadX, spread, nextAnimId());
         FloatAnim(b, OffEmitSpreadY, spread, nextAnimId());
         FloatAnim(b, OffLifespan, MathF.Max(e.Life, 0.001f), nextAnimId());
-        FloatAnim(b, OffEmitRate, MathF.Max(restEmitRate, 0), emitRateAnimId);
+        // Flags 6 marks the reference animated. With 0 StarCraft II reads only the default and never
+        // looks up the per-sequence track, so every KP2V gate and PopcornFX burst window was ignored
+        // (a burst-windowed Holy Light drew nothing: its rest rate is 0). Blizzard flags 13,671 of the
+        // 34,827 emit_rate references in the HotS assets this way, and LAYR color_value, which does
+        // animate, is written with the same flags.
+        FloatAnim(b, OffEmitRate, MathF.Max(restEmitRate, 0), emitRateAnimId, flags: 6);
 
         // Warcraft III's gravity is a downward acceleration; StarCraft II's field is signed the
         // other way, which is why Blizzard's own emitters store it negative.
@@ -127,11 +152,28 @@ internal static class M3ParticleWriter
         // exporter turns the model -90 degrees about Z on the way out (see M3Exporter.ToSc2) while
         // the emitter's bone frame stays world-aligned, so what lay along the model's X now lies
         // along its -Y.
-        WriteI32(b, OffEmitShape, e.Width > 0 || e.Length > 0 ? 1 : 0);
-        Vector3Anim(b, OffEmitShapeSize, new Vector3(e.Length * scale, e.Width * scale, 0), nextAnimId());
+        // A PopcornFX stand-in instead carries the measured half extents of its spawn volume, which
+        // is what emit_shape_size holds: m3studio draws the plane and cube at ±size. Shapes: 1 plane,
+        // 3 cube.
+        var box = e.SpawnHalfExtents;
+        if (box != Vector3.Zero)
+        {
+            bool flat = box.Z < 0.1f * MathF.Max(MathF.Max(box.X, box.Y), 1e-3f);
+            WriteI32(b, OffEmitShape, flat ? 1 : 3);
+            Vector3Anim(b, OffEmitShapeSize, new Vector3(box.Y * scale, box.X * scale, flat ? 0 : box.Z * scale), nextAnimId());
+        }
+        else
+        {
+            WriteI32(b, OffEmitShape, e.Width > 0 || e.Length > 0 ? 1 : 0);
+            Vector3Anim(b, OffEmitShapeSize, new Vector3(e.Length * scale, e.Width * scale, 0), nextAnimId());
+        }
 
-        // `size` holds the three-stage scale ramp in one vector: start, middle, end.
-        Vector3Anim(b, OffSize, new Vector3(e.StartScale * scale, e.MiddleScale * scale, e.EndScale * scale),
+        // `size` holds the three-stage scale ramp in one vector: start, middle, end. It is twice
+        // Warcraft III's scale, which is a half-width: Blizzard's War3 conversion of Holy Light
+        // stores pivots, speeds and emitter widths at 0.01 of their MDX values but particle sizes at
+        // 0.02 (BlizParticle03's 14.8 and 4.2 become 0.296 and 0.084). Written 1:1, every exported
+        // particle was drawn at half size.
+        Vector3Anim(b, OffSize, new Vector3(e.StartScale, e.MiddleScale, e.EndScale) * (2 * scale),
                     nextAnimId());
         WriteF32(b, OffSizeAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
         WriteF32(b, OffColorAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
@@ -147,27 +189,68 @@ internal static class M3ParticleWriter
         // A live cap so a high emission rate cannot allocate without bound: rate x lifespan is the
         // steady-state population, which is what Blizzard's own emitters store here.
         int emitMax = (int)Math.Clamp(MathF.Ceiling(e.EmissionRate * MathF.Max(e.Life, 0.001f)) + 1, 1, 10000);
+
+        // A count burst fires its whole key at once, so the cap must hold it: Blizzard's emit_count
+        // systems cap at a median 4.4 times their largest key, never below it. Step interpolation on
+        // the header, as on 14,967 of Blizzard's 15,045 animated counts.
+        if (e.EmitCountTrack is { } counts && emitCountAnimId != 0)
+        {
+            int peak = (int)MathF.Ceiling(counts.Values.Max());
+            emitMax = Math.Clamp(Math.Max(emitMax, 3 * peak + 1), 1, 10000);
+            AnimHeader(b, OffEmitCount, emitCountAnimId, interpolation: 0, flags: 6);
+            WriteI16(b, OffEmitCount + 8, 0); WriteI16(b, OffEmitCount + 10, 0);
+            WriteI32(b, OffEmitCount + 12, 0);
+        }
         WriteI32(b, OffEmitMax, emitMax);
 
         // 0 is the plain camera-facing billboard — the only type every Warcraft III head particle
         // maps onto. Tail and Both would need SC2's stretched types, which carry their own geometry
-        // rules, so they are deliberately not claimed here.
-        WriteI32(b, OffParticleType, 0);
+        // rules, so they are deliberately not claimed here. PopcornFX layers do use three more:
+        // 1 (Tail) with the "fixed tail" flag is a camera-facing card stretched `instance_tail`
+        // sizes along the emission direction, centred on the particle, whatever the speed — Blizzard's own fixed-length
+        // light streaks (the moonwells' rising sparks) are written exactly so, most with a speed
+        // of zero — which is a PopcornFX axis-aligned beam; 9 (Ray) stretches the card from the
+        // emitter to the moving particle; 7 (Emitter) faces the emitter's local Z, which lays a
+        // disc flat on the ground.
+        bool fixedBeam = e.Orientation == MdxParticleOrientation.Ray && e.BeamLength > 0;
+        WriteI32(b, OffParticleType, e.Orientation switch
+        {
+            MdxParticleOrientation.Ray when fixedBeam => 1,
+            MdxParticleOrientation.Ray => 9,
+            MdxParticleOrientation.Ground => 7,
+            _ => 0,
+        });
+        // instance_tail counts particle sizes, not units. Across Blizzard's 1,905 fixed-tail type 1
+        // systems in the HotS assets the tail is a median 16 sizes, and the extremes only make sense
+        // that way: the medic's stim streak is 64 on a 0.05 particle (3.2 long), Genji's swift strike
+        // 50 on 0.06. Written in units, Holy Light's 600-unit shafts stood 80 sizes of 600 tall.
+        if (fixedBeam)
+        {
+            float size = 2 * MathF.Max(e.MiddleScale, 1e-3f) * scale;
+            WriteF32(b, OffInstanceTail, e.BeamLength * scale / size);
+        }
 
         WriteU32(b, OffFlags, BuildFlags(e));
         return b;
     }
 
     /// <summary>
-    /// <c>PAR_.flags</c>. Only bits with a Warcraft III meaning are set; the rest stay at the
-    /// default. <c>0x1</c> keeps the system emitting rather than waiting to be triggered, and
-    /// <c>0x8</c> is the "sort by distance" bit additive glows want.
+    /// <c>PAR_.flags</c>, with the bit names m3studio's structures give them. Only bits with a
+    /// Warcraft III meaning are set; the rest stay at the default. Measured over Blizzard's 22,141
+    /// billboard emitters in the HotS corpus: "vertex alpha" is set on 96% of them and is what
+    /// lets the colour ramp's alpha channel act at all, so it is always set; "sort by distance" is
+    /// what additive glows want drawn far-to-near. <c>0x8</c> is "collide emit" (3% of Blizzard's
+    /// emitters, and nothing without a collision system), not a sort bit, and is left clear.
     /// </summary>
     private static uint BuildFlags(MdxParticleEmitter2 e)
     {
-        uint flags = 0x1;                                  // enabled
-        if (e.ModelSpace) flags |= 0x40;                   // simulate in the emitter's local space
-        if (e.Blend is MdxParticleBlend.Add) flags |= 0x8;  // sort far-to-near, as additive wants
+        uint flags = 0x1 | 0x200000;                       // sort by distance; vertex alpha
+        // "simulate init": the system is run up to steady state before its first frame, so a
+        // layer renewed once per lifetime is already on screen when the model appears.
+        if (e.SpawnImmediately) flags |= 0x4000000;
+        // "tail fix": the tail is exactly `instance_tail` long regardless of velocity — the
+        // fixed-length beam. Only meaningful on particle type 1.
+        if (e.Orientation == MdxParticleOrientation.Ray && e.BeamLength > 0) flags |= 0x100000;
         return flags;
     }
 
@@ -175,16 +258,16 @@ internal static class M3ParticleWriter
     // An animation reference is header{ interpolation(u16), flags(u16), id(u32) } then default,
     // then null, then an int32 that Blizzard leaves at -1 on static values.
 
-    private static void AnimHeader(byte[] b, int at, uint id, ushort interpolation = 1)
+    private static void AnimHeader(byte[] b, int at, uint id, ushort interpolation = 1, ushort flags = 0)
     {
         WriteU16(b, at, interpolation);
-        WriteU16(b, at + 2, 0);
+        WriteU16(b, at + 2, flags);
         WriteU32(b, at + 4, id);
     }
 
-    private static void FloatAnim(byte[] b, int at, float value, uint id)
+    private static void FloatAnim(byte[] b, int at, float value, uint id, ushort flags = 0)
     {
-        AnimHeader(b, at, id);
+        AnimHeader(b, at, id, flags: flags);
         WriteF32(b, at + 8, value);
         WriteF32(b, at + 12, 0f);
         WriteI32(b, at + 16, -1);

@@ -23,10 +23,19 @@ Working end to end:
   of both schemes (classic matrix groups and Reforged 4-weight SKIN), GEOA geoset visibility.
 - **Effects** — particle emitters (`PRE2`/`PREM`), ribbons (`RIBB`) and lights (`LITE`) are parsed
   and the particles and ribbons simulated live in the viewer; particle emitters also export as SC2
-  `PAR_` systems. Reforged's own PopcornFX effects (`CORN`, a third of effect models) are counted
-  and reported rather than converted — their per-particle behaviour is compiled bytecode with no
-  equivalent in a fixed-field emitter. The status bar names what a model carries so an empty
-  viewport reads as a known limit rather than a bug.
+  `PAR_` systems. The status bar names what a model carries so an empty viewport reads as a known
+  limit rather than a bug.
+- **PopcornFX effects, simulated from their own scripts** — Reforged's own effect system (`CORN`, a
+  third of effect models, every HD spell) points at `.pkb` bakes that ship in the archive. The
+  viewer runs them: the bake's compiled per-particle scripts turned out to be a small virtual
+  machine, which is decoded and executed together with the layer graph, spawners, event payloads,
+  curves, shapes and spatial layers (see `mdxres/research/popcornfx-vm.md`). Sizes, lifetimes,
+  motion, colours and timing are the effect's own — Holy Light's beam grows from 5.4 to 13.2 m over
+  half a second, Lightning Shield's orbs circle with arcs chasing them. All 2,165 bakes load and run.
+  Export to StarCraft II still writes approximations: each rendered layer becomes a stand-in `PAR_`
+  system with the bake's sprite, blend, billboarding and colour curve (fixed-length tails for beams,
+  emitter-facing cards for discs), and an effect-only model gets one invisible carrier triangle, as
+  Blizzard's own effect `.m3` files have.
 - **Animated texture flipbooks** — HD water, fountains and coral animate their diffuse through a
   `KMTF` texture-id track of up to 50 frames. The viewer plays these on the track's own timeline;
   export resolves the flipbook's first frame instead of falling back to texture 0.

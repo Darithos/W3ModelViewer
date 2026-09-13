@@ -78,7 +78,65 @@ public partial class MainWindow : Window
             else Status.Text = "Point this at your Warcraft III folder — the one holding .build.info — "
                                + "and click Open. Everything else needs it, including custom models, "
                                + "which borrow their textures from the installed game.";
+            await OpenFromCommandLineAsync();
         };
+    }
+
+    /// <summary>
+    /// <c>--open &lt;name&gt; [--play]</c>: filter to a model and load the first match, optionally
+    /// playing its first sequence. For scripted checks of the viewer; a user never needs it.
+    /// </summary>
+    private async Task OpenFromCommandLineAsync()
+    {
+        var args = Environment.GetCommandLineArgs();
+        int at = Array.IndexOf(args, "--open");
+        if (at < 0 || at + 1 >= args.Length || _index is null) return;
+        Filter.Text = args[at + 1];
+        if (args.Contains("--hd")) ArtSetCombo.SelectedIndex = 2;
+        if (args.Contains("--de")) ArtSetCombo.SelectedIndex = 1;
+        ApplyFilter();
+        if (AssetList.Items.Count == 0) { Status.Text = $"--open: nothing matches '{args[at + 1]}'"; return; }
+        var item = (AssetItem)AssetList.Items[0]!;
+        await LoadModelAsync(item.Entry);
+        if (args.Contains("--play") && AnimCombo.Items.Count > 1)
+        {
+            AnimCombo.SelectedIndex = 1;                 // 0 is the rest pose
+            PlayButton.IsChecked = true;
+            OnPlayToggled(PlayButton, new RoutedEventArgs());
+        }
+
+        // --screenshot <file.png> [--frames n] [--every ms]: render the window off-screen a few
+        // times while the animation runs, then quit. Off-screen because a screen grab of a WPF
+        // window that another window covers is blank, and a check that cannot see is no check.
+        int shot = Array.IndexOf(args, "--screenshot");
+        if (shot < 0 || shot + 1 >= args.Length) return;
+        int frames = Array.IndexOf(args, "--frames") is int fi && fi >= 0 && fi + 1 < args.Length && int.TryParse(args[fi + 1], out int fn) ? fn : 1;
+        int every = Array.IndexOf(args, "--every") is int ei && ei >= 0 && ei + 1 < args.Length && int.TryParse(args[ei + 1], out int ev) ? ev : 700;
+        int delay = Array.IndexOf(args, "--delay") is int di && di >= 0 && di + 1 < args.Length && int.TryParse(args[di + 1], out int dv) ? dv : 1200;
+        // --speed slows playback so a short effect (most spells run about a second) can be caught mid-flight.
+        if (Array.IndexOf(args, "--speed") is int si && si >= 0 && si + 1 < args.Length
+            && double.TryParse(args[si + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double sp))
+            SpeedSlider.Value = Math.Clamp(sp, SpeedSlider.Minimum, SpeedSlider.Maximum);
+        await Task.Delay(delay);
+        for (int k = 0; k < frames; k++)
+        {
+            string file = frames == 1 ? args[shot + 1] : Path.ChangeExtension(args[shot + 1], null) + $"_{k}.png";
+            SaveWindowPng(file);
+            await Task.Delay(every);
+        }
+        Close();
+    }
+
+    private void SaveWindowPng(string file)
+    {
+        var root = (FrameworkElement)Content;
+        int w = Math.Max(1, (int)root.ActualWidth), h = Math.Max(1, (int)root.ActualHeight);
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(root);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(rtb));
+        using var fs = File.Create(file);
+        enc.Save(fs);
     }
 
     /// <summary>Where the last successfully opened install is remembered between runs.</summary>
@@ -184,7 +242,8 @@ public partial class MainWindow : Window
             OpenFileButton.IsEnabled = true;
             ApplyFilter();
             Status.Text = $"Loaded {index.Models.Count:N0} models " +
-                          $"({index.Models.Count(m => m.ArtSet == Wc3ArtSet.Reforged):N0} HD, " +
+                          $"({index.Models.Count(m => m.ArtSet == Wc3ArtSet.Definitive):N0} DE, " +
+                          $"{index.Models.Count(m => m.ArtSet == Wc3ArtSet.Reforged):N0} HD, " +
                           $"{index.Models.Count(m => m.ArtSet == Wc3ArtSet.Classic):N0} SD) and " +
                           $"{index.TextureLookup.Count:N0} textures. " +
                           "Type to filter, click a model to view, or Open file… for a custom one.";
@@ -205,8 +264,9 @@ public partial class MainWindow : Window
         string q = Filter.Text.Trim();
         var wanted = ArtSetCombo.SelectedIndex switch
         {
-            1 => Wc3ArtSet.Reforged,
-            2 => Wc3ArtSet.Classic,
+            1 => Wc3ArtSet.Definitive,
+            2 => Wc3ArtSet.Reforged,
+            3 => Wc3ArtSet.Classic,
             _ => (Wc3ArtSet?)null,
         };
 
@@ -226,7 +286,14 @@ public partial class MainWindow : Window
         try
         {
             var storage = _storage;
-            var model = await Task.Run(() => MdxReader.Read(storage.ReadFile(entry.CascName)));
+            var model = await Task.Run(() =>
+            {
+                var m = MdxReader.Read(storage.ReadFile(entry.CascName));
+                // PopcornFX effects live in .pkb bakes beside the model; resolve them here, with the
+                // archive at hand, so the viewer and the exporter see the same stand-in emitters.
+                PopcornApproximation.Attach(m, storage.TryReadFile, entry.CascName);
+                return m;
+            });
             PresentModel(entry, model, _cascTextures!);
         }
         catch (Exception ex)
@@ -264,7 +331,13 @@ public partial class MainWindow : Window
         try
         {
             string path = dlg.FileName;
-            var model = await Task.Run(() => MdxReader.Read(File.ReadAllBytes(path)));
+            var storage = _storage;
+            var model = await Task.Run(() =>
+            {
+                var m = MdxReader.Read(File.ReadAllBytes(path));
+                PopcornApproximation.Attach(m, storage.TryReadFile, "");
+                return m;
+            });
 
             // CascName "" = no archive prefix: the texture cache probes LocalRoots, then the
             // classic CASC tree for stock references like Textures\gutz.blp.
@@ -332,7 +405,7 @@ public partial class MainWindow : Window
         _cutoutCache.Clear();
         ClearAnimationUi();
 
-        var effects = new EffectLayer(model, textures, entry.CascName);
+        var effects = new EffectLayer(model, textures, entry.CascName) { PlayerSlot = ViewerTeamColor };
         _effects = effects.HasAnything ? effects : null;
 
         // Default to LOD 0 — the full-detail mesh, and the one the exporter writes.
@@ -356,16 +429,26 @@ public partial class MainWindow : Window
         int hidden = _geosetItems.Count - shown.Count;
         string hiddenNote = hidden > 0 ? $" (+{hidden} hidden)" : "";
         // Effects are called out per model because their absence is otherwise unexplainable: a
-        // Reforged HD model's effects are almost always PopcornFX, which this tool does not yet draw
-        // or export, and the viewport for one of those is simply empty. Saying so beats leaving
-        // the user to wonder whether something is broken.
+        // Reforged HD model's effects are almost always PopcornFX, run here from their bakes' own
+        // compiled scripts, and one whose bake did not resolve leaves the viewport simply empty.
+        // Saying so beats leaving the user to wonder whether something is broken.
         var fx = new List<string>();
-        if (model.ParticleEmitters.Count > 0) fx.Add($"{model.ParticleEmitters.Count} particle");
+        int popcornLayers = model.ParticleEmitters.Count(e => e.IsPopcorn);
+        int native = model.ParticleEmitters.Count - popcornLayers;
+        if (native > 0) fx.Add($"{native} particle");
         if (model.RibbonEmitters.Count > 0) fx.Add($"{model.RibbonEmitters.Count} ribbon");
         if (model.Lights.Count > 0) fx.Add($"{model.Lights.Count} light");
+        if (model.PopcornEmitters.Count > 0)
+        {
+            int unresolved = model.PopcornEmitters.Count(c => c.Effect is null);
+            int running = model.PopcornEmitters.Count(c => c.Runtime is not null);
+            fx.Add(running > 0
+                ? $"{model.PopcornEmitters.Count} PopcornFX ({running} simulated from its scripts)"
+                : popcornLayers > 0 ? $"{model.PopcornEmitters.Count} PopcornFX (approximated as {popcornLayers} layer{(popcornLayers == 1 ? "" : "s")})"
+                : unresolved > 0 ? $"{model.PopcornEmitters.Count} PopcornFX (bake not found — not shown)"
+                                 : $"{model.PopcornEmitters.Count} PopcornFX (no drawable layers)");
+        }
         string effectNote = fx.Count > 0 ? $", effects: {string.Join(" + ", fx)}" : "";
-        if (model.PopcornEmitterCount > 0)
-            effectNote += $", {model.PopcornEmitterCount} PopcornFX (not shown — Reforged's own system)";
 
         Status.Text = $"{entry.RelativePath}   —   {entry.ArtSet}, {shown.Count} geosets{hiddenNote}, " +
                       $"{shown.Sum(g => g.VertexCount):N0} verts, {shown.Sum(g => g.TriangleCount):N0} tris, " +
@@ -633,8 +716,78 @@ public partial class MainWindow : Window
         _effects?.AddTo(group);                                    // effects last: they add light over everything
 
         ModelHost.Content = group;
-        if (zoom) Viewport.ZoomExtents(0);
+        if (zoom)
+        {
+            // An effect-only model (every Reforged spell effect) has no mesh to frame, and its
+            // emitters are empty until the animation runs, so frame the volume they will fill.
+            if (_sceneMeshes.Count == 0 && _effects is not null && EffectExtent(_model) is { } box) FrameBox(box);
+            else Viewport.ZoomExtents(0);
+        }
         ApplyPose();   // rebuilt meshes start at bind pose; re-apply the active frame, if any
+    }
+
+    /// <summary>
+    /// Points the camera at a box so its tallest side fills most of the view. Helix's own
+    /// ZoomExtents fits the box's bounding sphere and leaves a tall, thin effect (a beam) as a sliver.
+    /// </summary>
+    private void FrameBox(Rect3D box)
+    {
+        if (Viewport.Camera is not PerspectiveCamera cam) { Viewport.ZoomExtents(box, 0); return; }
+        var centre = new Point3D(box.X + box.SizeX / 2, box.Y + box.SizeY / 2, box.Z + box.SizeZ / 2);
+        // Keep the heading but look from low down: spell effects are mostly vertical (beams,
+        // pillars, rising sparks), and the default steep view foreshortens them to a sliver.
+        var flat = new Vector3D(cam.LookDirection.X, cam.LookDirection.Y, 0);
+        if (flat.LengthSquared < 1e-9) flat = new Vector3D(0, 1, 0);
+        flat.Normalize();
+        var dir = new Vector3D(flat.X, flat.Y, -0.27);
+        dir.Normalize();
+        double extent = Math.Max(box.SizeZ, Math.Max(box.SizeX, box.SizeY));
+        double dist = extent * 0.6 / Math.Tan(cam.FieldOfView * Math.PI / 360) + Math.Max(box.SizeX, box.SizeY) * 0.5;
+        cam.Position = centre - dir * dist;
+        cam.LookDirection = dir * dist;
+        cam.NearPlaneDistance = Math.Max(0.1, dist / 1000);
+    }
+
+    /// <summary>The box a model's emitters can reach: each node's pivot grown by card size plus travel.</summary>
+    private static Rect3D? EffectExtent(MdxModel model)
+    {
+        Rect3D box = Rect3D.Empty;
+        // A PopcornFX effect is framed from where its sprites actually go in a short headless run;
+        // its fixed-field stand-ins are hidden and would frame the wrong thing.
+        foreach (var corn in model.PopcornEmitters)
+        {
+            if (corn.Runtime is null || (uint)corn.NodeIndex >= (uint)model.Nodes.Count) continue;
+            if (Wc3ModelViewer.Core.Formats.Popcorn.PkCornPlayer.EstimateBounds(corn.Runtime) is not var (lo, hi)) continue;
+            const float m = PopcornApproximation.MetresToWc3;
+            var p = model.Nodes[corn.NodeIndex].Pivot;
+            box.Union(new Rect3D(p.X + lo.X * m, p.Y + lo.Y * m, p.Z + lo.Z * m, (hi.X - lo.X) * m, (hi.Y - lo.Y) * m, (hi.Z - lo.Z) * m));
+        }
+        foreach (var e in model.ParticleEmitters)
+        {
+            if (e.IsPopcorn && model.PopcornEmitters.Any(c => c.Runtime is not null && c.NodeIndex == e.NodeIndex)) continue;
+            if ((uint)e.NodeIndex >= (uint)model.Nodes.Count) continue;
+            var p = model.Nodes[e.NodeIndex].Pivot;
+            // Cards are drawn centred, so half a size; travel counts to the colour peak, where the
+            // effect is brightest, because a faded tail should not push the camera away. A
+            // fixed-length beam has its whole length from birth. Emission is a cone about the
+            // node's +Z opened by the latitude, so a narrow cone only reaches upward while a wide
+            // one (a scatter) reaches every way; framing the beam as a cube would put the camera
+            // twice as far back as the effect needs.
+            float half = Math.Clamp(0.5f * Math.Max(Math.Max(e.StartScale, e.MiddleScale), e.EndScale), 10f, 3000f);
+            float travel = Math.Clamp(Math.Max(e.Speed * Math.Max(e.Life, 0.05f) * Math.Clamp(e.MiddleTime, 0.25f, 1f), e.BeamLength), 0f, 3000f);
+            float sideways = e.Latitude >= 45f ? travel : 0f;
+            float down = e.Latitude >= 90f ? travel : 0f;
+            box.Union(new Rect3D(p.X - half - sideways, p.Y - half - sideways, p.Z - half - down,
+                                 2 * (half + sideways), 2 * (half + sideways), 2 * half + down + travel));
+        }
+        foreach (var r in model.RibbonEmitters)
+        {
+            if ((uint)r.NodeIndex >= (uint)model.Nodes.Count) continue;
+            var p = model.Nodes[r.NodeIndex].Pivot;
+            float reach = Math.Clamp(r.HeightAbove + r.HeightBelow, 10f, 3000f);
+            box.Union(new Rect3D(p.X - reach, p.Y - reach, p.Z - reach, 2 * reach, 2 * reach, 2 * reach));
+        }
+        return box.IsEmpty ? null : box;
     }
 
     /// <summary>
@@ -670,6 +823,7 @@ public partial class MainWindow : Window
         int slot = Math.Max((sender as ComboBox)?.SelectedIndex ?? 0, 0);
         if (slot == ViewerTeamColor) return;
         ViewerTeamColor = slot;
+        if (_effects is not null) _effects.PlayerSlot = slot;
         if (_suppressRebuild || _model is null) return;
         RebuildScene();
     }
@@ -820,7 +974,13 @@ public partial class MainWindow : Window
         if (_playing)
         {
             // Restart from the top when play is pressed at the end of a non-looping run.
-            if (LoopCheck.IsChecked != true && _timeMs >= _sequence.DurationMs) _timeMs = 0;
+            // The effects start over too: a player still holding the finished run's instances sees
+            // no gate edge and would never spawn a fresh one.
+            if (LoopCheck.IsChecked != true && _timeMs >= _sequence.DurationMs)
+            {
+                _timeMs = 0;
+                _effects?.Reset();
+            }
             _lastTick = _clock.Elapsed;
         }
     }
@@ -879,7 +1039,8 @@ public partial class MainWindow : Window
 
         var look = new Vector3D(0, 1, 0);
         var camUp = new Vector3D(0, 0, 1);
-        if (Viewport.Camera is ProjectionCamera cam) { look = cam.LookDirection; camUp = cam.UpDirection; }
+        var camPos = new Point3D(0, -1000, 500);
+        if (Viewport.Camera is ProjectionCamera cam) { look = cam.LookDirection; camUp = cam.UpDirection; camPos = cam.Position; }
 
         var right = Vector3D.CrossProduct(look, camUp);
         if (right.LengthSquared < 1e-9) right = new Vector3D(1, 0, 0); else right.Normalize();
@@ -889,7 +1050,8 @@ public partial class MainWindow : Window
         int t = _sequence.IntervalStart + (int)_timeMs;
         _effects.Update(dt * (float)SpeedSlider.Value, _animator, _sequence, t, _wallMs,
                         new Vector3((float)right.X, (float)right.Y, (float)right.Z),
-                        new Vector3((float)up.X, (float)up.Y, (float)up.Z));
+                        new Vector3((float)up.X, (float)up.Y, (float)up.Z),
+                        new Vector3((float)camPos.X, (float)camPos.Y, (float)camPos.Z));
     }
 
     /// <summary>Applies the current time to all meshes: skinning plus GEOA geoset visibility.</summary>
@@ -1104,7 +1266,7 @@ public partial class MainWindow : Window
     {
         public Wc3ModelEntry Entry { get; } = entry;
         public override string ToString()
-            => $"{Entry.Name}{(Entry.ArtSet == Wc3ArtSet.Reforged ? "  · HD" : "  · SD")}   ({Entry.Folder})";
+            => $"{Entry.Name}  · {Entry.ArtSet switch { Wc3ArtSet.Definitive => "DE", Wc3ArtSet.Reforged => "HD", _ => "SD" }}   ({Entry.Folder})";
     }
 
     /// <summary>One row in the geoset toggle panel: wraps a geoset with a bindable visibility flag.</summary>

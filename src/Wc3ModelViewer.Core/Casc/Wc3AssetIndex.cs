@@ -7,6 +7,13 @@ public enum Wc3ArtSet
     Classic,
     /// <summary>Reforged/HD art (the <c>_hd.w3mod</c> tree): MDX v900+ models and DDS textures.</summary>
     Reforged,
+    /// <summary>
+    /// Definitive Edition art (the <c>_de.w3mod</c> tree, patch 3.0). A third full tree, not a
+    /// republish: it ships ~970 models the HD tree never had (the Scarlet footman, a whole set of
+    /// new human spells), differs from HD on about a third of the paths they share, and is HD-class
+    /// art throughout (SKIN-skinned geosets, PBR materials, DDS textures).
+    /// </summary>
+    Definitive,
 }
 
 /// <summary>One model file found in the storage, with its SD/HD counterpart paired up.</summary>
@@ -19,6 +26,9 @@ public sealed class Wc3ModelEntry
     public required string RelativePath { get; init; }
 
     public required Wc3ArtSet ArtSet { get; init; }
+
+    /// <summary>True for the HD-class sets (Reforged and Definitive), whose textures are DDS PBR sets.</summary>
+    public bool IsHd => ArtSet != Wc3ArtSet.Classic;
 
     /// <summary>
     /// Other CASC names providing this same relative path — add-on archives (<c>hd2.w3addon</c> and
@@ -47,7 +57,10 @@ public sealed class Wc3ModelEntry
 /// <c>war3.w3mod:_hd.w3mod:units\human\knight\knight.mdx</c>. Add-on content nests deeper still —
 /// <c>_addons\hd2.w3addon\136env.w3mod:_hd.w3mod:_tilesets\a.w3mod:replaceabletextures\...</c> — so
 /// rather than enumerate archive names, the asset path is taken as everything after the <b>last</b>
-/// colon, and the art set from whether <c>_hd.w3mod</c> appears in the prefix that was dropped.
+/// colon, and the art set from whether <c>_de.w3mod</c> or <c>_hd.w3mod</c> appears in the prefix
+/// that was dropped. Patch 3.0 added the <c>_de.w3mod</c> tree; before it was recognised here every
+/// Definitive Edition model was filed as SD and, where the classic tree had the same path, folded
+/// behind the classic entry as an "override" — the new models were in the storage but not in the list.
 /// </remarks>
 public sealed class Wc3AssetIndex
 {
@@ -157,9 +170,11 @@ public sealed class Wc3AssetIndex
         string prefix = lastColon >= 0 ? cascName[..lastColon] : "";
         string relative = (lastColon >= 0 ? cascName[(lastColon + 1)..] : cascName).Replace('/', '\\');
 
-        var artSet = prefix.Contains("_hd.w3mod", StringComparison.OrdinalIgnoreCase)
-            ? Wc3ArtSet.Reforged
-            : Wc3ArtSet.Classic;
+        var artSet = prefix.Contains("_de.w3mod", StringComparison.OrdinalIgnoreCase)
+            ? Wc3ArtSet.Definitive
+            : prefix.Contains("_hd.w3mod", StringComparison.OrdinalIgnoreCase)
+                ? Wc3ArtSet.Reforged
+                : Wc3ArtSet.Classic;
 
         return (relative, artSet);
     }

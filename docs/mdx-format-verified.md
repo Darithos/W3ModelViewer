@@ -15,6 +15,14 @@ Asset names are colon-separated virtual paths, exactly as CascView displays them
 | --- | --- | --- |
 | Classic / SD | `war3.w3mod:<path>` | `war3.w3mod:units\human\knight\knight.mdx` |
 | Reforged / HD | `war3.w3mod:_hd.w3mod:<path>` | `war3.w3mod:_hd.w3mod:units\human\knight\knight.mdx` |
+| Definitive Edition / DE (patch 3.0) | `war3.w3mod:_de.w3mod:<path>` | `war3.w3mod:_de.w3mod:units\human\scarletfootman\scarletfootman.mdx` |
+
+Patch 3.0 ("Definitive Edition", September 2026) added the `_de.w3mod` tree and re-exported every
+model in all three trees as **`VERS` 1800** — the classic footman reports 1800 too, so the version
+is still no layout discriminator. The DE tree is a third art set, not a republish of HD: of 5,965
+DE models, 974 exist in no other tree (the Scarlet footman, a full set of new human spells), 4,973
+share a path with HD, and a byte comparison of 120 of those found a third differ. 66 HD models have
+no DE counterpart. Storage grew to **175,026** files.
 
 Backslash-separated variants (`war3.w3mod\units\...`) do **not** work. Lookup is case-insensitive.
 
@@ -63,11 +71,24 @@ MATS  count, int32[count]                  // flat list of node objectIds
       int32   numExtents                   // == sequence count, or 0
       float[numExtents * 7] extents        // per-sequence bounds, same radius-first order
 [TANG count, float4[count]]                // HD only
-[SKIN byteCount, uint8[byteCount]]         // HD only; byteCount = vertexCount * 8
+[SKIN count, elem[count]]                  // HD only; count = vertexCount * 8:
                                            //   4 bone indices then 4 weights (weight/255)
+                                           //   build 2.0.4: elem = uint8  (8 bytes per vertex)
+                                           //   patch 3.0:   elem = uint16 (16 bytes per vertex)
 UVAS  int32 layerCount
 UVBS  count, float2[count]                 // repeated layerCount times (HD uses 2)
 ```
+
+> **Patch 3.0 widened SKIN.** The header count is unchanged (still `vertexCount * 8`) but every
+> element is now a `uint16` — indices because DE rigs pass 255 bones (the HD knight's geosets reach
+> bone 164; before 3.0 the same knight was under 255 by construction), weights along with them, still
+> 0..255 and summing to ~255. Verified on the DE scarletfootman (365-vertex geoset: `SKIN` at +19,072,
+> 5,840 bytes = 365 × 16, then `UVAS`), the 3.0 HD footman and the 3.0 HD knight. Read at the old
+> width the record `6e 00 6e 00 6e 00 6e 00 | ff 00 00 00 00 00 00 00` becomes vertex A = bones
+> 110,0,110,0 with weights 110,0,110,0 (half the mesh glued to the root) and vertex B = bones 255,0,0,0
+> with no weight at all; then the unread second half shifts `UVAS` off its byte. Detect the width the
+> way `MdxReader` does: whichever length lands the next sub-chunk tag where a tag belongs. Hive custom
+> HD models (VERS 1000/1100) still use the byte form.
 
 Worked example — SD knight geoset[0]: `MATS` ends at +17,645 and `UVAS` begins at +18,109; the
 464-byte gap is `128 + 12*28`, and the model has exactly **12** sequences. HD knight geoset[0]: the
@@ -199,3 +220,28 @@ reverted; see `memory/reforged-hd-alpha-is-team-mask.md`. Read the ORM's alpha i
 
 HD models carry no `HELP` or `GLBS`; they add `CORN` (popcorn FX), `CAMS`, `FAFX` (FaceFX) and
 `BPOS` (bind pose). Chunk order is not guaranteed — always dispatch on the tag and skip by size.
+
+## 7. CORN — PopcornFX emitters (verified 2026-09-13)
+
+Each entry is a node (inclusive size, then the standard node block) followed by a fixed payload
+that matches the published spec exactly, checked on `holyboltspecialart.mdx`:
+
+```
+C4Color colorMultiplier      (1,1,1,1) on every stock model looked at
+C4Color teamColor            (1,1,1,0): alpha 0 = not team-coloured
+char[260] path               "Abilities/Spells/Human/HolyBolt/HolyBoltSpecialArt.pkfx"
+char[260] popcornFlags       "Always=on, Death=off, Decay=off"
+tracks                       KPPA KPPC KPPE KPPL KPPS KPPV, any subset, found by tag
+```
+
+The path names the PopcornFX *source*; the archive ships the *bake* at the same path with the
+extension `.pkb`, in the same tree as the model. All 2,165 bakes in the archive resolve and parse.
+The node's pivot is where the effect is spawned; the effect's own layout is inside the bake, in
+metres (1 m = 50 units). How the bake itself is laid out is in `mdxres/research/popcornfx-bake.md`;
+its compiled per-particle scripts — a 12-opcode virtual machine the viewer executes — are in
+`mdxres/research/popcornfx-vm.md`.
+
+Unit models put their spell effects here too: the priest's `PriestAttack` (gated `Always=off,
+Attack Spell=on`, with a `KPPE` rate-multiplier track) and the paladin's `HeroPaladinSpell` and
+`Hero_Glow` (`Always=On, Death=Off, Dissipate=Off, Portrait=Off`, with `KPPA` and `KPPV` tracks).
+`Hero_Glow` is how every HD hero gets its glow — there is no team-glow emitter in HD.

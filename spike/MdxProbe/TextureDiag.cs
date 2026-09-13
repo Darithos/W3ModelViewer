@@ -29,7 +29,7 @@ public static class TextureDiag
             if (bytes is null) { Console.WriteLine("  unreadable\n"); continue; }
             var model = MdxReader.Read(bytes);
 
-            var textures = new Wc3TextureCache(storage, index) { PreferHd = entry.ArtSet == Wc3ArtSet.Reforged };
+            var textures = new Wc3TextureCache(storage, index) { PreferHd = entry.IsHd };
 
             Console.WriteLine($"  TEXS ({model.Textures.Count}):");
             for (int i = 0; i < model.Textures.Count; i++)

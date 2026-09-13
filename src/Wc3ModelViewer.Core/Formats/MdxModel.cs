@@ -239,7 +239,7 @@ public sealed class MdxGeoset
     public int[] MatrixIndices { get; init; } = [];
 
     // ---- Reforged skinning: 4 weighted bones per vertex ----
-    public byte[] SkinBoneIndices { get; init; } = [];   // 4 per vertex, index into the node list
+    public int[] SkinBoneIndices { get; init; } = [];    // 4 per vertex, index into the node list
     public byte[] SkinBoneWeights { get; init; } = [];   // 4 per vertex, 0..255
     public Vector4[] Tangents { get; init; } = [];
 
@@ -280,7 +280,7 @@ public sealed class MdxGeosetAnim
 }
 
 /// <summary>What kind of thing a node is. Determines which extra fields followed it in the file.</summary>
-public enum MdxNodeKind { Bone, Helper, Attachment, Light, ParticleEmitter, ParticleEmitter2, RibbonEmitter, Event, CollisionShape, Camera }
+public enum MdxNodeKind { Bone, Helper, Attachment, Light, ParticleEmitter, ParticleEmitter2, RibbonEmitter, Event, CollisionShape, Camera, PopcornEmitter }
 
 /// <summary>
 /// A node in the model hierarchy. Bones, helpers, attachments, emitters and events all share this
@@ -324,6 +324,20 @@ public enum MdxParticleBlend { Blend = 0, Add = 1, Modulate = 2, Modulate2X = 3,
 
 /// <summary>Head sprites, a stretched tail, or both.</summary>
 public enum MdxParticleType { Head = 0, Tail = 1, Both = 2 }
+
+/// <summary>
+/// How a particle's card is oriented. Warcraft III's own emitters only ever face the camera; the
+/// other two exist for PopcornFX layers, which draw beams along an axis and discs on the ground.
+/// </summary>
+public enum MdxParticleOrientation
+{
+    /// <summary>A square card facing the camera — every PRE2 head particle.</summary>
+    CameraFacing = 0,
+    /// <summary>A card stretched from where the particle was born to where it is now, facing the camera: a beam.</summary>
+    Ray = 1,
+    /// <summary>A card lying flat in the emitter's XY plane: a ground disc or rune.</summary>
+    Ground = 2,
+}
 
 public enum MdxLightType { Omni = 0, Directional = 1, Ambient = 2 }
 
@@ -396,6 +410,12 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     public MdxTrack<float>? GravityTrack { get; init; }
     public MdxTrack<float>? LifeTrack { get; init; }
     public MdxTrack<float>? EmissionRateTrack { get; init; }
+    /// <summary>
+    /// Particles fired all at once when the value steps up from zero — StarCraft II's
+    /// <c>emit_count</c>, which has no Warcraft III form. Only PopcornFX stand-ins carry it, for a
+    /// measured burst; the viewer's own simulator ignores it, as the effect's scripts run there.
+    /// </summary>
+    public MdxTrack<float>? EmitCountTrack { get; init; }
     public MdxTrack<float>? WidthTrack { get; init; }
     public MdxTrack<float>? LengthTrack { get; init; }
 
@@ -405,7 +425,116 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     public bool ModelSpace { get; init; }
     public bool LineEmitter { get; init; }
 
-    public override string ToString() => $"PRE2 '{Name}' ({Blend}, {EmissionRate:0.#}/s, life {Life:0.##}s)";
+    /// <summary>How the card is oriented. PRE2 emitters always face the camera.</summary>
+    public MdxParticleOrientation Orientation { get; init; }
+
+    /// <summary>
+    /// For a <see cref="MdxParticleOrientation.Ray"/> card: a fixed length in model units. The card
+    /// is then this long along the emission direction, centred on its spawn point, from the moment
+    /// it is born and never grows — a PopcornFX axis-aligned beam, which StarCraft II's fixed tail
+    /// also centres on the particle (confirmed in the SC2 editor). 0 means the ray is stretched
+    /// from its spawn point to wherever the moving particle is now.
+    /// </summary>
+    public float BeamLength { get; init; }
+
+    /// <summary>
+    /// Spawn the first particle the moment the emitter switches on instead of waiting for a full
+    /// particle's worth of rate to accrue. A PopcornFX layer that lives as long as the effect (a
+    /// hero glow) is one card renewed every ten seconds; without this it would first appear ten
+    /// seconds in. StarCraft II gets the same through the system's "simulate init" flag.
+    /// </summary>
+    public bool SpawnImmediately { get; init; }
+
+    /// <summary>
+    /// PopcornFX stand-ins only: where the particles are born relative to the node pivot, in model
+    /// units. A PRE2 emitter always emits at its node; a PopcornFX layer places its sprites anywhere
+    /// (Holy Light's rune floats 190 units up), so export gives such an emitter a bone of its own.
+    /// </summary>
+    public Vector3 SpawnOffset { get; init; }
+
+    /// <summary>PopcornFX stand-ins only: half extents of the box particles are born in, model units (0 = a point).</summary>
+    public Vector3 SpawnHalfExtents { get; init; }
+
+    /// <summary>PopcornFX stand-ins only: the direction particles travel, or a beam runs, in model space (unit).</summary>
+    public Vector3 EmitDirection { get; init; } = Vector3.UnitZ;
+
+    /// <summary>
+    /// PopcornFX stand-ins only: the particles circle the node's Z axis at this many radians per
+    /// second (counter-clockwise from above when positive), keeping their spawn offset as the radius.
+    /// A script orbit has no particle-system form; export gives such an emitter a spinning parent
+    /// bone and hosts the particles to it. 0 for everything else.
+    /// </summary>
+    public float OrbitAngularVelocity { get; init; }
+
+    /// <summary>
+    /// How many stand-ins share this orbit at even spacing (Unholy Aura's four runes). A looping
+    /// sequence can then end a whole number of <c>1/OrbitSymmetry</c> turns in, where the ring looks
+    /// the same, instead of jumping.
+    /// </summary>
+    public int OrbitSymmetry { get; init; } = 1;
+
+    /// <summary>
+    /// PopcornFX stand-ins only, for <see cref="MdxParticleOrientation.Ground"/> cards: the direction
+    /// the card faces, in model space, when it is not the node's Z (Unholy Aura's runes stand upright
+    /// facing outward). Export turns the emitter bone so its Z is this, with world up kept upward in
+    /// the card. Null means the card lies on the emitter's XY plane as usual.
+    /// </summary>
+    public Vector3? FaceDirection { get; init; }
+
+    /// <summary>
+    /// Set when this emitter was synthesised from a PopcornFX layer rather than read from a PRE2
+    /// chunk — the exporter and the viewer report those separately, because they are approximations.
+    /// </summary>
+    public string? PopcornSource { get; init; }
+    public bool IsPopcorn => PopcornSource is not null;
+
+    public override string ToString() => $"{(IsPopcorn ? "CORN" : "PRE2")} '{Name}' ({Blend}, {EmissionRate:0.#}/s, life {Life:0.##}s)";
+}
+
+/// <summary>
+/// A CORN emitter — Reforged's PopcornFX hook. The chunk itself only names a <c>.pkfx</c> effect
+/// and says which sequences switch it on; the effect's content lives in the <c>.pkb</c> bake the
+/// archive ships beside the model, read by <see cref="PopcornBake"/>.
+/// </summary>
+public sealed class MdxPopcornEmitter : MdxNodeAttachedObject
+{
+    public required string Name { get; init; }
+
+    /// <summary>The <c>.pkfx</c> path as the model spells it, e.g. <c>Abilities/Spells/Human/HolyBolt/HolyBoltSpecialArt.pkfx</c>.</summary>
+    public required string EffectPath { get; init; }
+
+    /// <summary>
+    /// Comma-separated sequence gates, e.g. <c>Always=on, Death=off, Decay=off</c>. Blizzard's data
+    /// carries typos (<c>Alwyas=on</c>, <c>Always= On</c>), so consumers match loosely.
+    /// </summary>
+    public string PopcornFlags { get; init; } = "";
+
+    /// <summary>RGBA multiplied into every particle's colour. (1,1,1,1) is neutral.</summary>
+    public Vector4 ColorMultiplier { get; init; } = Vector4.One;
+
+    /// <summary>Team colour tint; alpha 0 (the default) means the effect is not team-coloured.</summary>
+    public Vector4 TeamColor { get; init; } = new(1, 1, 1, 0);
+
+    public MdxTrack<float>? AlphaTrack { get; init; }              // KPPA
+    public MdxTrack<Vector3>? ColorTrack { get; init; }            // KPPC
+    public MdxTrack<float>? EmissionRateTrack { get; init; }       // KPPE
+    public MdxTrack<float>? LifespanTrack { get; init; }           // KPPL
+    public MdxTrack<float>? SpeedTrack { get; init; }              // KPPS
+
+    /// <summary>The parsed bake, once something with archive access has resolved it. Null until then, or when the bake is missing.</summary>
+    public PopcornEffect? Effect { get; set; }
+
+    /// <summary>
+    /// The bake's compiled scripts, layer graph, samplers and renderers, which
+    /// <see cref="Popcorn.PkEffectInstance"/> runs to simulate the effect as PopcornFX would. Null when the
+    /// bake is missing or its scripts did not load.
+    /// </summary>
+    public Popcorn.PkEffectDef? Runtime { get; set; }
+
+    /// <summary>Archive name the bake was read from, for diagnostics.</summary>
+    public string BakeName { get; set; } = "";
+
+    public override string ToString() => $"CORN '{Name}' -> {EffectPath} [{PopcornFlags}]";
 }
 
 /// <summary>A RIBB ribbon emitter — a trailing strip of quads, used for weapon trails and banners.</summary>
@@ -502,17 +631,18 @@ public sealed class MdxModel
     public List<MdxLight> Lights { get; } = [];
 
     /// <summary>
-    /// Reforged PopcornFX emitters (CORN). Only the count is tracked so far. The referenced
-    /// <c>.pkb</c> bakes do ship in the archive and their renderer, textures, shapes and curves are
-    /// readable, but per-particle behaviour is compiled bytecode that no fixed-field emitter can
-    /// reproduce. Recorded so a dropped effect can be reported rather than silently vanishing —
-    /// a third of Warcraft III's effect models use these.
+    /// Reforged PopcornFX emitters (CORN). A third of Warcraft III's effect models use these. The
+    /// referenced <c>.pkb</c> bakes ship in the archive; <c>PopcornApproximation.Attach</c> reads
+    /// them and appends one stand-in <see cref="MdxParticleEmitter2"/> per rendered layer to
+    /// <see cref="ParticleEmitters"/>, flagged through <see cref="MdxParticleEmitter2.PopcornSource"/>.
     /// </summary>
-    public int PopcornEmitterCount { get; set; }
+    public List<MdxPopcornEmitter> PopcornEmitters { get; } = [];
+
+    public int PopcornEmitterCount => PopcornEmitters.Count;
 
     /// <summary>True when the model carries anything the effect pipeline cares about.</summary>
     public bool HasEffects => ParticleEmitters.Count > 0 || RibbonEmitters.Count > 0
-                              || Lights.Count > 0 || PopcornEmitterCount > 0;
+                              || Lights.Count > 0 || PopcornEmitters.Count > 0;
 
     /// <summary>Tags of chunks the reader skipped, for diagnostics.</summary>
     public List<string> SkippedChunks { get; } = [];

@@ -63,9 +63,10 @@
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                     <ComboBox DockPanel.Dock="Right" x:Name="ArtSetCombo" Width="76" Margin="4,0,0,0"
                               SelectionChanged="OnFilterChanged" ToolTip="Which art set to browse">
-                        <ComboBoxItem Content="HD+SD" IsSelected="True"/>
-                        <ComboBoxItem Content="HD"/>
-                        <ComboBoxItem Content="SD"/>
+                        <ComboBoxItem Content="All" IsSelected="True"/>
+                        <ComboBoxItem Content="DE" ToolTip="Definitive Edition art (patch 3.0)"/>
+                        <ComboBoxItem Content="HD" ToolTip="Reforged art"/>
+                        <ComboBoxItem Content="SD" ToolTip="Classic art"/>
                     </ComboBox>
                     <TextBox x:Name="Filter" Padding="4" TextChanged="OnFilterChanged"
                              ToolTip="Filter models by name or folder"/>
