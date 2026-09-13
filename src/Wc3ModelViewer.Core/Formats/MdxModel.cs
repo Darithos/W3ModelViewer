@@ -36,7 +36,12 @@ public enum MdxShadingFlags
     Unfogged = 0x20,
     NoDepthTest = 0x40,
     NoDepthSet = 0x80,
-    NoFallback = 0x100,
+    /// <summary>
+    /// Reforged's <c>Unlit</c> (the name mdx-m3-viewer and the MDL keyword use; older notes here
+    /// called it NoFallback). Blizzard's HD art puts it on walk planes, sky spheres, portrait
+    /// backdrops and glows alike, so it does not by itself mean a geoset is hidden.
+    /// </summary>
+    Unlit = 0x100,
 }
 
 /// <summary>Node flag bits shared by every object in the MDX hierarchy.</summary>
@@ -137,6 +142,12 @@ public sealed class MdxTexture
     /// <summary>Team colour and team glow are supplied by the engine, not by a file.</summary>
     public bool IsTeamColor => ReplaceableId == 1;
     public bool IsTeamGlow => ReplaceableId == 2;
+
+    /// <summary>
+    /// Carries a replaceable ID. Tileset-bound IDs (cliff, trees) are given a default file name by
+    /// <see cref="Wc3ReplaceableTextures"/> at load, so a replaceable texture may still name a file
+    /// — test <see cref="IsTeamColor"/>/<see cref="IsTeamGlow"/> for the engine-generated ones.
+    /// </summary>
     public bool IsReplaceable => ReplaceableId != 0;
 
     public override string ToString() => IsReplaceable ? $"<replaceable {ReplaceableId}>" : FileName;

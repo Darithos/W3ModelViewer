@@ -533,7 +533,7 @@ public sealed class M3Exporter
 
             if (!glow && (uint)e.TextureId >= (uint)_mdx.Textures.Count) { skipped++; continue; }
             var tex = glow ? new MdxTexture { ReplaceableId = 2, FileName = "" } : _mdx.Textures[e.TextureId];
-            if (!glow && (tex.IsReplaceable || tex.FileName.Length == 0)) { skipped++; continue; }
+            if (!glow && (tex.IsTeamColor || tex.FileName.Length == 0)) { skipped++; continue; }
 
             // Glow art is read at player 0 deliberately, whatever slot the preview is on: the mask
             // is the falloff recovered as the art's brightest channel, and only player 0's colour
@@ -847,7 +847,9 @@ public sealed class M3Exporter
         int texId = layer.Slot(slot);
         if ((uint)texId >= (uint)_mdx.Textures.Count) return null;
         var tex = _mdx.Textures[texId];
-        if (tex.IsReplaceable || tex.FileName.Length == 0) return null;
+        // Team slots are generated, not files; a tileset tree or cliff (replaceable 11, 31-37) has
+        // been given a default file name at load and exports like any other texture.
+        if (tex.IsTeamColor || tex.IsTeamGlow || tex.FileName.Length == 0) return null;
         return textures.Load(modelCascName, tex, _opt.TeamColor);
     }
 

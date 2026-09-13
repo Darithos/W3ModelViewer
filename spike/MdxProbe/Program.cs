@@ -1,5 +1,6 @@
 using System.Text;
 using Wc3ModelViewer.Core.Casc;
+using Wc3ModelViewer.Core.Formats;
 
 // Both the SD and HD knight report VERS 1200, so the file version alone cannot say which geoset /
 // material encoding a model uses. This probe dumps the raw MTLS and GEOS bytes of a matched SD/HD
@@ -13,6 +14,22 @@ Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true
 Wc3ModelViewer.BlpJpegCodec.Install();      // as the app does; without it every BLP1-JPEG reads as missing
 
 // --validate [n] parses many real models and asserts the results are self-consistent.
+// --flagcensus [limit] [--filter name] lists every DE model whose LOD0 geoset uses a Unlit layer.
+if (args.Contains("--unresolved")) { int ui = Array.IndexOf(args, "--unresolved"); return MdxProbe.Unresolved.Run(install, ui + 1 < args.Length && int.TryParse(args[ui + 1], out int ul) ? ul : int.MaxValue); }
+
+if (args.Contains("--slotmismatch")) return MdxProbe.SlotMismatch.Run(install);
+
+if (args.Contains("--flagcensus"))
+{
+    int fi = Array.IndexOf(args, "--flagcensus");
+    int flimit = fi + 1 < args.Length && int.TryParse(args[fi + 1], out int fl) ? fl : int.MaxValue;
+    int ff = Array.IndexOf(args, "--filter");
+    int fg = Array.IndexOf(args, "--flag");
+    var flagBit = fg >= 0 && fg + 1 < args.Length ? (MdxShadingFlags)Convert.ToInt32(args[fg + 1], 16) : MdxShadingFlags.Unlit;
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : Wc3ArtSet.Definitive;
+    return MdxProbe.FlagCensus.Run(install, flimit, ff >= 0 && ff + 1 < args.Length ? args[ff + 1] : null, flagBit, art);
+}
+
 if (args.Contains("--validate"))
 {
     int limit = args.Select((a, i) => (a, i)).Where(t => t.a == "--validate")
