@@ -58,11 +58,11 @@ public static class MdxReader
                                        (p, i) => ReadRibb(model, p, i)); break;
                 case "LITE": ReadNodes(model, r, MdxNodeKind.Light,
                                        (p, i) => ReadLite(model, p, i)); break;
-                // Reforged's PopcornFX emitters name a .pkfx effect whose .pkb bake does ship in the
-                // archive (see MdxProbe --corn), so this is unread rather than unreadable. Only the
-                // count is kept for now — enough to tell the user what was dropped instead of
-                // silently losing a third of the effects.
-                case "CORN": model.PopcornEmitterCount += CountCornEmitters(r); break;
+                // Reforged's PopcornFX emitters are nodes like any other emitter; the payload names
+                // the effect and says which sequences run it. The effect's content is in a separate
+                // .pkb bake the archive ships beside the model — see PopcornApproximation.
+                case "CORN": ReadNodes(model, r, MdxNodeKind.PopcornEmitter,
+                                       (p, i) => ReadCorn(model, p, i)); break;
                 case "PIVT": while (r.More) model.Pivots.Add(r.Vec3()); break;
                 case "CAMS": ReadCams(model, r); break;
                 default: model.SkippedChunks.Add($"{tag}({size})"); break;
@@ -265,8 +265,8 @@ public static class MdxReader
     private static MdxGeoset ReadGeoset(Cursor r, int index)
     {
         Vector3[] positions = [], normals = [];
-        int[] indices = [], matrixGroups = [], matrixIndices = [];
-        byte[] vertexGroups = [], skinIndices = [], skinWeights = [];
+        int[] indices = [], matrixGroups = [], matrixIndices = [], skinIndices = [];
+        byte[] vertexGroups = [], skinWeights = [];
         Vector4[] tangents = [];
         var uvLayers = new List<Vector2[]>();
         int materialId = 0, sectionGroupId = 0, sectionGroupType = 0, lodId = 0;
@@ -289,20 +289,49 @@ public static class MdxReader
                 case "TANG": r.Skip(4); tangents = r.Vec4Array(r.I32()); break;
 
                 case "SKIN":
-                    // SKIN's header value is a BYTE count, not an element count: 8 bytes per vertex,
-                    // four bone indices followed by four 0..255 weights.
+                {
+                    // SKIN's header value is an ELEMENT count of eight per vertex: four bone indices
+                    // followed by four 0..255 weights. What changed in Reforged 3.0 ("Definitive
+                    // Edition", VERS 1800) is the element width. Reforged 2.0 wrote each as a byte;
+                    // 3.0 writes every one as a uint16 -- the indices because its rigs pass 255 bones
+                    // (the HD knight's geosets reach bone 164), the weights along with them, still
+                    // 0..255 and still summing to ~255. The count is unchanged, so the same header
+                    // now precedes twice the bytes. Read at the old width, every vertex's record is
+                    // really half of one: the low bytes of two indices land as "index, weight" pairs
+                    // (bone 0 gets a weight equal to the real bone's low byte), the next record is
+                    // the real weights read as indices 0xFF/0 with all-zero weights, and the unread
+                    // second half then shifts every following geoset tag off its byte. That was the
+                    // whole "HD animations are broken" symptom: mesh half-bound to the root bone,
+                    // holes in the weights, missing UVs. Told apart structurally rather than by
+                    // version, the same way HasLodFields is: the width is whichever lands the next
+                    // sub-chunk tag (or the geoset's end) where a tag belongs.
                     r.Skip(4);
-                    int skinBytes = r.I32();
-                    var skin = r.Bytes(skinBytes);
-                    int verts = skin.Length / 8;
-                    skinIndices = new byte[verts * 4];
+                    int elements = r.I32();
+                    int verts = elements / 8;
+                    bool narrowFits = Fits(elements), wideFits = Fits(elements * 2);
+                    bool wide = wideFits && !narrowFits;
+                    bool Fits(int bytes) => r.Remaining >= bytes
+                        && (r.Position + bytes == r.End || GeosetTags.Contains(r.PeekTag(bytes)));
+
+                    var skin = r.Bytes(wide ? elements * 2 : elements);
+                    skinIndices = new int[verts * 4];
                     skinWeights = new byte[verts * 4];
                     for (int v = 0; v < verts; v++)
-                    {
-                        Array.Copy(skin, v * 8, skinIndices, v * 4, 4);
-                        Array.Copy(skin, v * 8 + 4, skinWeights, v * 4, 4);
-                    }
+                        for (int k = 0; k < 4; k++)
+                        {
+                            if (wide)
+                            {
+                                skinIndices[v * 4 + k] = BitConverter.ToUInt16(skin, v * 16 + k * 2);
+                                skinWeights[v * 4 + k] = (byte)Math.Min((int)BitConverter.ToUInt16(skin, v * 16 + 8 + k * 2), 255);
+                            }
+                            else
+                            {
+                                skinIndices[v * 4 + k] = skin[v * 8 + k];
+                                skinWeights[v * 4 + k] = skin[v * 8 + 4 + k];
+                            }
+                        }
                     break;
+                }
 
                 case "MATS":
                     // MATS is followed by the geoset's trailing fixed fields, which carry no tag.
@@ -652,23 +681,29 @@ public static class MdxReader
     }
 
     /// <summary>
-    /// Counts CORN entries by walking their inclusive sizes. The emitters themselves are not parsed
-    /// yet — each names a PopcornFX effect whose bake ships in the archive but whose behaviour is
-    /// compiled bytecode. The count exists so the exporter can say how many effects it dropped.
+    /// CORN PopcornFX emitter payload: two C4Colors, a 260-byte effect path, a 260-byte flags
+    /// string, then the multiplier tracks. Layout verified against <c>holyboltspecialart.mdx</c>
+    /// (HD): the path lands exactly 32 bytes into the payload and the flags 260 bytes after it.
     /// </summary>
-    private static int CountCornEmitters(Cursor r)
+    private static void ReadCorn(MdxModel m, Cursor p, int nodeIndex)
     {
-        int count = 0;
-        while (r.Remaining >= 4)
+        var colorMul = new Vector4(p.F32(), p.F32(), p.F32(), p.F32());
+        var teamColor = new Vector4(p.F32(), p.F32(), p.F32(), p.F32());
+        string path = p.FixedString(260);
+        string flags = p.FixedString(260);
+
+        m.PopcornEmitters.Add(new MdxPopcornEmitter
         {
-            int start = r.Position;
-            int inclusive = r.I32();
-            if (inclusive < 8 || start + inclusive > r.End) break;
-            count++;
-            r.Seek(start + inclusive);
-            if (r.Position <= start) break;
-        }
-        return count;
+            Name = m.Nodes[nodeIndex].Name, NodeIndex = nodeIndex,
+            EffectPath = path, PopcornFlags = flags,
+            ColorMultiplier = colorMul, TeamColor = teamColor,
+            AlphaTrack = FindFloatTrack(p, "KPPA"),
+            ColorTrack = FindVec3Track(p, "KPPC"),
+            EmissionRateTrack = FindFloatTrack(p, "KPPE"),
+            LifespanTrack = FindFloatTrack(p, "KPPL"),
+            SpeedTrack = FindFloatTrack(p, "KPPS"),
+            VisibilityTrack = FindFloatTrack(p, "KPPV"),
+        });
     }
 
     /// <summary>

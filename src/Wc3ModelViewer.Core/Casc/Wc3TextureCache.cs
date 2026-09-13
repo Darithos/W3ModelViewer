@@ -134,6 +134,13 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
         (0, 252, 255), (30, 46, 254), (0, 139, 32), (176, 92, 228),
     ];
 
+    /// <summary>A player slot's colour as 0..1 RGB, for effects that tint by team rather than by texture.</summary>
+    public static System.Numerics.Vector3 PlayerColor(int slot)
+    {
+        var (b, g, r) = TeamColors[Math.Clamp(slot, 0, TeamColors.Length - 1)];
+        return new System.Numerics.Vector3(r / 255f, g / 255f, b / 255f);
+    }
+
     /// <summary>
     /// Resolves one texture reference from a model. Replaceable slots (team colour/glow) come back
     /// as generated solids; unresolvable paths come back null.
@@ -427,9 +434,10 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
         string noExt = norm.LastIndexOf('.') is var dot && dot > 0 ? norm[..dot] : norm;
         string prefix = ArchivePrefix(modelCascName);
 
-        // A loose model has no archive prefix; stock references try the classic tree first.
+        // A loose model has no archive prefix; stock references try the classic tree first. A
+        // Definitive Edition model lands in the middle branch: its own tree, then HD, then classic.
         string[] prefixes = prefix.Length == 0
-            ? ["war3.w3mod:", "war3.w3mod:_hd.w3mod:"]
+            ? ["war3.w3mod:", "war3.w3mod:_hd.w3mod:", "war3.w3mod:_de.w3mod:"]
             : prefix != "war3.w3mod:" && prefix != "war3.w3mod:_hd.w3mod:"
                 ? [prefix, "war3.w3mod:_hd.w3mod:", "war3.w3mod:"]
                 : [prefix, prefix == "war3.w3mod:_hd.w3mod:" ? "war3.w3mod:" : "war3.w3mod:_hd.w3mod:"];
@@ -549,11 +557,14 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
         return n;
     }
 
+    /// <summary>HD-class trees: Reforged's <c>_hd.w3mod</c> and Definitive Edition's <c>_de.w3mod</c>.</summary>
     private static bool IsHd(string cascName)
     {
         int lastColon = cascName.LastIndexOf(':');
-        return lastColon >= 0
-            && cascName.AsSpan(0, lastColon).Contains("_hd.w3mod", StringComparison.OrdinalIgnoreCase);
+        if (lastColon < 0) return false;
+        var prefix = cascName.AsSpan(0, lastColon);
+        return prefix.Contains("_hd.w3mod", StringComparison.OrdinalIgnoreCase)
+            || prefix.Contains("_de.w3mod", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ArchivePrefix(string cascName)

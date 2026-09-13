@@ -82,19 +82,24 @@ public static class Validate
     }
 
     /// <summary>Consistency checks over a parsed model. Each returned string is a real defect.</summary>
-    private static List<string> Check(MdxModel m)
+    public static List<string> Check(MdxModel m)
     {
         var issues = new List<string>();
 
         if (m.Version == 0) issues.Add("no VERS chunk");
-        if (m.Geosets.Count == 0) issues.Add("no geosets");
-        // Skipped chunks (PRE2/CORN/RIBB/LITE/FAFX/BPOS) are a deliberate scope decision, not a defect.
+        // A model with no geosets is not itself a defect: plenty of real ability "target"/"caster"
+        // dummies ship as a near-empty stub (0 nodes, 0 geosets, just a sequence list) that only
+        // exists to be referenced by an ability's art field. Skipped chunks (PRE2/CORN/RIBB/LITE/
+        // FAFX/BPOS) are likewise a deliberate scope decision, not a defect.
 
         foreach (var g in m.Geosets)
         {
             string at = $"geoset {g.Index}";
             if (g.VertexCount == 0) { issues.Add($"{at}: no vertices"); continue; }
-            if (g.Normals.Length != g.VertexCount) issues.Add($"{at}: {g.Normals.Length} normals for {g.VertexCount} vertices");
+            // A handful of real assets (flat UI icon quads) genuinely ship zero normals -- they are
+            // unlit sprites, not a botched parse -- so only a nonzero-but-wrong count is a defect.
+            if (g.Normals.Length != 0 && g.Normals.Length != g.VertexCount)
+                issues.Add($"{at}: {g.Normals.Length} normals for {g.VertexCount} vertices");
             if (g.Indices.Length == 0) issues.Add($"{at}: no indices");
             if (g.Indices.Length % 3 != 0) issues.Add($"{at}: index count {g.Indices.Length} is not a multiple of 3");
 

@@ -394,7 +394,10 @@ public static class MaterialCompositor
             values[i] = v;
             if (v < 64) lo++; else if (v > 192) hi++;
         }
-        if (hi * 1000 < n || lo * 1000 < n) return null;
+        // Long arithmetic on purpose: Definitive Edition ships 2048-square ORMs, and 3.9 million
+        // dark texels times 1000 overflows an int to negative, which silently rejected every DE
+        // mask (Uther's tabard stayed white in all eight player colours).
+        if ((long)hi * 1000 < n || (long)lo * 1000 < n) return null;
         return slot[k] = new TeamMask { Width = img.Width, Height = img.Height, Values = values };
     }
 

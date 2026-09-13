@@ -57,9 +57,9 @@ public sealed class M3ExportOptions
     public bool ConvertPbr { get; init; } = true;
 
     /// <summary>
-    /// Export PRE2 particle emitters as StarCraft II particle systems. Models with no emitters are
-    /// unaffected either way. Reforged's PopcornFX (CORN) emitters can never be exported — they
-    /// reference external baked effect files — and are reported as dropped regardless.
+    /// Export particle emitters as StarCraft II particle systems: PRE2 emitters as read, and
+    /// Reforged's PopcornFX (CORN) emitters as the stand-ins <c>PopcornApproximation.Attach</c>
+    /// synthesised from their bakes. Models with no emitters are unaffected either way.
     /// </summary>
     public bool ExportEffects { get; init; } = true;
 
@@ -225,9 +225,10 @@ public sealed class M3Exporter
         public List<(uint Id, int[] FramesMs, uint[] Vals)> ColorTracks = [];   // BGRA for SDCC
         public List<(uint Id, int[] FramesMs, float[] Vals)> FloatTracks = [];  // REAL for SDR3
         public List<(uint Id, int[] FramesMs, uint[] Vals)> FlagTracks = [];    // FLAG for SDFG
+        public List<(uint Id, int[] FramesMs, short[] Vals)> Int16Tracks = [];  // I16_ for SDS6
         public bool Animated => Vec3Tracks.Count > 0 || QuatTracks.Count > 0
                                 || ColorTracks.Count > 0 || FloatTracks.Count > 0
-                                || FlagTracks.Count > 0;
+                                || FlagTracks.Count > 0 || Int16Tracks.Count > 0;
     }
 
     private readonly List<ExportBone> _bones = [];
@@ -250,6 +251,7 @@ public sealed class M3Exporter
         BuildBatchToggles();
         var sequences = BuildSequences();
 
+        if (_regions.Count == 0 && _emitters.Count > 0) AddCarrierRegion();
         if (_regions.Count == 0)
             throw new InvalidOperationException($"No geosets at LOD {_opt.Lod} — nothing to export.");
 
@@ -268,6 +270,47 @@ public sealed class M3Exporter
         ReportTextureSources(textureCache, modelCascName);
 
         return new M3ExportResult { M3 = m3, Textures = _textures, Log = _log, TextureReferences = refs };
+    }
+
+    /// <summary>
+    /// Gives an effect-only model (Reforged's spell effects are all PopcornFX on a bare node) one
+    /// invisible triangle to carry it. Blizzard's own effect-only <c>.m3</c> files never ship without
+    /// a mesh — <c>storm_effect_uther_base_holylight_impact</c> carries 74 vertices — and the format
+    /// has no way to say "no vertex buffer" that the editor is known to accept, so this follows them.
+    /// The triangle is black and additive, which draws nothing at all.
+    /// </summary>
+    private void AddCarrierRegion()
+    {
+        var g = new MdxGeoset
+        {
+            Index = int.MaxValue,
+            Positions = [new Vector3(0, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 1, 0)],
+            Normals = [Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ],
+            Indices = [0, 1, 2],
+            UvLayers = [[new Vector2(0, 0), new Vector2(1, 0), new Vector2(0, 1)]],
+            SkinBoneIndices = new int[12],
+            SkinBoneWeights = [255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0],
+            MaterialId = -1,
+            LodId = _opt.Lod,
+        };
+        _materials.Add(new ExportMaterial
+        {
+            Name = "fxcarrier",
+            Blend = CompositeBlend.Additive,
+            TwoSided = true,
+            Unshaded = true,
+            IsParticle = true,
+            FlipbookCells = 1,
+            DiffusePath = AddTexture("fxcarrier_diff.dds", BlackSprite),
+        });
+        _regions.Add(new ExportRegion
+        {
+            Geoset = g,
+            Material = new CompositeMaterial { Texture = BlackSprite, Blend = CompositeBlend.Additive, TwoSided = true, Unshaded = true },
+            MaterialIndex = _materials.Count - 1,
+            StaticAlpha = 1f,
+        });
+        _log.Add("no geometry: one invisible carrier triangle added so the effect has a mesh to ride, as Blizzard's effect models do");
     }
 
     /// <summary>
@@ -453,13 +496,22 @@ public sealed class M3Exporter
     /// </summary>
     private void BuildEffects(Casc.Wc3TextureCache textures, string modelCascName)
     {
-        // Reforged's PopcornFX emitters point at .pkb bakes that do ship in the archive, but their
-        // per-particle behaviour is compiled bytecode with no mapping onto PAR_'s fixed fields. Not
-        // yet converted, so say so rather than let a third of Warcraft III's effect models silently
-        // lose their effects.
-        if (_mdx.PopcornEmitterCount > 0)
-            _log.Add($"{_mdx.PopcornEmitterCount} PopcornFX (CORN) emitter(s) dropped — Reforged's "
-                     + "own effect system, not yet converted");
+        // Reforged's PopcornFX emitters arrive as stand-in emitters when the caller attached their
+        // bakes (PopcornApproximation.Attach); say how many made it, and when none did, why.
+        if (_mdx.PopcornEmitters.Count > 0)
+        {
+            int layers = _mdx.ParticleEmitters.Count(e => e.IsPopcorn);
+            int unresolved = _mdx.PopcornEmitters.Count(c => c.Effect is null);
+            _log.Add(layers > 0
+                ? $"{_mdx.PopcornEmitters.Count} PopcornFX (CORN) emitter(s) approximated as {layers} particle system(s) — "
+                  + (_mdx.ParticleEmitters.Any(e => e.IsPopcorn && e.PopcornSource!.EndsWith("(measured)", StringComparison.Ordinal))
+                      ? "placement, motion, size, colour and emission timing measured from a simulated run of the effect's scripts; "
+                        + "orbits, curved paths and per-particle rotation are not representable and stay still"
+                      : "sprites, blend, orientation and colour curves are the bake's; sizes and rates are recovered constants")
+                : unresolved > 0
+                    ? $"{_mdx.PopcornEmitters.Count} PopcornFX (CORN) emitter(s) dropped — their .pkb bakes were not resolved from the archive"
+                    : $"{_mdx.PopcornEmitters.Count} PopcornFX (CORN) emitter(s) dropped — their bakes have no renderable layers");
+        }
 
         if (!_opt.ExportEffects)
         {
@@ -498,6 +550,7 @@ public sealed class M3Exporter
                 Source = e,
                 MaterialIndex = AddParticleMaterial(e, glowMask is null ? image : BlackSprite, glowMask),
                 NodeIndex = e.NodeIndex,
+                Bone = EmitterBone(e),
                 RestEmissionRate = RestEmissionRateOf(e),
             });
         }
@@ -565,17 +618,83 @@ public sealed class M3Exporter
             : 0;
     }
 
+    /// <summary>
+    /// The bone an emitter emits from: its node's own, or — for a PopcornFX stand-in born away from
+    /// the node or travelling off its Z axis — a static child bone at the spawn point, turned so its
+    /// local Z is the emission direction. SC2 emits along the bone's Z, as Warcraft III does along the node's.
+    /// </summary>
+    private int EmitterBone(MdxParticleEmitter2 e)
+    {
+        int parent = (uint)e.NodeIndex < (uint)_mdx.Nodes.Count ? e.NodeIndex : -1;
+        var dir = e.FaceDirection is { } f && f.LengthSquared() > 1e-8f ? Vector3.Normalize(f)
+                : e.EmitDirection.LengthSquared() > 1e-8f ? Vector3.Normalize(e.EmitDirection) : Vector3.UnitZ;
+        if (e.OrbitAngularVelocity == 0 && e.SpawnOffset.LengthSquared() < 1e-4f && Vector3.Dot(dir, Vector3.UnitZ) > 0.9999f) return parent;
+
+        // An orbit: a bone at the node that spins about Z in every sequence, with the emitter bone
+        // hanging off it at the orbit radius. The spin keys are baked in BakeSpinnerTracks.
+        if (e.OrbitAngularVelocity != 0)
+        {
+            _bones.Add(new ExportBone
+            {
+                Name = UniqueBoneName($"Spin_{e.Name.Replace('/', '_')}", _bones.Count),
+                Parent = parent,
+                RestLocation = Vector3.Zero,
+                PivotWorld = parent >= 0 ? _bones[parent].PivotWorld : Vector3.Zero,
+            });
+            parent = _bones.Count - 1;
+            _spinners.Add((parent, e.OrbitAngularVelocity, Math.Max(1, e.OrbitSymmetry)));
+        }
+
+        var local = ToSc2(e.SpawnOffset) * _opt.Scale;
+        var sc2Dir = ToSc2(dir);
+        // A facing card wants world up kept upward within it, so its frame is built explicitly
+        // (Z = normal, Y = up projected onto the card) rather than by the shortest rotation.
+        var rotation = e.FaceDirection is not null && MathF.Abs(sc2Dir.Z) < 0.999f
+            ? Frame(sc2Dir)
+            : FromTo(Vector3.UnitZ, sc2Dir);
+        _bones.Add(new ExportBone
+        {
+            Name = UniqueBoneName($"Emit_{e.Name.Replace('/', '_')}", _bones.Count),
+            Parent = parent,
+            RestLocation = local,
+            PivotWorld = (parent >= 0 ? _bones[parent].PivotWorld : Vector3.Zero) + local,
+            RestRotation = rotation,
+        });
+        return _bones.Count - 1;
+
+        static Quaternion FromTo(Vector3 a, Vector3 b)
+        {
+            float d = Vector3.Dot(a, b);
+            if (d > 0.9999f) return Quaternion.Identity;
+            if (d < -0.9999f) return Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI);
+            return Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.Normalize(Vector3.Cross(a, b)), MathF.Acos(d)));
+        }
+
+        static Quaternion Frame(Vector3 z)
+        {
+            var y = Vector3.Normalize(Vector3.UnitZ - z * z.Z);        // world up, projected onto the card
+            var x = Vector3.Cross(y, z);
+            var m = new Matrix4x4(x.X, x.Y, x.Z, 0, y.X, y.Y, y.Z, 0, z.X, z.Y, z.Z, 0, 0, 0, 0, 1);
+            return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
+        }
+    }
+
     /// <summary>One emitter that survived to the write stage, with everything it needs resolved.</summary>
     private sealed class ExportEmitter
     {
         public required MdxParticleEmitter2 Source;
         public required int MaterialIndex;
         public required int NodeIndex;
+        /// <summary>Build-order bone index the system rides, or -1 for the root.</summary>
+        public required int Bone;
         public uint EmitRateAnimId;                 // PAR_.emit_rate; the KP2V gate rides this id
+        public uint EmitCountAnimId;                // PAR_.emit_count; a stand-in's count burst rides this id
         public float RestEmissionRate;              // rate with no sequence driving it
     }
 
     private readonly List<ExportEmitter> _emitters = [];
+    /// <summary>Synthesised bones that turn about Z at a constant rate (radians per second), for orbiting stand-ins.</summary>
+    private readonly List<(int Bone, float Omega, int Symmetry)> _spinners = [];
 
     /// <summary>
     /// Below this share of transparent texels under a geoset's own UVs, a "transparent" Reforged
@@ -1035,6 +1154,7 @@ public sealed class M3Exporter
         _boneAnimIds = boneIds;
         foreach (var m in _materials) m.ColorAnimId = AnimId();
         foreach (var em in _emitters) em.EmitRateAnimId = AnimId();
+        foreach (var em in _emitters) if (em.Source.EmitCountTrack is not null) em.EmitCountAnimId = AnimId();
         foreach (var m in _materials) if (m.ToggleBone >= 0) m.BatchAnimId = AnimId();
         _nextAnimId = AnimId;
 
@@ -1056,6 +1176,7 @@ public sealed class M3Exporter
             times.Add(seq.IntervalEnd);
 
             BakeBoneTracks(def, times, boneIds);
+            BakeSpinnerTracks(def, times, boneIds);
             BakeEmitterTracks(def, times);
             BakeBatchTracks(def, times);
             if (_opt.GeosetVisibility) BakeVisibilityTracks(def, times);
@@ -1094,11 +1215,16 @@ public sealed class M3Exporter
             var first = defs.FirstOrDefault();
             _log.Add("no Stand sequence selected — SC2 shows bind pose without one" +
                      (first is not null ? $"; duplicating '{first.Name}' as Stand" : ""));
+            // Every track kind is carried over, not only the skeletal ones. Without the float and
+            // flag tracks the copy plays with each emitter at its rest rate and each toggled geoset
+            // at its rest visibility: a burst-windowed Holy Light (rest rate 0) drew nothing in
+            // Stand while its Birth original was fine.
             if (first is not null)
                 defs.Add(new SeqDef
                 {
                     Name = "Stand", Source = first.Source, EndMs = first.EndMs,
                     Vec3Tracks = first.Vec3Tracks, QuatTracks = first.QuatTracks, ColorTracks = first.ColorTracks,
+                    FloatTracks = first.FloatTracks, FlagTracks = first.FlagTracks, Int16Tracks = first.Int16Tracks,
                 });
         }
         return defs;
@@ -1218,6 +1344,35 @@ public sealed class M3Exporter
     }
 
     /// <summary>
+    /// Rotation keys for the orbit bones: a steady turn about Z through the sequence. The rate is
+    /// snapped so the sequence ends a whole number of <c>1/symmetry</c> turns in — where a ring of
+    /// evenly spaced runes looks the same — when that moves it by less than a fifth, so a looping
+    /// Stand hands over without a jump. Z is the same axis before and after the export's own turn.
+    /// </summary>
+    private void BakeSpinnerTracks(SeqDef def, List<int> times, (uint Loc, uint Rot, uint Scl)[] boneIds)
+    {
+        if (_spinners.Count == 0) return;
+        float seconds = def.EndMs / 1000f;
+        var frames = times.Select(t => t - def.Source.IntervalStart).ToArray();
+        foreach (var (bone, omega, symmetry) in _spinners)
+        {
+            float w = omega;
+            float step = 2 * MathF.PI / symmetry;
+            float steps = MathF.Abs(omega) * seconds / step;
+            float whole = MathF.Max(1, MathF.Round(steps));
+            if (MathF.Abs(whole - steps) < 0.2f * steps) w = MathF.CopySign(whole * step / seconds, omega);
+
+            var rots = new Quaternion[times.Count];
+            for (int ti = 0; ti < times.Count; ti++)
+            {
+                var q = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, w * frames[ti] / 1000f);
+                rots[ti] = ti > 0 && Quaternion.Dot(rots[ti - 1], q) < 0 ? -q : q;
+            }
+            def.QuatTracks.Add((boneIds[bone].Rot, frames, rots));
+        }
+    }
+
+    /// <summary>
     /// Emission rate per sequence, gated by the emitter's KP2V visibility track.
     /// </summary>
     /// <remarks>
@@ -1242,6 +1397,23 @@ public sealed class M3Exporter
             float rest = em.RestEmissionRate;
             if (NotAll(rates, r => Math.Abs(r - rest) < 0.001f))
                 def.FloatTracks.Add((em.EmitRateAnimId, times.Select(t => t - def.Source.IntervalStart).ToArray(), rates));
+
+            // A count burst is written from its own keys, not resampled: the key that fires it is
+            // held for one frame, and a sample grid could straddle it. Only the keys inside this
+            // sequence apply, as with every Warcraft III track.
+            if (src.EmitCountTrack is { } counts)
+            {
+                var frames = new List<int>(); var vals = new List<short>();
+                for (int k = 0; k < counts.Count; k++)
+                {
+                    int t = counts.Times[k];
+                    if (t < def.Source.IntervalStart || t > def.Source.IntervalEnd) continue;
+                    frames.Add(t - def.Source.IntervalStart);
+                    vals.Add((short)Math.Clamp(MathF.Round(counts.Values[k]), 0, short.MaxValue));
+                }
+                if (vals.Any(v => v > 0))
+                    def.Int16Tracks.Add((em.EmitCountAnimId, frames.ToArray(), vals.ToArray()));
+            }
         }
     }
 
@@ -1616,6 +1788,7 @@ public sealed class M3Exporter
             for (int k = 0; k < def.QuatTracks.Count; k++) { ids.Add(def.QuatTracks[k].Id); refs.Add(3u << 16 | (uint)k); }
             for (int k = 0; k < def.ColorTracks.Count; k++) { ids.Add(def.ColorTracks[k].Id); refs.Add(4u << 16 | (uint)k); }
             for (int k = 0; k < def.FloatTracks.Count; k++) { ids.Add(def.FloatTracks[k].Id); refs.Add(5u << 16 | (uint)k); }
+            for (int k = 0; k < def.Int16Tracks.Count; k++) { ids.Add(def.Int16Tracks[k].Id); refs.Add(7u << 16 | (uint)k); }
             for (int k = 0; k < def.FlagTracks.Count; k++) { ids.Add(def.FlagTracks[k].Id); refs.Add(11u << 16 | (uint)k); }
             if (def.Animated) { ids.Add(BndsAnimId); refs.Add(12u << 16); }
             stcIdLists[i] = ids.ToArray();
@@ -1650,7 +1823,7 @@ public sealed class M3Exporter
                 evnt.Count = 1;
             }
 
-            M3Builder.Section? sd3v = null, sd4q = null, sdcc = null, sdr3 = null, sdfg = null, sdmb = null;
+            M3Builder.Section? sd3v = null, sd4q = null, sdcc = null, sdr3 = null, sds6 = null, sdfg = null, sdmb = null;
             if (def.Vec3Tracks.Count > 0)
             {
                 sd3v = b.Add("SD3V", 0, 32);
@@ -1719,6 +1892,22 @@ public sealed class M3Exporter
                     sdr3.Count++;
                 }
             }
+            // SDS6 — animated int16s, which is what emit_count is. Slot 7 of STC_, keys in an I16_
+            // section. Blizzard writes these with step interpolation on the PAR_ header.
+            if (def.Int16Tracks.Count > 0)
+            {
+                sds6 = b.Add("SDS6", 0, 32);
+                foreach (var t in def.Int16Tracks)
+                {
+                    var frames = b.AddI32s(t.FramesMs);
+                    var keys = b.AddI16s(t.Vals);
+                    b.Ref(sds6, frames);
+                    sds6.W.Write(0u);
+                    sds6.W.Write((uint)def.EndMs);
+                    b.Ref(sds6, keys);
+                    sds6.Count++;
+                }
+            }
             // SDFG — on/off flags. Slot 11 of STC_, keys in a FLAG section holding 0 or 1.
             if (def.FlagTracks.Count > 0)
             {
@@ -1764,7 +1953,9 @@ public sealed class M3Exporter
                 if (sd4q is not null) b.Ref(stc, sd4q); else b.NullRef(stc);
                 if (sdcc is not null) b.Ref(stc, sdcc); else b.NullRef(stc);
                 if (sdr3 is not null) b.Ref(stc, sdr3); else b.NullRef(stc);
-                for (int k = 0; k < 5; k++) b.NullRef(stc);     // sds6..sdu3
+                b.NullRef(stc);                                 // sdu8
+                if (sds6 is not null) b.Ref(stc, sds6); else b.NullRef(stc);
+                for (int k = 0; k < 3; k++) b.NullRef(stc);     // sdu6, sds3, sdu3
                 if (sdfg is not null) b.Ref(stc, sdfg); else b.NullRef(stc);
                 if (sdmb is not null) b.Ref(stc, sdmb); else b.NullRef(stc);
             }
@@ -1944,10 +2135,10 @@ public sealed class M3Exporter
             par = b.Add("PAR_", M3ParticleWriter.Version, M3ParticleWriter.Size);
             foreach (var em in _emitters)
             {
-                int bone = (uint)em.NodeIndex < (uint)boneMap.Length ? boneMap[em.NodeIndex] : 0;
+                int bone = (uint)em.Bone < (uint)boneMap.Length ? boneMap[em.Bone] : 0;
                 par.W.Write(M3ParticleWriter.Build(em.Source, bone, em.MaterialIndex,
                                                    _opt.Scale, _nextAnimId, em.EmitRateAnimId,
-                                                   em.RestEmissionRate));
+                                                   em.RestEmissionRate, em.EmitCountAnimId));
             }
             par.Count = _emitters.Count;
         }
@@ -2381,6 +2572,14 @@ public sealed class M3Exporter
         {
             var s = Add("I32_", 0, 4);
             foreach (int v in values) s.W.Write(v);
+            s.Count = values.Count;
+            return s;
+        }
+
+        public Section AddI16s(IReadOnlyList<short> values)
+        {
+            var s = Add("I16_", 0, 2);
+            foreach (short v in values) s.W.Write(v);
             s.Count = values.Count;
             return s;
         }

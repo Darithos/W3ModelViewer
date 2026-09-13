@@ -237,8 +237,44 @@ public static class TeamProbe
         return $"{img.Width}x{img.Height} a mean={sum / (double)n:0} zero={zero * 100.0 / n:0.0}% full={full * 100.0 / n:0.0}% oct[{hist}]";
     }
 
+    /// <summary>
+    /// Walks TeamMaskOf's decision for one model step by step: which layer it stops at, what it
+    /// loads for the ORM slot, and the lo/hi texel counts FromAlpha would see.
+    /// </summary>
+    public static int MaskDebug(string install, string name)
+    {
+        using var storage = new Wc3Storage(install);
+        var cache = new Wc3TextureCache(storage);
+        var raw = storage.TryReadFile(name);
+        if (raw is null) { Console.WriteLine("NOT FOUND " + name); return 1; }
+        var model = MdxReader.Read(raw);
+        for (int mi = 0; mi < model.Materials.Count; mi++)
+        {
+            var mat = model.Materials[mi];
+            Console.WriteLine($"mat {mi}: {mat.Layers.Count} layers");
+            foreach (var layer in mat.Layers)
+            {
+                int ormId = layer.Slot(MdxTextureSlot.Orm);
+                Console.WriteLine($"   pbr={layer.IsPbr} ormSlot={ormId} slots=[{string.Join(", ", layer.TextureSlots.Select(kv => $"{kv.Key}={kv.Value}"))}]");
+                if (ormId < 0 || (uint)ormId >= (uint)model.Textures.Count) continue;
+                var tex = model.Textures[ormId];
+                var img = cache.Load(name, tex);
+                var origin = cache.OriginOf(name, tex);
+                Console.WriteLine($"   ORM '{tex.FileName}' -> {(img is null ? "NULL" : $"{img.Width}x{img.Height}")} from {origin?.Source} {origin?.From}");
+                if (img is null) continue;
+                int n = img.Pixels.Length / 4, lo = 0, hi = 0;
+                for (int i = 3; i < img.Pixels.Length; i += 4)
+                    if (img.Pixels[i] < 64) lo++; else if (img.Pixels[i] > 192) hi++;
+                Console.WriteLine($"   n={n} lo={lo} ({lo * 100.0 / n:0.00}%) hi={hi} ({hi * 100.0 / n:0.00}%) -> FromAlpha {(hi * 1000 < n || lo * 1000 < n ? "REJECTS" : "accepts")}");
+            }
+            var mask = MaterialCompositor.TeamMaskOf(model, mat, cache, name);
+            Console.WriteLine($"   TeamMaskOf => {(mask is null ? "null" : $"{mask.Width}x{mask.Height} coverage {mask.Coverage * 100:0.0}%")}");
+        }
+        return 0;
+    }
+
     /// <summary>Classifies every HD ORM texture's alpha across the unit tree: mask, empty, or flat.</summary>
-    public static int Orm(string install, int limit)
+    public static int Orm(string install, int limit, Wc3ArtSet set = Wc3ArtSet.Reforged)
     {
         using var storage = new Wc3Storage(install);
         var index = Wc3AssetIndex.FromNames(storage.EnumerateAll());
@@ -248,7 +284,7 @@ public static class TeamProbe
         var flats = new List<string>();
         var masks = new List<string>();
 
-        foreach (var entry in index.Models.Where(m => !m.IsPortrait && m.ArtSet == Wc3ArtSet.Reforged
+        foreach (var entry in index.Models.Where(m => !m.IsPortrait && m.ArtSet == set
                      && m.RelativePath.StartsWith("units", StringComparison.OrdinalIgnoreCase)).Take(limit))
         {
             var raw = storage.TryReadFile(entry.CascName);

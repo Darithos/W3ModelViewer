@@ -8,6 +8,15 @@ public struct MdxParticle
     public Vector3 Position;
     public Vector3 Velocity;
 
+    /// <summary>Where the particle was born. A ray-oriented card is stretched from here to <see cref="Position"/>.</summary>
+    public Vector3 Origin;
+
+    /// <summary>
+    /// The unit direction it was emitted in — kept even when the speed is zero, so a fixed-length
+    /// beam (<see cref="MdxParticleEmitter2.BeamLength"/>) knows which way to run.
+    /// </summary>
+    public Vector3 Direction;
+
     /// <summary>Seconds lived so far, and the total this particle was given.</summary>
     public float Age;
     public float Lifespan;
@@ -109,7 +118,8 @@ public sealed class MdxEffectSimulator(MdxModel model)
         float rate = Sample(animator, e.EmissionRateTrack, e.EmissionRate, sequence, timeMs, wallMs);
         if (rate <= 0) return;
 
-        float credit = _spawnCredit.GetValueOrDefault(index) + rate * dt;
+        // An emitter that wants its first card at once starts with a full particle of credit.
+        float credit = (_spawnCredit.TryGetValue(index, out float had) ? had : e.SpawnImmediately ? 1f : 0f) + rate * dt;
         int spawn = (int)credit;
         _spawnCredit[index] = credit - spawn;
         if (spawn <= 0) return;
@@ -152,6 +162,8 @@ public sealed class MdxEffectSimulator(MdxModel model)
             _particles.Add(new MdxParticle
             {
                 Position = spawnAt,
+                Origin = spawnAt,
+                Direction = dir,
                 Velocity = dir * v,
                 Age = 0,
                 Lifespan = MathF.Max(life, 0.01f),
