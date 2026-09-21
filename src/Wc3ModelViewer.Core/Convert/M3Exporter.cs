@@ -1208,6 +1208,19 @@ public sealed class M3Exporter
             defs.Add(def);
         }
 
+        // Nothing to animate: a doodad the artist never keyed, or an export with every sequence
+        // unticked. One empty looping Stand is the whole file's animation — SC2 then draws the
+        // BONE rest pose, which is the model as built. This is Blizzard's own shape for a prop:
+        // 4,865 HotS .m3 files hold exactly one sequence whose STC carries no track ids at all
+        // (4,016 of them named Stand, 848 of those a flat 1 s), so a static export is an ordinary
+        // m3 rather than a special case — see spike/m3verify.
+        if (defs.Count == 0)
+        {
+            defs.Add(new SeqDef { Name = "Stand", Source = StaticStand, EndMs = StaticStand.IntervalEnd });
+            _log.Add("no animation exported — one empty 1s Stand written; SC2 shows the model in its rest pose");
+            return defs;
+        }
+
         // SC2 falls back to Stand; "Stand NN" variations satisfy a Stand request, so only a model
         // with no Stand of any kind needs one synthesised.
         bool hasStand = defs.Any(d => d.Name == "Stand" || d.Name.StartsWith("Stand 0", StringComparison.Ordinal)
@@ -1234,6 +1247,13 @@ public sealed class M3Exporter
 
     private (uint Loc, uint Rot, uint Scl)[] _boneAnimIds = [];
     private Func<uint> _nextAnimId = () => 0;
+
+    /// <summary>
+    /// The sequence a static export is written under. It holds no keys of its own and is never
+    /// sampled — only its SEQS fields are written (looping, no move speed, model-wide bounds) —
+    /// so the window it names is irrelevant.
+    /// </summary>
+    private static readonly MdxSequence StaticStand = new() { Name = "Stand", IntervalStart = 0, IntervalEnd = 1000 };
 
     /// <summary>
     /// Evaluates the whole skeleton at each sample and extracts every bone's m3-local TRS:
