@@ -67,19 +67,24 @@ public sealed class M3ExportOptions
     /// Path prefix baked into the .m3's texture references. SC2 resolves these against the mod or
     /// map archive ROOT; any root-relative path works, the folder name carries no meaning.
     /// <para>
-    /// References are baked as <c>Assets/textures/&lt;ModelName&gt;/*.dds</c>, and the export writes
+    /// References are baked as <c>Assets/textures/*.dds</c>, and the export writes
     /// a real <c>Assets\</c> folder on disk holding exactly that layout, so the whole package is
     /// one folder to merge into a map or mod root. An earlier layout wrote the .m3 and
     /// <c>textures\</c> loose and relied on the user pasting the folder's *contents* into
     /// <c>Assets\</c>; splitting a two-part copy is easy to get half-right, and a textures folder
     /// that lands beside <c>Assets\</c> instead of inside it leaves every reference dangling —
-    /// which SC2 shows as an untextured model rather than an error. The per-model subfolder keeps
-    /// several imported units from colliding on a texture filename.
+    /// which SC2 shows as an untextured model rather than an error.
+    /// </para>
+    /// <para>
+    /// Every model shares the one flat <c>Assets/textures/</c> folder so a texture several models
+    /// use is stored once. File names carry a content hash (see <c>PublishTextureNames</c>): the
+    /// same source texture composites differently per model, and a bare name would let one model's
+    /// file silently overwrite another's on merge.
     /// </para>
     /// </summary>
     public string TexturePrefix
     {
-        get => _texturePrefix ?? $"Assets/textures/{FolderSafe(ModelName)}/";
+        get => _texturePrefix ?? "Assets/textures/";
         init => _texturePrefix = value;
     }
     private readonly string? _texturePrefix;
@@ -99,16 +104,6 @@ public sealed class M3ExportOptions
             if (p.StartsWith(head, StringComparison.OrdinalIgnoreCase)) p = p[head.Length..];
             return p.Replace('/', Path.DirectorySeparatorChar);
         }
-    }
-
-    /// <summary>Model name reduced to a folder/file-safe token (invalid chars → underscore).</summary>
-    internal static string FolderSafe(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new StringBuilder(name.Length);
-        foreach (char c in name) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-        string s = sb.ToString().Trim();
-        return s.Length > 0 ? s : "model";
     }
 
     /// <summary>
@@ -255,6 +250,7 @@ public sealed class M3Exporter
         if (_regions.Count == 0)
             throw new InvalidOperationException($"No geosets at LOD {_opt.Lod} — nothing to export.");
 
+        PublishTextureNames();
         var m3 = WriteM3(sequences);
 
         // Read the texture paths back out of the bytes just written and confirm each one names a
@@ -858,6 +854,40 @@ public sealed class M3Exporter
         if (!_textures.Any(t => t.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
             _textures.Add(new ExportedTexture(fileName, DdsWriter.Write(image)));
         return fileName;
+    }
+
+    /// <summary>
+    /// Renames every exported texture to <c>&lt;name&gt;_&lt;hash&gt;.dds</c>, the hash taken over the
+    /// DDS bytes, and repoints the materials at the new names. All models export into one shared
+    /// textures folder, and the names built above say only which source texture a file came from,
+    /// not what was composited into it: two models' <c>footman_diff.dds</c> can differ (blend, team
+    /// mask, layers), and whichever is merged into the map last would silently repaint the other.
+    /// With the hash, identical files get identical names and are stored once, and different files
+    /// never share one. Runs after every <see cref="AddTexture"/> call, whose name matching
+    /// (reusing a material by <c>stem_diff.dds</c>) needs the plain names.
+    /// </summary>
+    private void PublishTextureNames()
+    {
+        var renamed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < _textures.Count; i++)
+        {
+            var t = _textures[i];
+            string hash = System.Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(t.Data), 0, 5).ToLowerInvariant();
+            string name = $"{Path.GetFileNameWithoutExtension(t.FileName)}_{hash}{Path.GetExtension(t.FileName)}";
+            renamed[t.FileName] = name;
+            _textures[i] = t with { FileName = name };
+        }
+
+        string Map(string p) => p.Length > 0 && renamed.TryGetValue(p, out var n) ? n : p;
+        foreach (var m in _materials)
+        {
+            m.DiffusePath = Map(m.DiffusePath);
+            m.NormalPath = Map(m.NormalPath);
+            m.SpecularPath = Map(m.SpecularPath);
+            m.EmissivePath = Map(m.EmissivePath);
+            m.TeamPath = Map(m.TeamPath);
+        }
     }
 
     private string TexStem(string primaryPath, int geosetIndex)

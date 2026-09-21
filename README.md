@@ -44,10 +44,11 @@ Working end to end:
   add-ons, no external tools**. Verified in the StarCraft II editor: models load, animate and
   render textured.
 - **Copy/paste-ready export layout** — the export folder holds an `Assets\` folder containing
-  `<Name>.m3` and `textures\<Name>\*.dds`, mirroring the references baked into the file
-  (`Assets/textures/<Name>/*.dds`) exactly. Merge that one folder into your map or mod root and
-  everything lines up with no renaming. The per-model subfolder keeps several imported units from
-  colliding on a texture filename. Every texture path is read back out of the written file and
+  `<Name>.m3` and `textures\*.dds`, mirroring the references baked into the file
+  (`Assets/textures/*.dds`) exactly. Merge that one folder into your map or mod root and
+  everything lines up with no renaming. All models share the one `textures\` folder: each file
+  name ends in a hash of its contents, so a texture several models use is stored once, and two
+  textures that differ can never overwrite each other. Every texture path is read back out of the written file and
   resolved against what landed on disk, because SC2 draws a layer it cannot find as black rather
   than reporting anything.
 - **Bone palette splitting** — geosets are split into regions of at most 45 bones. SC2 skins each
