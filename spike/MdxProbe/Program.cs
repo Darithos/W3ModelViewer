@@ -48,6 +48,33 @@ if (args.Contains("--fullsweep"))
     return MdxProbe.FullSweep.Run(install, limit, args.Contains("--no-anim"));
 }
 
+// --noseq [limit] lists the models that carry no SEQS at all — the ones the export dialog used to
+// refuse, since it insisted on at least one sequence. Counts them and names a spread of examples.
+if (args.Contains("--noseq"))
+{
+    int ni = Array.IndexOf(args, "--noseq");
+    int limit = ni + 1 < args.Length && int.TryParse(args[ni + 1], out int nl) ? nl : int.MaxValue;
+    using var ns = new Wc3Storage(install);
+    var models = ns.EnumerateAll().Where(n => n.EndsWith(".mdx", StringComparison.OrdinalIgnoreCase)).Take(limit).ToList();
+    int parsed = 0, none = 0, unreadable = 0;
+    var examples = new List<string>();
+    foreach (string name in models)
+    {
+        var raw = ns.TryReadFile(name);
+        if (raw is null) { unreadable++; continue; }
+        MdxModel m;
+        try { m = MdxReader.Read(raw); } catch { unreadable++; continue; }
+        parsed++;
+        if (m.Sequences.Count > 0) continue;
+        none++;
+        if (examples.Count < 25)
+            examples.Add($"{name}  ({m.Geosets.Count} geosets, {m.Nodes.Count} nodes, {m.ParticleEmitters.Count} emitters)");
+    }
+    Console.WriteLine($"{parsed:N0} models parsed ({unreadable:N0} unreadable): {none:N0} carry no sequence at all");
+    foreach (string e in examples) Console.WriteLine("  " + e);
+    return 0;
+}
+
 // --prefixes lists every archive prefix the storage reports models under, with counts and whether
 // the index calls it SD or HD — the check for content a new patch ships in a tree the index has
 // never seen (Definitive Edition added units\human\scarletfootman with no _hd.w3mod at all).
@@ -942,9 +969,21 @@ if (args.Contains("--export1"))
         Lod = mdl.LodLevels.FirstOrDefault(),
         ModelName = Array.IndexOf(args, "--name") is int ni && ni >= 0 ? args[ni + 1] : Path.GetFileNameWithoutExtension(args[pi + 1]),
         Scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
+        // --static exports no sequence at all, as the dialog does with every one unticked.
+        Sequences = args.Contains("--static") ? [] : null,
     };
     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(new Wc3TextureCache(es) { PreferHd = mdl.IsReforged }, args[pi + 1]);
     string dir = Path.Combine(args[pi + 2], opts.ModelName);
+    // --gltf writes the glTF set beside the .m3, as the dialog does with both formats ticked.
+    if (args.Contains("--gltf"))
+    {
+        var gl = new Wc3ModelViewer.Core.Convert.GltfExporter(mdl, opts)
+            .Export(new Wc3TextureCache(es) { PreferHd = mdl.IsReforged }, args[pi + 1]);
+        Directory.CreateDirectory(dir);
+        foreach (var f in gl.Files) File.WriteAllBytes(Path.Combine(dir, f.FileName), f.Data);
+        Console.WriteLine($"  glTF: {gl.Files.Count} file(s)");
+        foreach (string l in gl.Log) Console.WriteLine("  gltf | " + l);
+    }
     Directory.CreateDirectory(Path.Combine(dir, opts.TextureFolder));
     File.WriteAllBytes(Path.Combine(dir, opts.ModelName + ".m3"), res.M3);
     foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(dir, opts.TextureFolder, t.FileName), t.Data);

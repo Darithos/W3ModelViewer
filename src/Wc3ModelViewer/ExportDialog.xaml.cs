@@ -40,6 +40,12 @@ public partial class ExportDialog : Window
             .ToList();
         SequenceChecks.ItemsSource = _rows;
 
+        // Plenty of doodads and buildings carry no animation at all, and any model can be exported
+        // static by unticking everything — both write one empty Stand and the rest pose.
+        SeqHint.Text = _rows.Count == 0
+            ? "This model has no animations — it exports static."
+            : "None selected = static export.";
+
         var lods = model.LodLevels;
         LodCombo.ItemsSource = lods.Select(l => l == 0 ? "LOD 0 (full)" : $"LOD {l}").ToList();
         LodCombo.SelectedIndex = Math.Max(0, lods.IndexOf(viewerLod));
@@ -76,13 +82,10 @@ public partial class ExportDialog : Window
                             MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+        // No sequence selected is a valid export, not an error: the model goes out static, in its
+        // rest pose, under one empty Stand — the only way to export a model that was never
+        // animated, and the way to drop the animation from one that was.
         var selected = _rows.Where(r => r.IsChecked).ToList();
-        if (selected.Count == 0)
-        {
-            MessageBox.Show(this, "Select at least one sequence — SC2 needs at minimum a Stand.",
-                            "Export", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
         if (!float.TryParse(ScaleBox.Text.Trim(), System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out float scale)
             || !float.IsFinite(scale) || scale <= 0)

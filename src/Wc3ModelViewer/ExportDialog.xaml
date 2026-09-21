@@ -18,6 +18,9 @@
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="All" Width="42" Padding="2" Click="OnAllSeqClick"/>
                 <Button Content="None" Width="46" Padding="2" Margin="4,0,0,0" Click="OnNoneSeqClick"/>
+                <TextBlock x:Name="SeqHint" Foreground="#889" VerticalAlignment="Center" Margin="10,0,0,0"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="With no sequence selected the model exports static: one empty Stand, drawn in its rest pose."/>
             </StackPanel>
             <DockPanel DockPanel.Dock="Top" Margin="2,0,2,2">
                 <TextBlock DockPanel.Dock="Right" Text="exports as (editable)" Foreground="#889" Width="146" TextAlignment="Left"/>
