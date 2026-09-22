@@ -117,6 +117,8 @@ public partial class ExportDialog : Window
             ConvertPbr = ConvertPbrCheck.IsChecked == true,
             GeosetVisibility = GeosetVisCheck.IsChecked == true,
             Geosets = VisibleOnlyCheck.IsChecked == true ? _visibleGeosets : null,
+            ReduceKeys = ReduceKeysCheck.IsChecked == true,
+            MaxTextureSize = TexSizeCombo.SelectedIndex switch { 1 => 2048, 2 => 1024, 3 => 512, _ => 0 },
             ModelName = _entry.Name,
         };
         OutputDir = OutDirBox.Text.Trim();

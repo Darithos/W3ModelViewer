@@ -51,6 +51,11 @@ Working end to end:
   textures that differ can never overwrite each other. Every texture path is read back out of the written file and
   resolved against what landed on disk, because SC2 draws a layer it cannot find as black rather
   than reporting anything.
+- **Small files** — animation is baked at 30 fps and then key-reduced: a key is kept only where
+  the game's own interpolation would miss the bake by more than 0.25° or 0.05 units, so a 12.6 MB
+  HD unit becomes 1.3 MB with no visible change, and the export reports the exact deviation.
+  Textures are limited to 1024² by default (Blizzard's own SC2 units are 1024 or smaller) and
+  opaque maps are written DXT1. Both are options in the export dialog.
 - **Bone palette splitting** — geosets are split into regions of at most 45 bones. SC2 skins each
   draw call from a fixed matrix palette, and Reforged geosets routinely reference 80+ bones, which
   renders correctly at rest but explodes into spikes as soon as anything animates.
