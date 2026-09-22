@@ -1,7 +1,7 @@
 <Window x:Class="Wc3ModelViewer.ExportDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Export Model" Height="720" Width="560"
+        Title="Export Model" Height="800" Width="560"
         WindowStartupLocation="CenterOwner" Background="#1E2024"
         ResizeMode="CanResize" ShowInTaskbar="False">
     <DockPanel Margin="10">
@@ -92,6 +92,22 @@
             <StackPanel Orientation="Horizontal">
                 <TextBox x:Name="ScaleBox" Width="70" Padding="4" Text="1.0"/>
                 <TextBlock Text="1.0 = native WC3 units (war3mod maps) · ~0.025 for SC2-native scale"
+                           Foreground="#889" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <TextBlock Text="File size" Foreground="#DDD" FontWeight="Bold" Margin="0,10,0,4"/>
+            <CheckBox x:Name="ReduceKeysCheck" Content="Reduce animation keys" IsChecked="True" Foreground="#CCC" Margin="0,2,0,2"
+                      ToolTip="Drops the baked 30 fps keys the game would interpolate to anyway. Every kept curve stays within 0.25° and 0.05 units of the full bake — the export reports the exact figures. Usually ~90% off the .m3."/>
+            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                <TextBlock Text="Max texture size:" Foreground="#DDD" VerticalAlignment="Center"/>
+                <ComboBox x:Name="TexSizeCombo" Width="130" Margin="8,0,0,0" SelectedIndex="2"
+                          ToolTip="Larger textures are filtered down before compression. Blizzard's own SC2 unit textures are 1024 or smaller; Reforged sets are 2048 (5.6 MB each). Opaque maps also go DXT1, half the size of DXT5.">
+                    <ComboBoxItem Content="Original"/>
+                    <ComboBoxItem Content="2048"/>
+                    <ComboBoxItem Content="1024"/>
+                    <ComboBoxItem Content="512"/>
+                </ComboBox>
+                <TextBlock Text="1024 matches Blizzard's SC2 units · Original keeps Reforged's 2048"
                            Foreground="#889" VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
 

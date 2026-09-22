@@ -930,6 +930,17 @@ if (args.Contains("--pkrec"))
     }
     return 0;
 }
+// --reducecheck <cascName> [--scale s] replays the full and key-reduced exports of one model from
+// their bytes and reports the worst bone-world deviation between them, in WC3 units.
+if (args.Contains("--reducecheck"))
+{
+    int ri = Array.IndexOf(args, "--reducecheck");
+    if (ri + 1 >= args.Length) { Console.WriteLine("usage: --reducecheck <cascName> [--scale s]"); return 1; }
+    float rsc = Array.IndexOf(args, "--scale") is int rsi && rsi >= 0 ? float.Parse(args[rsi + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f;
+    float rdeg = Array.IndexOf(args, "--keydeg") is int rkd && rkd >= 0 ? float.Parse(args[rkd + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.25f;
+    float runits = Array.IndexOf(args, "--keyunits") is int rku && rku >= 0 ? float.Parse(args[rku + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.05f;
+    return MdxProbe.ReduceCheck.Run(install, args[ri + 1], rsc, rdeg, runits);
+}
 // --export1 <cascName> <outDir> exports one archive model as the app does (PopcornFX stand-ins attached).
 if (args.Contains("--export1"))
 {
@@ -971,6 +982,11 @@ if (args.Contains("--export1"))
         Scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
         // --static exports no sequence at all, as the dialog does with every one unticked.
         Sequences = args.Contains("--static") ? [] : null,
+        // --full keeps every baked key and the source texture size, as exports did before v1.6.
+        ReduceKeys = !args.Contains("--full"),
+        MaxTextureSize = args.Contains("--full") ? 0 : 1024,
+        KeyToleranceDeg = Array.IndexOf(args, "--keydeg") is int kd && kd >= 0 ? float.Parse(args[kd + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.25f,
+        KeyToleranceUnits = Array.IndexOf(args, "--keyunits") is int ku && ku >= 0 ? float.Parse(args[ku + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.05f,
     };
     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(new Wc3TextureCache(es) { PreferHd = mdl.IsReforged }, args[pi + 1]);
     string dir = Path.Combine(args[pi + 2], opts.ModelName);
@@ -988,7 +1004,8 @@ if (args.Contains("--export1"))
     File.WriteAllBytes(Path.Combine(dir, opts.ModelName + ".m3"), res.M3);
     foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(dir, opts.TextureFolder, t.FileName), t.Data);
     foreach (string l in res.Log) Console.WriteLine("  | " + l);
-    Console.WriteLine($"-> {Path.Combine(dir, opts.ModelName + ".m3")}");
+    foreach (var t in res.Textures) Console.WriteLine($"  tex {t.FileName,-40} {t.Data.Length / 1024,7} KB {System.Text.Encoding.ASCII.GetString(t.Data, 84, 4)}");
+    Console.WriteLine($"-> {Path.Combine(dir, opts.ModelName + ".m3")}  {res.M3.Length / 1024} KB .m3, {res.Textures.Sum(t => (long)t.Data.Length) / 1024} KB textures");
     return 0;
 }
 // --calib <outDir> [--scale s] writes a size-calibration model: three particle systems of known size

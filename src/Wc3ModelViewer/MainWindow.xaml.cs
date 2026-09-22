@@ -1169,18 +1169,22 @@ public partial class MainWindow : Window
 
             // <OutDir>\<ModelName>\ holds the glTF set at the top and the m3 package under an
             // Assets\ folder that mirrors the paths baked into the .m3.
-            var (fileCount, unitDir, m3Note) = await Task.Run(() =>
+            var (fileCount, totalBytes, unitDir, m3Note) = await Task.Run(() =>
             {
                 string dir = Path.Combine(outDir, options.ModelName);
                 Directory.CreateDirectory(dir);
                 int count = 0;
+                long bytes = 0;
                 string note = "";
 
                 if (doGltf)
                 {
                     var result = new GltfExporter(model, options).Export(textures, entry.CascName);
                     foreach (var file in result.Files)
+                    {
                         File.WriteAllBytes(Path.Combine(dir, file.FileName), file.Data);
+                        bytes += file.Data.Length;
+                    }
                     count += result.Files.Count;
                 }
                 if (doM3)
@@ -1193,10 +1197,14 @@ public partial class MainWindow : Window
                     Directory.CreateDirectory(assetsDir);
                     string m3Path = Path.Combine(assetsDir, options.ModelName + ".m3");
                     File.WriteAllBytes(m3Path, result.M3);
+                    bytes += result.M3.Length;
                     string texDir = Path.Combine(assetsDir, options.TextureFolder);
                     Directory.CreateDirectory(texDir);
                     foreach (var tex in result.Textures)
+                    {
                         File.WriteAllBytes(Path.Combine(texDir, tex.FileName), tex.Data);
+                        bytes += tex.Data.Length;
+                    }
                     count += 1 + result.Textures.Count;
 
                     // Resolve every path the written .m3 asks for against what is now on disk. SC2
@@ -1221,14 +1229,20 @@ public partial class MainWindow : Window
                                      + string.Join(", ", missingTex.Take(3))
                                      + (missingTex.Count > 3 ? $" (+{missingTex.Count - 3} more)" : ""));
 
-                    note = warnings.Count == 0
+                    // The size figure is the point of the reduction option, so it is reported
+                    // where the user looks rather than left to a folder listing.
+                    string keys = result.KeyReduction is { KeysIn: > 0 } k
+                        ? $"{result.M3.Length / 1048576.0:0.0} MB .m3, {100.0 * k.Dropped / k.KeysIn:0}% of animation keys dropped" +
+                          $" (within {k.MaxRotationDeg:0.00}° / {k.MaxVector / options.Scale:0.00} WC3 units of the full bake)"
+                        : $"{result.M3.Length / 1048576.0:0.0} MB .m3";
+                    note = keys + "   —   " + (warnings.Count == 0
                         ? @"copy the Assets folder into your map/mod root (merge with the existing Assets\)"
-                        : "WARNING: " + string.Join("; ", warnings);
+                        : "WARNING: " + string.Join("; ", warnings));
                 }
-                return (count, dir, note);
+                return (count, bytes, dir, note);
             });
 
-            Status.Text = $"Exported {fileCount} file(s) to {unitDir}" +
+            Status.Text = $"Exported {fileCount} file(s), {totalBytes / 1048576.0:0.0} MB, to {unitDir}" +
                           (doM3 ? $"   —   {m3Note}"
                                 : "   —   import the .gltf into Blender, then export .m3 with m3studio");
         }

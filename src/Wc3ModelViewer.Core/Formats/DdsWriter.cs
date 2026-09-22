@@ -1,8 +1,9 @@
 namespace Wc3ModelViewer.Core.Formats;
 
 /// <summary>
-/// Writes an <see cref="RgbaImage"/> as a BC3 (DXT5) block-compressed DDS with a full mip chain —
-/// the format the StarCraft II editor expects for model textures.
+/// Writes an <see cref="RgbaImage"/> as a block-compressed DDS with a full mip chain — BC3 (DXT5),
+/// or BC1 (DXT1) when the image has no alpha to keep — the formats the StarCraft II editor expects
+/// for model textures.
 /// </summary>
 /// <remarks>
 /// This used to emit uncompressed 32-bit BGRA on the assumption that the SC2 editor re-encodes on
@@ -19,10 +20,27 @@ namespace Wc3ModelViewer.Core.Formats;
 /// </remarks>
 public static class DdsWriter
 {
-    public static byte[] Write(RgbaImage image)
+    /// <param name="image">Top level, BGRA.</param>
+    /// <param name="maxSize">
+    /// Longest side the file may have; a larger image is box-filtered down first. 0 keeps it.
+    /// </param>
+    /// <param name="alphaIsCoverage">
+    /// True for colour maps, where alpha is a cut-out or a blend weight: mips are alpha-weighted so
+    /// edges do not bleed the (usually black) colour under transparent texels, and an image whose
+    /// alpha is 255 throughout is written as BC1 (DXT1), half the size of BC3 with the same
+    /// colour precision. False where alpha carries data of its own — the SC2 normal map keeps X
+    /// there, the team texture keeps its whole mask there — so every channel is filtered plainly
+    /// and BC3 keeps alpha at 8-bit endpoints.
+    /// </param>
+    public static byte[] Write(RgbaImage image, int maxSize = 0, bool alphaIsCoverage = true)
     {
-        var mips = BuildMipChain(image);
-        int dataSize = mips.Sum(m => Blocks(m.Width) * Blocks(m.Height) * 16);   // BC3 = 16 B / 4×4 block
+        while (maxSize > 0 && (image.Width > maxSize || image.Height > maxSize))
+            image = Halve(image, alphaIsCoverage);
+
+        var mips = BuildMipChain(image, alphaIsCoverage);
+        bool bc1 = alphaIsCoverage && IsOpaque(image);
+        int blockBytes = bc1 ? 8 : 16;
+        int dataSize = mips.Sum(m => Blocks(m.Width) * Blocks(m.Height) * blockBytes);
 
         using var ms = new MemoryStream(128 + dataSize);
         using var w = new BinaryWriter(ms);
@@ -37,30 +55,41 @@ public static class DdsWriter
         w.Write(DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_MIPMAPCOUNT | DDSD_LINEARSIZE);
         w.Write(image.Height);
         w.Write(image.Width);
-        w.Write(Blocks(image.Width) * Blocks(image.Height) * 16);  // linear size of the top mip
+        w.Write(Blocks(image.Width) * Blocks(image.Height) * blockBytes);  // linear size of the top mip
         w.Write(0);                                            // depth
         w.Write(mips.Count);
         for (int i = 0; i < 11; i++) w.Write(0);               // reserved
 
         w.Write(32);                                           // pixel format dwSize
         w.Write(DDPF_FOURCC);
-        w.Write("DXT5"u8);                                     // fourCC
+        w.Write(bc1 ? "DXT1"u8 : "DXT5"u8);                    // fourCC
         w.Write(0);                                            // bit count (unused for FOURCC)
         w.Write(0); w.Write(0); w.Write(0); w.Write(0);        // RGBA masks (unused for FOURCC)
 
         w.Write(DDSCAPS_TEXTURE | DDSCAPS_COMPLEX | DDSCAPS_MIPMAP);
         w.Write(0); w.Write(0); w.Write(0); w.Write(0);        // caps2..reserved
 
-        foreach (var mip in mips) CompressBc3(mip, w);
+        foreach (var mip in mips) Compress(mip, w, bc1);
         return ms.ToArray();
     }
 
     private static int Blocks(int dim) => Math.Max(1, (dim + 3) / 4);
 
-    // ---------------------------------------------------------------- BC3 (DXT5)
+    private static bool IsOpaque(RgbaImage img)
+    {
+        var px = img.Pixels;
+        for (int i = 3; i < px.Length; i += 4) if (px[i] != 255) return false;
+        return true;
+    }
 
-    /// <summary>Compresses one image level to BC3, block by block. Pixels are BGRA in memory.</summary>
-    private static void CompressBc3(RgbaImage img, BinaryWriter w)
+    // ---------------------------------------------------------------- BC3 (DXT5) / BC1 (DXT1)
+
+    /// <summary>
+    /// Compresses one image level block by block. Pixels are BGRA in memory. BC1 is BC3's colour
+    /// half on its own; the encoder below always orders the endpoints for the opaque 4-colour
+    /// ramp, so no block ever selects BC1's transparent index.
+    /// </summary>
+    private static void Compress(RgbaImage img, BinaryWriter w, bool bc1)
     {
         int bx = Blocks(img.Width), by = Blocks(img.Height);
         Span<byte> r = stackalloc byte[16], g = stackalloc byte[16], b = stackalloc byte[16], a = stackalloc byte[16];
@@ -79,7 +108,7 @@ public static class DdsWriter
                         b[t] = img.Pixels[s]; g[t] = img.Pixels[s + 1]; r[t] = img.Pixels[s + 2]; a[t] = img.Pixels[s + 3];
                     }
                 }
-                WriteAlphaBlock(a, w);
+                if (!bc1) WriteAlphaBlock(a, w);
                 WriteColorBlock(r, g, b, w);
             }
         }
@@ -127,6 +156,9 @@ public static class DdsWriter
 
         ushort e0 = Pack565(rhi, ghi, bhi), e1 = Pack565(rlo, glo, blo);
         if (e0 < e1) (e0, e1) = (e1, e0);   // endpoint0 ≥ endpoint1 selects the opaque 4-colour ramp
+        // Equal endpoints (a flat block) are BC1's 3-colour mode, whose index 3 is transparent
+        // black; the tie-break below (strict <) then leaves every texel on index 0, so it is never
+        // selected.
 
         (int pr0, int pg0, int pb0) = Unpack565(e0);
         (int pr1, int pg1, int pb1) = Unpack565(e1);
@@ -162,20 +194,24 @@ public static class DdsWriter
 
     // ---------------------------------------------------------------- mip chain
 
-    private static List<RgbaImage> BuildMipChain(RgbaImage top)
+    private static List<RgbaImage> BuildMipChain(RgbaImage top, bool alphaIsCoverage)
     {
         var mips = new List<RgbaImage> { top };
         var current = top;
         while (current.Width > 1 || current.Height > 1)
         {
-            current = Halve(current);
+            current = Halve(current, alphaIsCoverage);
             mips.Add(current);
         }
         return mips;
     }
 
-    /// <summary>Box-filter downsample by 2, alpha-weighted so cutout edges do not darken.</summary>
-    private static RgbaImage Halve(RgbaImage src)
+    /// <summary>
+    /// Box-filter downsample by 2. With <paramref name="alphaIsCoverage"/> the colour is
+    /// alpha-weighted so cutout edges do not darken; without it every channel is a plain mean,
+    /// which is the only correct filter when alpha holds a normal's X or a team mask.
+    /// </summary>
+    private static RgbaImage Halve(RgbaImage src, bool alphaIsCoverage)
     {
         int w = Math.Max(1, src.Width / 2);
         int h = Math.Max(1, src.Height / 2);
@@ -193,16 +229,17 @@ public static class DdsWriter
                         int sx = Math.Min(x * 2 + dx, src.Width - 1);
                         int s = (sy * src.Width + sx) * 4;
                         int sa = src.Pixels[s + 3];
-                        b += src.Pixels[s] * sa; g += src.Pixels[s + 1] * sa; r += src.Pixels[s + 2] * sa;
-                        a += sa; wsum += sa; n++;
+                        int weight = alphaIsCoverage ? sa : 1;
+                        b += src.Pixels[s] * weight; g += src.Pixels[s + 1] * weight; r += src.Pixels[s + 2] * weight;
+                        a += sa; wsum += weight; n++;
                     }
                 }
                 int d = (y * w + x) * 4;
                 if (wsum > 0)
                 {
-                    px[d] = (byte)(b / wsum); px[d + 1] = (byte)(g / wsum); px[d + 2] = (byte)(r / wsum);
+                    px[d] = (byte)((b + wsum / 2) / wsum); px[d + 1] = (byte)((g + wsum / 2) / wsum); px[d + 2] = (byte)((r + wsum / 2) / wsum);
                 }
-                px[d + 3] = (byte)(a / n);
+                px[d + 3] = (byte)((a + n / 2) / n);
             }
         }
         return new RgbaImage { Width = w, Height = h, Pixels = px };

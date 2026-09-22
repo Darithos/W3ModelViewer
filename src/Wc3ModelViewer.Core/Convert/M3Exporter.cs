@@ -50,6 +50,38 @@ public sealed class M3ExportOptions
     /// <summary>Sample rate for baking animation keys.</summary>
     public int Fps { get; init; } = 30;
 
+    /// <summary>
+    /// Drop baked keys the game would interpolate to anyway — see <see cref="KeyReducer"/>. The
+    /// dense bake stays the reference: no kept curve deviates from it by more than
+    /// <see cref="KeyToleranceDeg"/> for rotations or <see cref="KeyToleranceUnits"/> for
+    /// positions at any sample time. Typically 90% of the .m3 goes: the HD murloc's 12.6 MB
+    /// became 1.3 MB, beside a hand-converted 1.8 MB.
+    /// </summary>
+    public bool ReduceKeys { get; init; } = true;
+
+    /// <summary>
+    /// Rotation tolerance for <see cref="ReduceKeys"/>, degrees, per bone. Errors add down a
+    /// chain, so the figure that matters is at the end of one: replaying the HD murloc's full and
+    /// reduced files (<c>MdxProbe --reducecheck</c>), the worst any bone strayed at a 50-unit
+    /// lever was 1.0 unit at this setting, 2.6 at 0.5° and 5.3 at 1° — while the file only grew
+    /// from 0.93 MB at 2° to 1.3 MB here. The tight setting is nearly free.
+    /// </summary>
+    public float KeyToleranceDeg { get; init; } = 0.25f;
+
+    /// <summary>
+    /// Position tolerance for <see cref="ReduceKeys"/>, in Warcraft III units (scaled with the
+    /// export, so the same figure serves a war3mod and an SC2-scale export). A footman is ~100
+    /// units tall; a twentieth of a unit is far under a pixel at any playable zoom.
+    /// </summary>
+    public float KeyToleranceUnits { get; init; } = 0.05f;
+
+    /// <summary>
+    /// Longest side an exported texture may have; larger ones are box-filtered down. 0 keeps the
+    /// source size. Reforged ships 2048² sets that weigh 5.6 MB each as BC3 — four of them per
+    /// unit — where Blizzard's own SC2 unit textures are 1024² or smaller.
+    /// </summary>
+    public int MaxTextureSize { get; init; } = 1024;
+
     /// <summary>Export geoset-visibility animation (GEOA) as layer colour tracks.</summary>
     public bool GeosetVisibility { get; init; } = true;
 
@@ -126,6 +158,9 @@ public sealed class M3ExportResult
 
     /// <summary>Texture paths parsed back out of <see cref="M3"/> — see <see cref="M3TextureAudit"/>.</summary>
     public List<string> TextureReferences { get; init; } = [];
+
+    /// <summary>What <see cref="M3ExportOptions.ReduceKeys"/> removed, or null when it was off.</summary>
+    public KeyReducer.Stats? KeyReduction { get; init; }
 }
 
 /// <summary>
@@ -265,7 +300,11 @@ public sealed class M3Exporter
 
         ReportTextureSources(textureCache, modelCascName);
 
-        return new M3ExportResult { M3 = m3, Textures = _textures, Log = _log, TextureReferences = refs };
+        return new M3ExportResult
+        {
+            M3 = m3, Textures = _textures, Log = _log, TextureReferences = refs,
+            KeyReduction = _opt.ReduceKeys ? KeyReduction : null,
+        };
     }
 
     /// <summary>
@@ -594,7 +633,7 @@ public sealed class M3Exporter
             DiffusePath = AddTexture(stem + "_diff.dds", image),
         };
         if (teamMask is not null)
-            mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, null));
+            mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, null), alphaIsData: true);
         _materials.Add(mat);
         return _materials.Count - 1;
     }
@@ -780,7 +819,7 @@ public sealed class M3Exporter
 
                 mat.DiffusePath = AddTexture(stem + "_diff.dds", set.Diffuse);
                 mat.SpecularPath = AddTexture(stem + "_spec.dds", set.Specular);
-                if (set.Normal is not null) mat.NormalPath = AddTexture(stem + "_norm.dds", set.Normal);
+                if (set.Normal is not null) mat.NormalPath = AddTexture(stem + "_norm.dds", set.Normal, alphaIsData: true);
                 if (set.Emissive is not null) mat.EmissivePath = AddTexture(stem + "_emis.dds", set.Emissive);
             }
         }
@@ -796,7 +835,7 @@ public sealed class M3Exporter
         {
             var hdDiffuse = _opt.ConvertPbr && hdLayer is not null
                 ? LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Diffuse) : null;
-            mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, hdDiffuse));
+            mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, hdDiffuse), alphaIsData: true);
         }
 
         _materials.Add(mat);
@@ -849,10 +888,15 @@ public sealed class M3Exporter
         return textures.Load(modelCascName, tex, _opt.TeamColor);
     }
 
-    private string AddTexture(string fileName, RgbaImage image)
+    /// <param name="alphaIsData">
+    /// The normal map (X in alpha) and the team texture (the mask in alpha): filtered plainly and
+    /// always BC3. Every other map's alpha is coverage — see <see cref="DdsWriter.Write"/>.
+    /// </param>
+    private string AddTexture(string fileName, RgbaImage image, bool alphaIsData = false)
     {
         if (!_textures.Any(t => t.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
-            _textures.Add(new ExportedTexture(fileName, DdsWriter.Write(image)));
+            _textures.Add(new ExportedTexture(fileName,
+                DdsWriter.Write(image, _opt.MaxTextureSize, alphaIsCoverage: !alphaIsData)));
         return fileName;
     }
 
@@ -1213,6 +1257,7 @@ public sealed class M3Exporter
             BakeBatchTracks(def, times);
             if (_opt.GeosetVisibility) BakeVisibilityTracks(def, times);
             BakeCameraTracks(def, times, boneIds);
+            if (_opt.ReduceKeys) ReduceTracks(def, boneIds);
 
             // Diagnostic stripping: keep only the requested track kind. Vec3Tracks holds both
             // location and scale tracks, so scale is filtered out by id in both partial modes.
@@ -1237,6 +1282,11 @@ public sealed class M3Exporter
 
             defs.Add(def);
         }
+
+        if (_opt.ReduceKeys && KeyReduction.KeysIn > 0)
+            _log.Add($"animation keys {KeyReduction.KeysIn:N0} -> {KeyReduction.KeysOut:N0} " +
+                     $"({100.0 * KeyReduction.Dropped / KeyReduction.KeysIn:0}% dropped); kept curves stay within " +
+                     $"{KeyReduction.MaxRotationDeg:0.00} deg / {KeyReduction.MaxVector / _opt.Scale:0.000} WC3 units of the full {_opt.Fps} fps bake");
 
         // Nothing to animate: a doodad the artist never keyed, or an export with every sequence
         // unticked. One empty looping Stand is the whole file's animation — SC2 then draws the
@@ -1277,6 +1327,60 @@ public sealed class M3Exporter
 
     private (uint Loc, uint Rot, uint Scl)[] _boneAnimIds = [];
     private Func<uint> _nextAnimId = () => 0;
+
+    /// <summary>Totals from <see cref="M3ExportOptions.ReduceKeys"/>, for the export report.</summary>
+    public KeyReducer.Stats KeyReduction { get; } = new();
+
+    /// <summary>
+    /// Thins every baked track of this sequence — see <see cref="KeyReducer"/>. Runs after all
+    /// the bakers so each kind is handled once, and before the diagnostic stripping so a partial
+    /// export measures the same as a full one. Emit-count bursts are not touched: they were never
+    /// resampled (see <see cref="BakeEmitterTracks"/>), and a burst is one key held for one frame.
+    /// </summary>
+    private void ReduceTracks(SeqDef def, (uint Loc, uint Rot, uint Scl)[] boneIds)
+    {
+        var stats = KeyReduction;
+        float posTol = _opt.KeyToleranceUnits * _opt.Scale;
+        // Vec3Tracks holds both positions and scales; a scale is unitless, so it takes the
+        // position tolerance as a fraction rather than a scaled distance.
+        var scaleIds = new HashSet<uint>(boneIds.Select(b => b.Scl));
+
+        for (int i = 0; i < def.Vec3Tracks.Count; i++)
+        {
+            var (id, frames, vals) = def.Vec3Tracks[i];
+            float tol = scaleIds.Contains(id) ? _opt.KeyToleranceUnits * 0.01f : posTol;
+            var (f, v) = KeyReducer.ReduceVec3(frames, vals, tol, stats);
+            def.Vec3Tracks[i] = (id, f, v);
+        }
+        for (int i = 0; i < def.QuatTracks.Count; i++)
+        {
+            var (id, frames, vals) = def.QuatTracks[i];
+            var (f, v) = KeyReducer.ReduceQuat(frames, vals, _opt.KeyToleranceDeg, stats);
+            def.QuatTracks[i] = (id, f, v);
+        }
+        for (int i = 0; i < def.FloatTracks.Count; i++)
+        {
+            // Emit rates: half a percent of the track's own range, so a 0->50 gate keeps its
+            // 33 ms edge while a gently varying rate loses its in-between samples.
+            var (id, frames, vals) = def.FloatTracks[i];
+            float range = vals.Max() - vals.Min();
+            var (f, v) = KeyReducer.ReduceFloat(frames, vals, MathF.Max(range * 0.005f, 1e-4f), stats);
+            def.FloatTracks[i] = (id, f, v);
+        }
+        for (int i = 0; i < def.ColorTracks.Count; i++)
+        {
+            // One 8-bit step: a GEOA fade re-quantised to 1/255 is the same fade.
+            var (id, frames, vals) = def.ColorTracks[i];
+            var (f, v) = KeyReducer.ReduceColor(frames, vals, 1f, stats);
+            def.ColorTracks[i] = (id, f, v);
+        }
+        for (int i = 0; i < def.FlagTracks.Count; i++)
+        {
+            var (id, frames, vals) = def.FlagTracks[i];
+            var (f, v) = KeyReducer.ReduceFlags(frames, vals, stats);
+            def.FlagTracks[i] = (id, f, v);
+        }
+    }
 
     /// <summary>
     /// The sequence a static export is written under. It holds no keys of its own and is never
