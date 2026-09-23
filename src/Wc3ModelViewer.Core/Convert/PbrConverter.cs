@@ -19,8 +19,11 @@ public sealed class SpecularSet
 /// Standard metallic→specular split with the dielectric F0 = 0.04 constant, tuned the way the
 /// Heroes of the Storm sets are (the closest shipping m3 content):
 /// <list type="bullet">
-/// <item><b>Diffuse</b>: albedo with the metallic part pulled out (a pure metal has no diffuse) and
-/// ambient occlusion folded in at half strength — SC2 has no AO input of its own.</item>
+/// <item><b>Diffuse</b>: albedo with a quarter of the metallic part pulled out, and ambient
+/// occlusion folded in lightly — SC2 has no AO input of its own. Physically a metal has no diffuse,
+/// but SC2 has no image-based reflection to light it with, so an honest metal renders black; these
+/// constants are set so an exported surface reads at the brightness the viewer shows, which is what
+/// people compare it against.</item>
 /// <item><b>Specular</b>: <c>lerp(0.04, albedo, metallic)</c> dimmed by roughness, since the m3
 /// standard material has a single specular intensity rather than a gloss map.</item>
 /// <item><b>Normal</b>: repacked to SC2's two-channel convention — X in alpha, Y in green — which
@@ -68,20 +71,30 @@ public static class PbrConverter
 
                 float b = src[i] / 255f, g = src[i + 1] / 255f, r = src[i + 2] / 255f;
 
-                // Diffuse: metals keep a remnant of tint (pure black metal looks wrong in SC2's
-                // simpler lighting), AO folded in at half strength.
-                float ao = 0.5f + occlusion * 0.5f;
-                float keep = 1 - metallic * 0.75f;
+                // Diffuse: metals keep most of their tint, and occlusion is folded in only lightly.
+                // Both constants were measured rather than chosen. Taking three quarters of the
+                // albedo away on metal and multiplying by 0.5 + occlusion/2 left the knight's
+                // pauldron at 21% of its Warcraft III brightness and his sword at 19% — the whole
+                // metal half of every Reforged unit, which is what "exported models look really
+                // dark, especially the metal" was. StarCraft II cannot pay that back: it has one
+                // specular intensity and no image-based reflection, so a physically-correct metal
+                // (no diffuse at all, lit only by reflection) simply reads black away from the
+                // highlight. Reforged's albedo also already has ambient shading painted into it, so
+                // the ORM's occlusion darkens a second time. `MdxProbe --pbr` prints these ratios.
+                float ao = 0.85f + occlusion * 0.15f;
+                float keep = 1 - metallic * 0.25f;
                 diffPx[i] = Pack(b * keep * ao);
                 diffPx[i + 1] = Pack(g * keep * ao);
                 diffPx[i + 2] = Pack(r * keep * ao);
                 diffPx[i + 3] = src[i + 3];                    // alpha passes through — mask or coverage
 
-                // Specular: F0 for dielectrics, albedo-tinted for metals, dimmed by roughness.
+                // Specular: F0 for dielectrics, albedo-tinted for metals, dimmed by roughness. The
+                // floor is what keeps a rough metal reading as metal rather than as painted stone —
+                // the sheen users recognise as "the metallic look" is this, not the diffuse.
                 float shine = (1 - roughness) * (1 - roughness);   // perceptual-ish falloff
-                float sB = (0.04f + (b - 0.04f) * metallic) * (0.25f + shine * 0.75f);
-                float sG = (0.04f + (g - 0.04f) * metallic) * (0.25f + shine * 0.75f);
-                float sR = (0.04f + (r - 0.04f) * metallic) * (0.25f + shine * 0.75f);
+                float sB = (0.04f + (b - 0.04f) * metallic) * (0.35f + shine * 0.65f);
+                float sG = (0.04f + (g - 0.04f) * metallic) * (0.35f + shine * 0.65f);
+                float sR = (0.04f + (r - 0.04f) * metallic) * (0.35f + shine * 0.65f);
                 specPx[i] = Pack(sB);
                 specPx[i + 1] = Pack(sG);
                 specPx[i + 2] = Pack(sR);

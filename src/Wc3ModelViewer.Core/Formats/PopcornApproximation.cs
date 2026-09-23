@@ -362,6 +362,7 @@ public static class PopcornApproximation
             StartAlpha = a0, MiddleAlpha = a1, EndAlpha = a2,
             StartScale = s.Size.Start * m, MiddleScale = s.Size.Middle * m, EndScale = s.Size.End * m,
             TextureId = TextureIndex(model, r.Texture), PriorityPlane = 0, ReplaceableId = 0,
+            TeamColoured = s.TeamColoured,
             Squirt = false, HeadCellStart = 0, HeadCellEnd = 0, HeadCellRepeat = 1,
             // An orbiting particle is hosted to its (spinning) emitter bone rather than left in
             // world space, so the bone carries it round.

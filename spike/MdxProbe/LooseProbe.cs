@@ -234,7 +234,11 @@ public static class LooseProbe
         string mname = Path.GetFileNameWithoutExtension(file);
         var opts = new M3ExportOptions { Lod = 0, ModelName = mname };
         var res = new M3Exporter(model, opts).Export(cache, "");
-        string d = Path.Combine(outDir, mname);
+        // The real Assets\ level the app writes, not just <name>\: the .m3 references its textures
+        // as `Assets/textures/*.dds` resolved from the MAP ROOT, so a folder missing that level
+        // hands SC2 a model whose every layer dangles — which it draws untextured rather than
+        // reporting. A probe export has to be droppable into a map exactly as the app's is.
+        string d = Path.Combine(outDir, mname, "Assets");
         string td = Path.Combine(d, opts.TextureFolder);
         Directory.CreateDirectory(td);
         File.WriteAllBytes(Path.Combine(d, mname + ".m3"), res.M3);

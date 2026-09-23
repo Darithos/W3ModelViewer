@@ -37,7 +37,20 @@ public sealed class M3ExportOptions
     /// <summary>Which LOD's geosets to export. The guide recommends LOD 1 for units.</summary>
     public int Lod { get; init; }
 
-    /// <summary>Uniform scale. 1.0 keeps native WC3 units — what Renee's war3mod expects.</summary>
+    /// <summary>
+    /// StarCraft II units per Warcraft III unit: the factor that lands an exported model at the
+    /// size StarCraft II's own art is built at (a unit around 2.3 SC2 units tall). Everything the
+    /// tool exists for ends up in StarCraft II, so this is what the export dialog's scale of 1.0
+    /// means; <c>1 / 0.025 = 40</c> goes the other way, to native Warcraft III units for a war3mod.
+    /// </summary>
+    public const float Sc2UnitsPerWc3Unit = 0.025f;
+
+    /// <summary>
+    /// Uniform scale, as a multiplier on <b>native Warcraft III units</b> — so 1.0 is what a
+    /// war3mod map expects and <see cref="Sc2UnitsPerWc3Unit"/> is StarCraft II's own size. This
+    /// stays in Warcraft III units because the key-reduction tolerance and the deviation the export
+    /// reports are both quoted in them; the dialog does the conversion from what the user typed.
+    /// </summary>
     public float Scale { get; init; } = 1f;
 
     /// <summary>
@@ -516,6 +529,13 @@ public sealed class M3Exporter
                  (_regions.Count(r => r.StaticAlpha < 0.01f) is var hidden && hidden > 0
                      ? $" ({hidden} statically hidden, kept hidden via visibility tracks)" : ""));
 
+        // Said in the units the user typed and in the ones the geometry is actually multiplied by,
+        // so "did my scale take?" is answerable from the export itself rather than by measuring the
+        // model in StarCraft II.
+        float typed = _opt.Scale / M3ExportOptions.Sc2UnitsPerWc3Unit;
+        _log.Add($"scale {typed:0.####} (StarCraft II) = {_opt.Scale:0.#####}x native Warcraft III units"
+                 + (Math.Abs(typed - 1f) < 1e-4f ? " — SC2's own art size" : ""));
+
         int cutouts = _regions.Count(r => r.Material.Blend == CompositeBlend.AlphaTest);
         if (_cutoutCoverage.Count > 0)
             _log.Add($"{cutouts} of {_cutoutCoverage.Count} transparent-flagged geosets are real cutouts " +
@@ -580,6 +600,15 @@ public sealed class M3Exporter
             var glowMask = glow ? MaterialCompositor.GlowMask(image) : null;
             if (glow && glowMask is null) { skipped++; continue; }
 
+            // A PopcornFX stand-in whose scripts read the player's colour is the same situation as
+            // a team-glow card, reached from the other direction: the art is a plain sprite and the
+            // *colour* is the player's. An item's light beam is the visible case — it follows the
+            // owner in Warcraft III, and used to export as a fixed white beam because the headless
+            // measuring run had no player to ask. Its own sprite becomes the mask, so StarCraft II
+            // multiplies the live colour by the beam's shape exactly as the bake does.
+            if (glowMask is null && e.TeamColoured && MaterialCompositor.SpriteMask(image) is { } spriteMask)
+                glowMask = spriteMask;
+
             _emitters.Add(new ExportEmitter
             {
                 Source = e,
@@ -603,6 +632,12 @@ public sealed class M3Exporter
     /// blend mode rather than run through the geoset cutout machinery.
     /// </summary>
     /// <summary>A sprite that contributes nothing itself — the player-colour channel draws it.</summary>
+    /// <remarks>
+    /// Opaque black, and it may only be used on an <b>additive</b> material. Additive ignores a
+    /// black texel, so the card shows nothing but the player colour the emissive channel adds. On
+    /// an alpha-blended material the same bitmap is a solid black quad — alpha 255 everywhere means
+    /// full coverage — and the beam then draws inside a black box.
+    /// </remarks>
     private static readonly RgbaImage BlackSprite = RgbaImage.Solid(8, 8, 0, 0, 0);
 
     private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image, TeamMask? teamMask)
@@ -613,8 +648,23 @@ public sealed class M3Exporter
             MdxParticleBlend.Modulate or MdxParticleBlend.Modulate2X => CompositeBlend.AlphaBlend,
             _ => CompositeBlend.AlphaBlend,
         };
+
+        // A card whose whole colour is the player's is a light source — an item's rarity beam, a
+        // hero glow, a revive beam — and it draws additive, whatever ramp the source layer used.
+        // Blizzard's own team-coloured glow card says the same: "Ghost Glow" on
+        // storm_hero_nova_base_holo is blend_mode add with an A-only emis1 at mode 4.
+        // This is not cosmetic. The art has moved into the mask and the diffuse left behind is
+        // opaque black, which an additive pass ignores and an alpha-blended pass draws as a solid
+        // black quad — the box that appeared around the item beam, while the sibling sprites of the
+        // same effect that happened to be additive looked right.
+        if (teamMask is not null) blend = CompositeBlend.Additive;
+        // The player-colour spelling of a sprite gets a stem of its own. Its diffuse is black and
+        // the art has moved into the mask, so it is a different texture under the same source file
+        // name — and both AddTexture and the reuse scan below key on that name, so sharing the stem
+        // would hand a plain emitter the blacked-out sprite of a team-coloured one.
         string stem = TexStem((uint)e.TextureId < (uint)_mdx.Textures.Count
-                              ? _mdx.Textures[e.TextureId].FileName : "", _materials.Count);
+                              ? _mdx.Textures[e.TextureId].FileName : "", _materials.Count)
+                    + (teamMask is not null ? "_tc" : "");
 
         for (int i = 0; i < _materials.Count; i++)
             if (_materials[i].IsParticle && _materials[i].DiffusePath == stem + "_diff.dds"

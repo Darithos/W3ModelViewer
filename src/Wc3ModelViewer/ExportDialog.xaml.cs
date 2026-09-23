@@ -50,10 +50,33 @@ public partial class ExportDialog : Window
         LodCombo.ItemsSource = lods.Select(l => l == 0 ? "LOD 0 (full)" : $"LOD {l}").ToList();
         LodCombo.SelectedIndex = Math.Max(0, lods.IndexOf(viewerLod));
 
+        // Everything that means the same thing for the next model comes back as it was left —
+        // porting a collection otherwise means retyping the scale on every single export. LOD and
+        // the geoset/sequence selections are properties of *this* model and are not restored.
+        //
+        // The scale box used to be in native Warcraft III units and is now in StarCraft II's, so a
+        // value an older build saved means something else. Convert it once — a stored 0.025 was
+        // asking for SC2 scale and becomes 1.0 — and mark the store, or the remembered number would
+        // silently come back forty times too small.
+        if (UserSettings.Get("export.scaleunit").Length == 0 && UserSettings.Get("export.scale").Length > 0)
+            UserSettings.SetMany(
+                ("export.scale", (UserSettings.GetFloat("export.scale", M3ExportOptions.Sc2UnitsPerWc3Unit)
+                                  / M3ExportOptions.Sc2UnitsPerWc3Unit)
+                                 .ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)),
+                ("export.scaleunit", "sc2"));
+        ScaleBox.Text = UserSettings.Get("export.scale", "1.0");
         // The export itself creates a <ModelName> subfolder (D3-exporter layout), so the
         // default here is just the collection root.
-        OutDirBox.Text = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Wc3Exports");
+        OutDirBox.Text = UserSettings.Get("export.outdir", Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Wc3Exports"));
+        M3Check.IsChecked = UserSettings.GetBool("export.m3", true);
+        GltfCheck.IsChecked = UserSettings.GetBool("export.gltf", false);
+        ConvertPbrCheck.IsChecked = UserSettings.GetBool("export.convertpbr", true);
+        GeosetVisCheck.IsChecked = UserSettings.GetBool("export.geoavis", true);
+        ReduceKeysCheck.IsChecked = UserSettings.GetBool("export.reducekeys", true);
+        VisibleOnlyCheck.IsChecked = UserSettings.GetBool("export.visibleonly", false);
+        TeamColorCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.teamcolor", 0), TeamColorCombo.Items.Count);
+        TexSizeCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.texsize", 2), TexSizeCombo.Items.Count);
 
         Title = $"Export {entry.Name} (.m3)";
     }
@@ -86,14 +109,19 @@ public partial class ExportDialog : Window
         // rest pose, under one empty Stand — the only way to export a model that was never
         // animated, and the way to drop the animation from one that was.
         var selected = _rows.Where(r => r.IsChecked).ToList();
+        // The box is in StarCraft II's scale, because that is where every model exported by this
+        // tool is going: 1.0 comes out the size SC2's own art is built at. The exporter underneath
+        // still counts in Warcraft III units — its key tolerance and the deviation it reports are
+        // quoted in them — so the conversion happens here, once.
         if (!float.TryParse(ScaleBox.Text.Trim(), System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out float scale)
-            || !float.IsFinite(scale) || scale <= 0)
+                            System.Globalization.CultureInfo.InvariantCulture, out float typedScale)
+            || !float.IsFinite(typedScale) || typedScale <= 0)
         {
             MessageBox.Show(this, "Scale must be a positive number.", "Export",
                             MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+        float scale = typedScale * M3ExportOptions.Sc2UnitsPerWc3Unit;
         if (OutDirBox.Text.Trim().Length == 0)
         {
             MessageBox.Show(this, "Pick an output folder.", "Export",
@@ -124,8 +152,26 @@ public partial class ExportDialog : Window
         OutputDir = OutDirBox.Text.Trim();
         ExportGltf = GltfCheck.IsChecked == true;
         ExportM3 = M3Check.IsChecked == true;
+
+        // Remembered on a real export only: a cancelled dialog was not a decision.
+        UserSettings.SetMany(
+            ("export.scale", ScaleBox.Text.Trim()),
+            ("export.scaleunit", "sc2"),
+            ("export.outdir", OutputDir),
+            ("export.m3", ExportM3 ? "1" : "0"),
+            ("export.gltf", ExportGltf ? "1" : "0"),
+            ("export.convertpbr", Options.ConvertPbr ? "1" : "0"),
+            ("export.geoavis", Options.GeosetVisibility ? "1" : "0"),
+            ("export.reducekeys", Options.ReduceKeys ? "1" : "0"),
+            ("export.visibleonly", VisibleOnlyCheck.IsChecked == true ? "1" : "0"),
+            ("export.teamcolor", TeamColorCombo.SelectedIndex.ToString()),
+            ("export.texsize", TexSizeCombo.SelectedIndex.ToString()));
+
         DialogResult = true;
     }
+
+    /// <summary>A remembered combo index is only valid while the list is still that long.</summary>
+    private static int Clamp(int index, int count) => count == 0 ? -1 : Math.Clamp(index, 0, count - 1);
 
     /// <summary>One sequence row: its index in the model, checkbox, and an editable export name.</summary>
     private sealed class SequenceRow(int index, string label, string defaultExportName) : INotifyPropertyChanged

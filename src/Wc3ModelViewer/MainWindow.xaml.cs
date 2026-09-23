@@ -139,11 +139,6 @@ public partial class MainWindow : Window
         enc.Save(fs);
     }
 
-    /// <summary>Where the last successfully opened install is remembered between runs.</summary>
-    private static string SettingsFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "W3ModelViewer", "install-path.txt");
-
     /// <summary>A Warcraft III folder is the one holding <c>.build.info</c>, which names the CASC build.</summary>
     private static bool IsInstallPath(string path) =>
         path.Length > 0 && File.Exists(Path.Combine(path, ".build.info"));
@@ -154,17 +149,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void DetectInstallPath()
     {
-        try
+        if (UserSettings.Get("install") is { Length: > 0 } saved && IsInstallPath(saved))
         {
-            if (File.Exists(SettingsFile) && File.ReadAllText(SettingsFile).Trim() is { Length: > 0 } saved
-                && IsInstallPath(saved))
-            {
-                InstallPath.Text = saved;
-                return;
-            }
+            InstallPath.Text = saved;
+            return;
         }
-        catch (IOException) { /* a remembered path is a convenience; detection below still runs */ }
-        catch (UnauthorizedAccessException) { }
 
         string[] candidates =
         [
@@ -179,16 +168,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static void RememberInstallPath(string path)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(SettingsFile)!);
-            File.WriteAllText(SettingsFile, path);
-        }
-        catch (IOException) { /* not being able to remember is not worth interrupting the user for */ }
-        catch (UnauthorizedAccessException) { }
-    }
+    private static void RememberInstallPath(string path) => UserSettings.Set("install", path);
 
     // Supersampling factor: the viewport renders at this multiple of its on-screen size, then the Viewbox
     // scales it down. Higher = crisper textures (WPF Viewport3D under-samples at 1:1) at ~factor^2 cost.
