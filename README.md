@@ -42,7 +42,21 @@ Working end to end:
 - **.m3 export (StarCraft II)** — mesh, skeleton, baked animations, attachments, cameras, GEOA
   visibility, PBR→specular texture conversion, written directly by the app: **no Blender, no
   add-ons, no external tools**. Verified in the StarCraft II editor: models load, animate and
-  render textured.
+  render textured. The PBR split is tuned so a surface exports at the brightness the viewer shows
+  it at, which is the comparison anyone actually makes. Physically a metal has no diffuse at all,
+  but StarCraft II has one specular intensity and no image-based reflection to light one with, so
+  taking the metallic part out honestly left the knight's pauldron at 21% of its Warcraft III
+  brightness and his sword at 19% — the whole metal half of every Reforged unit. Metal now keeps
+  three quarters of its albedo and the specular floor carries the sheen; `MdxProbe --pbr` prints
+  the per-texture ratio.
+- **Export options are remembered** — scale, output folder, texture size and the rest come back as
+  they were left, so porting a collection does not mean retyping the scale on every model. LOD, the
+  sequence list and the geoset selection are properties of the model in front of you and are not
+  restored.
+- **Scale is in StarCraft II's units** — everything this tool exports ends up in StarCraft II, so
+  **1.0 is SC2's own art size** (a unit around 2.3 SC2 units tall) rather than a Warcraft III one.
+  Type `40` for native Warcraft III units, which is what a war3mod map wants. The export log states
+  the scale both ways, so a model that came out the wrong size says so in its own report.
 - **Copy/paste-ready export layout** — the export folder holds an `Assets\` folder containing
   `<Name>.m3` and `textures\*.dds`, mirroring the references baked into the file
   (`Assets/textures/*.dds`) exactly. Merge that one folder into your map or mod root and
@@ -71,9 +85,17 @@ Working end to end:
   the mask in three different places and all three are read: classic units stack an opaque
   `replaceableId 1` layer under the diffuse (mask = `1 - diffuse.a`), Reforged HD units put it in
   the **alpha channel of the ORM map**, and team glow is the falloff of the game's own
-  `TeamGlow<nn>.blp`. It lands in SC2 as `blend_mode_emis* = 4`, "Team Color Emissive Add" — the
+  `TeamGlow<nn>.blp`. A **PopcornFX effect** is a fourth place, and the only one that declares
+  nothing: nothing in the bake says it is team-coloured, so the export watches its scripts run and
+  routes a layer that reads `__a_Game.TeamColor` through the same channel — 166 of 11,259 drawing
+  layers across the archive, among them every item's rarity light beam, the revive beams and the
+  Ancient of Wind. It all lands in SC2 as `blend_mode_emis* = 4`, "Team Color Emissive Add" — the
   mechanism 1,204 of Blizzard's own Heroes materials use. Measured, not assumed; see
-  `docs/mdx-format-verified.md` §5.
+  `docs/mdx-format-verified.md` §5. A classic mask is accepted on its own terms rather than the
+  Reforged one's: Warcraft III blends `team x (1 - a)` continuously, so a soft midtone mask is
+  ordinary art, and demanding the bimodal shape an authored ORM alpha has used to reject 23 of 705
+  classic team materials — `altarofkings`, both Pandaren Brewmasters, the sea turtles — which then
+  exported **black**, because the player's contribution had already been taken out of the diffuse.
 - **Billboards** — cards that Warcraft III turns to face the camera (the priest's staff orb, most
   spell glows) face it in the viewer and in StarCraft II. They export as `BBSC` entries: a full
   billboard becomes type 6, and a vertical-axis (Lock Z) billboard becomes type 2. No re-orientation

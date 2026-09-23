@@ -152,6 +152,9 @@ if (args.Contains("--symmetry"))
 }
 
 // --teamcolor [n] censuses where the team-colour signal lives across n models, SD and HD.
+// --teamcolor --rejects [n] counts the materials that declare a player colour and get no mask —
+// the silent drop, which renders black in SC2. --teamcolor --maskdbg <model|file> walks one
+// model's decision, loose custom models included.
 if (args.Contains("--teamcolor"))
 {
     int ti = Array.IndexOf(args, "--teamcolor");
@@ -164,6 +167,7 @@ if (args.Contains("--teamcolor"))
         return MdxProbe.TeamProbe.Composites(install, rest[0], rest[1],
                                              rest.Length > 2 && int.TryParse(rest[2], out int cs) ? cs : 0);
     if (args.Contains("--sweep")) return MdxProbe.TeamProbe.Sweep(install, rest.Length > 0 ? int.Parse(rest[0]) : 25);
+    if (args.Contains("--rejects")) return MdxProbe.TeamProbe.Rejects(install, rest.Length > 0 ? int.Parse(rest[0]) : 400);
     if (args.Contains("--glow")) return MdxProbe.TeamProbe.Glow(install, rest.Length > 0 ? int.Parse(rest[0]) : 400);
     if (args.Contains("--rawtex")) return MdxProbe.TeamProbe.RawTex(install, rest[0], rest[1]);
     if (rest.Length > 0 && !int.TryParse(rest[0], out _)) return MdxProbe.TeamProbe.Slots(install, rest);
@@ -729,6 +733,18 @@ if (args.Contains("--blppairs")) return MdxProbe.BlpPairs.Run(install);
 
 // --layers <cascPath> dumps every material's layers: filter mode, shading flags, slot table and
 // the diffuse alpha histogram — the evidence for what a layer's alpha channel actually means.
+// --pbr <model…> measures what the PBR→specular conversion does to each texture's brightness.
+// --pbr --sprites <textureName…> reports which particle sprites are greyscale enough to be handed
+// to StarCraft II's player-colour channel whole.
+if (args.Contains("--pbr"))
+{
+    int bi = Array.IndexOf(args, "--pbr");
+    var rest = args.Skip(bi + 1).Where(a => !a.StartsWith("--")).ToArray();
+    if (rest.Length == 0) { Console.WriteLine("usage: --pbr [--sprites] <cascPath|file|texture> [more…]"); return 1; }
+    return args.Contains("--sprites") ? MdxProbe.PbrProbe.Sprites(install, rest)
+                                      : MdxProbe.PbrProbe.Run(install, rest);
+}
+
 if (args.Contains("--layers"))
 {
     int li = Array.IndexOf(args, "--layers");
@@ -1489,7 +1505,9 @@ if (args.Contains("--exportto"))
         Console.WriteLine("   popcorn: " + note);
     var opts = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = 0, ModelName = mname, Scale = sc, TeamColor = slot };
     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(tex, cascPath);
-    string d = Path.Combine(outRoot, mname);
+    // The Assets\ level the app writes — the .m3's `Assets/textures/*.dds` references resolve from
+    // the map root, so an export missing it is untextured in SC2 with nothing reported.
+    string d = Path.Combine(outRoot, mname, "Assets");
     string td = Path.Combine(d, opts.TextureFolder);
     Directory.CreateDirectory(td);
     File.WriteAllBytes(Path.Combine(d, mname + ".m3"), res.M3);

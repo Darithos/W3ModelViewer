@@ -367,15 +367,59 @@ public static class MaterialCompositor
             if (img is null) continue;
             return FromAlpha(img, invert: true);
         }
+
+        // A replaceable-1 layer with nothing drawn over it — no diffuse in the material at all, or
+        // none this install can resolve — is a surface that is *entirely* the player's colour: a
+        // banner, a flag panel, a floor decal. There is no per-texel mask to recover because every
+        // texel is masked. Returning null here instead would be the worst of both worlds, since
+        // Compose has already replaced that flat fill with black, so the surface would export as a
+        // solid black panel rather than the player's colour.
+        if (hasTeamLayer) return Solid(255);
         return null;
     }
+
+    /// <summary>
+    /// A uniform mask — the whole surface at one strength. One 4x4 block, because that is the unit
+    /// a block-compressed DDS is made of and the export writes every mask as one.
+    /// </summary>
+    private static TeamMask Solid(byte value) => new()
+    {
+        Width = 4, Height = 4, Values = Enumerable.Repeat(value, 16).ToArray(),
+    };
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<RgbaImage, TeamMask?[]> MaskCache = new();
 
     /// <summary>
-    /// An image's alpha channel as a mask, or null when it carries no usable signal — all-empty
-    /// (nothing is player-coloured) or all-opaque (an unauthored placeholder map).
+    /// An image's alpha channel as a mask, or null when it carries no usable signal.
     /// </summary>
+    /// <param name="invert">
+    /// True for the <b>classic</b> reading, where the mask is <c>1 - alpha</c> of the diffuse drawn
+    /// over a replaceable-1 fill; false for the <b>Reforged</b> one, where it is the ORM's alpha.
+    /// </param>
+    /// <remarks>
+    /// The two readings need <i>different</i> acceptance rules, and conflating them cost the
+    /// classic path real art.
+    /// <para>
+    /// <b>Reforged</b> has to prove itself: every HD layer owns an ORM whether or not anything on
+    /// it is player-coloured, so the alpha channel alone does not say the author meant a mask. The
+    /// 11 placeholder ORMs (of 837) whose alpha is uniformly opaque would team-colour a whole head
+    /// of hair. Demanding both dark and bright texels — a bimodal, painted-on selection — is what
+    /// separates an authored mask from an unauthored channel.
+    /// </para>
+    /// <para>
+    /// <b>Classic</b> has already proved itself before this is ever called: the material stacks an
+    /// explicit <c>replaceable 1</c> layer under the diffuse, which is the author stating outright
+    /// that the player's colour shows through. And Warcraft III blends it <i>continuously</i> —
+    /// <c>team x (1 - a)</c> — so a soft, midtone mask is perfectly ordinary art, not a defect.
+    /// Applying the bimodal rule here rejected any mask whose team region never reaches alpha 63:
+    /// 23 of 705 classic team materials across 580 stock unit and building models, among them
+    /// <c>altarofkings</c>, both Pandaren Brewmasters and the sea turtles — and, because
+    /// <see cref="Compose"/> has by then already subtracted the player's contribution to black,
+    /// those surfaces exported <b>black</b> rather than merely uncoloured. All the classic reading
+    /// has to establish is that some texel is masked at all; <c>TeamMask.Coverage</c> throws out
+    /// the ones too small to be worth a texture.
+    /// </para>
+    /// </remarks>
     private static TeamMask? FromAlpha(RgbaImage img, bool invert)
     {
         // Scanning a 2048-square ORM per geoset per rebuild is real time, and the answer only
@@ -388,18 +432,22 @@ public static class MaterialCompositor
         int n = img.Pixels.Length / 4;
         if (n == 0) return null;
         var values = new byte[n];
-        int lo = 0, hi = 0;
+        int lo = 0, hi = 0, any = 0;
         for (int i = 0; i < n; i++)
         {
             byte a = img.Pixels[i * 4 + 3];
             byte v = invert ? (byte)(255 - a) : a;
             values[i] = v;
             if (v < 64) lo++; else if (v > 192) hi++;
+            if (v > 8) any++;
         }
         // Long arithmetic on purpose: Definitive Edition ships 2048-square ORMs, and 3.9 million
         // dark texels times 1000 overflows an int to negative, which silently rejected every DE
         // mask (Uther's tabard stayed white in all eight player colours).
-        if ((long)hi * 1000 < n || (long)lo * 1000 < n) return null;
+        bool usable = invert
+            ? any > 0
+            : (long)hi * 1000 >= n && (long)lo * 1000 >= n;
+        if (!usable) return null;
         return slot[k] = new TeamMask { Width = img.Width, Height = img.Height, Values = values };
     }
 
@@ -415,6 +463,52 @@ public static class MaterialCompositor
     /// empty.
     /// </remarks>
     public static TeamMask? GlowMask(RgbaImage glow) => FromBrightness(glow);
+
+    /// <summary>
+    /// A particle sprite as a player-colour mask: how much light the card puts on screen at each
+    /// texel, which is what the live colour has to be multiplied by.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="GlowMask"/> this folds the alpha in as well. A glow card's art is the
+    /// colour itself and its alpha is flat; an ordinary sprite carries its shape in whichever
+    /// channel its blend mode reads — an additive beam in its RGB, an alpha-blended one in its
+    /// alpha — and a mask that ignored either would spill colour into the card's empty corners.
+    /// <para>
+    /// Null when the card is blank, and null when the art carries <b>colour of its own</b>. A mask
+    /// is a single channel, so handing the player's colour the whole card only reproduces what the
+    /// effect drew if the art was greyscale to begin with — which is what the effects that ask for
+    /// a player colour use, 24 of the 32 sprites involved saying so in their file name
+    /// (<c>FlareSimple_BW</c>, <c>HeroGlow_BW</c>). A sprite with its own hue would come out
+    /// stripped of it, so it keeps its colours and forgoes the live channel.
+    /// </para>
+    /// </remarks>
+    public static TeamMask? SpriteMask(RgbaImage sprite)
+    {
+        int n = sprite.Pixels.Length / 4;
+        if (n == 0) return null;
+        var values = new byte[n];
+        int any = 0;
+        long satSum = 0, satWeight = 0;
+        for (int i = 0; i < n; i++)
+        {
+            int o = i * 4;
+            int b = sprite.Pixels[o], g = sprite.Pixels[o + 1], r = sprite.Pixels[o + 2];
+            int lum = Math.Max(b, Math.Max(g, r));
+            byte v = (byte)(lum * sprite.Pixels[o + 3] / 255);
+            values[i] = v;
+            if (v > 8) any++;
+            // Saturation weighted by how much the texel contributes: the transparent margin of a
+            // card is arbitrary and must not decide whether its art is coloured.
+            if (lum > 16)
+            {
+                satSum += (long)(lum - Math.Min(b, Math.Min(g, r))) * v;
+                satWeight += v;
+            }
+        }
+        if (any == 0) return null;
+        if (satWeight > 0 && satSum / satWeight > 40) return null;      // ~16% saturation
+        return new TeamMask { Width = sprite.Width, Height = sprite.Height, Values = values };
+    }
 
     private static TeamMask? FromBrightness(RgbaImage img)
     {

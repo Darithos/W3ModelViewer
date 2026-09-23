@@ -91,7 +91,7 @@
                        ToolTip="Multiplies all geometry, bone and animation positions"/>
             <StackPanel Orientation="Horizontal">
                 <TextBox x:Name="ScaleBox" Width="70" Padding="4" Text="1.0"/>
-                <TextBlock Text="1.0 = native WC3 units (war3mod maps) · ~0.025 for SC2-native scale"
+                <TextBlock Text="1.0 = StarCraft II scale · 40 = native WC3 units (war3mod maps)"
                            Foreground="#889" VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
 

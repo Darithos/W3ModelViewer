@@ -152,6 +152,8 @@ public static class PkRunProbe
     {
         var files = Directory.GetFiles(bakeDir, "*.pkb").OrderBy(f => f).Take(limit).ToList();
         int ok = 0, failed = 0, empty = 0;
+        int teamLayers = 0, drawLayers = 0, teamBakes = 0;
+        var teamSprites = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var unsupported = new Dictionary<string, int>();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         long totalParticles = 0;
@@ -176,6 +178,26 @@ public static class PkRunProbe
                     if (Environment.GetEnvironmentVariable("PK_LIST_EMPTY") is not null)
                         Console.WriteLine($"  empty: {Path.GetFileName(f)}  renderers={hasRenderer} slots={def.Slots.Count} warnings={def.Warnings.Count}");
                 }
+                // Which bakes ask the game for the player's colour. The export routes those to
+                // StarCraft II's live channel, so the count must be a small, plausible minority —
+                // a flag that fires on nearly every layer would mean it is reading something else.
+                int drawing = fx.Slots.Count(s => s is not null && s.Def.Renderers.Count > 0);
+                int teamed = fx.Slots.Count(s => s is { ReadsTeamColor: true } && s.Def.Renderers.Count > 0);
+                teamLayers += teamed;
+                drawLayers += drawing;
+                if (teamed > 0)
+                {
+                    teamBakes++;
+                    // The export hands a team-coloured layer's own sprite to StarCraft II as the
+                    // mask and lets the engine supply the colour. That is only exact if the art
+                    // carries no colour of its own, so name every sprite it applies to.
+                    foreach (var s in fx.Slots)
+                        if (s is { ReadsTeamColor: true })
+                            foreach (var r in s.Def.Renderers)
+                                if (r.Texture.Length > 0) teamSprites.Add(Path.GetFileName(r.Texture));
+                    if (teamBakes <= 12)
+                        Console.WriteLine($"  team-coloured: {Path.GetFileName(f),-44} {teamed}/{drawing} drawing layer(s)");
+                }
                 foreach (string u in fx.Unsupported) unsupported[u] = unsupported.GetValueOrDefault(u) + 1;
                 ok++;
             }
@@ -186,6 +208,8 @@ public static class PkRunProbe
             }
         }
         Console.WriteLine($"\n{files.Count} bakes in {sw.Elapsed.TotalSeconds:0.0}s: {ok} ran, {failed} failed, {empty} drew nothing in 3 s; mean peak {totalParticles / Math.Max(ok, 1)} particles");
+        Console.WriteLine($"  player-colour: {teamLayers:N0} of {drawLayers:N0} drawing layers, across {teamBakes:N0} bakes");
+        Console.WriteLine($"  sprites on those layers ({teamSprites.Count}): {string.Join(", ", teamSprites)}");
         foreach (var kv in unsupported.OrderByDescending(k => k.Value).Take(30)) Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
         return failed == 0 ? 0 : 1;
     }

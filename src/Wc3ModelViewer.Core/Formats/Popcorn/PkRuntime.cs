@@ -34,6 +34,15 @@ public sealed class PkLayerState
     public int LifeRatioField { get; init; } = -1;
     public int InvLifeField { get; init; } = -1;
 
+    /// <summary>
+    /// Set once any of this layer's scripts reads <c>__a_Game.TeamColor</c> — the effect is asking
+    /// the game for the player's colour, which is how Warcraft III team-colours an item's light
+    /// beam or a hero's glow. Only the scripts know: nothing in the bake's header declares it.
+    /// StarCraft II has its own live player colour, so the export routes these through it rather
+    /// than baking whatever colour the measurement happened to run with.
+    /// </summary>
+    public bool ReadsTeamColor { get; set; }
+
     public int Allocate()
     {
         if (Count == Capacity)
@@ -412,6 +421,7 @@ public sealed class PkEffectInstance
                 case PkOp.Load:
                 {
                     var (kind, index) = ins.Slot < plan.Externals.Length ? plan.Externals[ins.Slot] : (Bind.Zero, 0);
+                    if (kind == Bind.AttrTeamColor) st.ReadsTeamColor = true;
                     PkValue v = kind switch
                     {
                         Bind.Field => st.Fields[index][particle],

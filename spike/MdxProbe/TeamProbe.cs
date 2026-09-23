@@ -121,7 +121,8 @@ public static class TeamProbe
                     var mdl = MdxReader.Read(raw);
                     var opt = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = 0, ModelName = entry.Name };
                     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opt).Export(textures, entry.CascName);
-                    int t = res.Textures.Count(x => x.FileName.EndsWith("_team.dds", StringComparison.OrdinalIgnoreCase));
+                    // Names carry a content hash since the flat texture folder landed: "<stem>_team_<hash>.dds".
+                    int t = res.Textures.Count(x => x.FileName.Contains("_team_", StringComparison.OrdinalIgnoreCase));
                     models++; ok++;
                     if (t > 0) { withTeam++; teamTex += t; }
                 }
@@ -238,6 +239,92 @@ public static class TeamProbe
     }
 
     /// <summary>
+    /// Counts the materials that <i>declare</i> a player-colour signal but get no mask out of
+    /// <see cref="MaterialCompositor.TeamMaskOf"/> — the silent drop, which renders black in
+    /// StarCraft II because Compose has already subtracted the player's contribution.
+    /// </summary>
+    /// <remarks>
+    /// A material declares the signal three ways: a replaceable-1 fill under a diffuse (classic),
+    /// a replaceable-2 glow card, or an HD PBR layer with an ORM. This is the before/after number
+    /// for any change to the acceptance test.
+    /// </remarks>
+    public static int Rejects(string install, int limit)
+    {
+        using var storage = new Wc3Storage(install);
+        var index = Wc3AssetIndex.FromNames(storage.EnumerateAll());
+
+        foreach (var set in new[] { Wc3ArtSet.Classic, Wc3ArtSet.Reforged })
+        {
+            int models = 0, declared = 0, masked = 0, dropped = 0, droppedModels = 0;
+            var byKind = new Dictionary<string, int>();
+            var examples = new List<string>();
+
+            // Units and buildings: where player colour lives. The alphabetical head of the whole
+            // storage is spell effects, whose every HD material owns an ORM and almost none a mask,
+            // which drowns the signal this census exists to show.
+            foreach (var entry in index.Models
+                         .Where(m => !m.IsPortrait && m.ArtSet == set
+                                  && (m.RelativePath.StartsWith("units", StringComparison.OrdinalIgnoreCase)
+                                   || m.RelativePath.StartsWith("buildings", StringComparison.OrdinalIgnoreCase)))
+                         .Take(limit))
+            {
+                var raw = storage.TryReadFile(entry.CascName);
+                if (raw is null) continue;
+                MdxModel mdl;
+                try { mdl = MdxReader.Read(raw); } catch { continue; }
+                var cache = new Wc3TextureCache(storage) { PreferHd = set == Wc3ArtSet.Reforged };
+                models++;
+                bool hurt = false;
+
+                foreach (var mat in mdl.Materials)
+                {
+                    string? kind = DeclaredSignal(mdl, mat);
+                    if (kind is null) continue;
+                    declared++;
+                    TeamMask? mask;
+                    try { mask = MaterialCompositor.TeamMaskOf(mdl, mat, cache, entry.CascName); }
+                    catch { continue; }
+                    if (mask is not null && mask.Coverage >= 0.0005f) { masked++; continue; }
+                    dropped++;
+                    hurt = true;
+                    byKind[kind] = byKind.GetValueOrDefault(kind) + 1;
+                    if (examples.Count < 15) examples.Add($"{entry.Name} ({kind})");
+                }
+                if (hurt) droppedModels++;
+            }
+
+            Console.WriteLine($"--- {set} ---");
+            Console.WriteLine($"  {models:N0} models, {declared:N0} materials declare a player colour: "
+                              + $"{masked:N0} get a mask, {dropped:N0} DROPPED ({(declared == 0 ? 0 : dropped * 100.0 / declared):0.0}%)");
+            Console.WriteLine($"  {droppedModels:N0} models lose at least one team material");
+            foreach (var (k, c) in byKind.OrderByDescending(p => p.Value))
+                Console.WriteLine($"    {k,-22} {c,5}");
+            foreach (string e in examples.Distinct().Take(10)) Console.WriteLine("    e.g. " + e);
+        }
+        return 0;
+    }
+
+    /// <summary>Which way this material says it carries player colour, or null for none.</summary>
+    private static string? DeclaredSignal(MdxModel model, MdxMaterial mat)
+    {
+        foreach (var l in mat.Layers)
+            if (l.IsPbr && (uint)l.Slot(MdxTextureSlot.Orm) < (uint)model.Textures.Count) return "hd orm";
+        foreach (var l in mat.Layers)
+        {
+            if ((uint)l.DiffuseTextureId >= (uint)model.Textures.Count) continue;
+            if (model.Textures[l.DiffuseTextureId].IsTeamGlow) return "glow (repl 2)";
+        }
+        foreach (var l in mat.Layers)
+        {
+            if ((uint)l.DiffuseTextureId >= (uint)model.Textures.Count) continue;
+            if (model.Textures[l.DiffuseTextureId].IsTeamColor) return "classic (repl 1)";
+        }
+        foreach (var l in mat.Layers)
+            if (l.Slot(MdxTextureSlot.TeamColor) >= 0) return "team slot";
+        return null;
+    }
+
+    /// <summary>
     /// Walks TeamMaskOf's decision for one model step by step: which layer it stops at, what it
     /// loads for the ORM slot, and the lo/hi texel counts FromAlpha would see.
     /// </summary>
@@ -245,7 +332,15 @@ public static class TeamProbe
     {
         using var storage = new Wc3Storage(install);
         var cache = new Wc3TextureCache(storage);
-        var raw = storage.TryReadFile(name);
+        // A path that exists on disk is a loose custom model; its own folder has to be searched too.
+        byte[]? raw;
+        if (File.Exists(name))
+        {
+            raw = File.ReadAllBytes(name);
+            cache.LocalRoots.Add(Path.GetDirectoryName(Path.GetFullPath(name))!);
+            name = "";
+        }
+        else raw = storage.TryReadFile(name);
         if (raw is null) { Console.WriteLine("NOT FOUND " + name); return 1; }
         var model = MdxReader.Read(raw);
         for (int mi = 0; mi < model.Materials.Count; mi++)
@@ -266,6 +361,36 @@ public static class TeamProbe
                 for (int i = 3; i < img.Pixels.Length; i += 4)
                     if (img.Pixels[i] < 64) lo++; else if (img.Pixels[i] > 192) hi++;
                 Console.WriteLine($"   n={n} lo={lo} ({lo * 100.0 / n:0.00}%) hi={hi} ({hi * 100.0 / n:0.00}%) -> FromAlpha {(hi * 1000 < n || lo * 1000 < n ? "REJECTS" : "accepts")}");
+            }
+
+            // Classic: the mask is 1 - the alpha of the diffuse drawn over a replaceable-1 fill.
+            // Same accept/reject test, run on the inverted channel, plus where the mask's weight
+            // actually sits — a custom model can carry its team region at half alpha rather than 0.
+            bool teamLayer = mat.Layers.Any(l => (uint)l.DiffuseTextureId < (uint)model.Textures.Count
+                                              && model.Textures[l.DiffuseTextureId].IsTeamColor);
+            bool glowLayer = mat.Layers.Any(l => (uint)l.DiffuseTextureId < (uint)model.Textures.Count
+                                              && model.Textures[l.DiffuseTextureId].IsTeamGlow);
+            Console.WriteLine($"   classic: teamLayer={teamLayer} glowLayer={glowLayer}");
+            foreach (var layer in mat.Layers)
+            {
+                int did = layer.DiffuseTextureId;
+                if ((uint)did >= (uint)model.Textures.Count) continue;
+                var dtex = model.Textures[did];
+                if (dtex.IsTeamColor || dtex.IsTeamGlow || dtex.FileName.Length == 0) continue;
+                var dimg = cache.Load(name, dtex);
+                if (dimg is null) continue;
+                int dn = dimg.Pixels.Length / 4, dlo = 0, dhi = 0;
+                var buckets = new int[8];
+                for (int i = 3; i < dimg.Pixels.Length; i += 4)
+                {
+                    int v = 255 - dimg.Pixels[i];              // inverted: this is the mask
+                    buckets[v / 32]++;
+                    if (v < 64) dlo++; else if (v > 192) dhi++;
+                }
+                Console.WriteLine($"   diffuse '{Path.GetFileName(dtex.FileName)}' {dimg.Width}x{dimg.Height} filter={layer.FilterMode}");
+                Console.WriteLine("     mask(1-a) " + string.Join(" ", buckets.Select((c, i) => $"{i * 32}+:{c * 100.0 / dn:0.0}%")));
+                Console.WriteLine($"     lo={dlo * 100.0 / dn:0.00}% hi={dhi * 100.0 / dn:0.00}% -> FromAlpha "
+                                  + ((long)dhi * 1000 < dn || (long)dlo * 1000 < dn ? "REJECTS" : "accepts"));
             }
             var mask = MaterialCompositor.TeamMaskOf(model, mat, cache, name);
             Console.WriteLine($"   TeamMaskOf => {(mask is null ? "null" : $"{mask.Width}x{mask.Height} coverage {mask.Coverage * 100:0.0}%")}");

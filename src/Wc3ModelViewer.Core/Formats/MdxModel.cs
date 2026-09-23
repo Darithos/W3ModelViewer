@@ -415,6 +415,14 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     public int ReplaceableId { get; init; }
     public bool Squirt { get; init; }
 
+    /// <summary>
+    /// The player's colour is this emitter's colour. A <c>PRE2</c> emitter says so with
+    /// <see cref="ReplaceableId"/> 1 or 2; a PopcornFX stand-in says so here, because its bake
+    /// declares nothing and only running the scripts reveals that they read
+    /// <c>__a_Game.TeamColor</c> — how Warcraft III colours an item's light beam.
+    /// </summary>
+    public bool TeamColoured { get; init; }
+
     public MdxTrack<float>? SpeedTrack { get; init; }
     public MdxTrack<float>? VariationTrack { get; init; }
     public MdxTrack<float>? LatitudeTrack { get; init; }

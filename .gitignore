@@ -25,3 +25,5 @@ Desktop.ini
 # Local test corpora: downloaded custom models and their exports.
 sdcustommodels/
 sdcustommodels-export/
+reference/
+Simple Edits Pack/

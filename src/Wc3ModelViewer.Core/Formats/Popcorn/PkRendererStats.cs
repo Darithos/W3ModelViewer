@@ -71,6 +71,13 @@ public sealed class PkRendererStats
     public float OrbitRadius { get; set; }
 
     /// <summary>
+    /// This renderer's layer reads <c>__a_Game.TeamColor</c>: its colour is the player's, and the
+    /// measured colour above is only what it comes to under the white the run was given. The
+    /// export hands such a renderer to StarCraft II's own player-colour channel instead.
+    /// </summary>
+    public bool TeamColoured { get; set; }
+
+    /// <summary>
     /// Runs <paramref name="def"/> for up to <paramref name="seconds"/> and measures every drawable
     /// billboard renderer. Renderers that never draw a particle are left out.
     /// </summary>
@@ -85,6 +92,7 @@ public sealed class PkRendererStats
         var fx = new PkEffectInstance(def, new PkEnvironment { ColorMultiplier = colourMultiplier ?? Vector4.One }, seed);
         var tracks = new Dictionary<(PkRendererDef, long), Track>();
         var order = new List<(PkRendererDef Renderer, string Layer)>();
+        var teamLayers = new HashSet<string>(StringComparer.Ordinal);
 
         float t = 0;
         for (; t < seconds && fx.IsAlive; t += dt)
@@ -92,7 +100,11 @@ public sealed class PkRendererStats
             fx.Update(dt);
             foreach (var st in fx.Slots)
             {
-                if (st is null || st.Count == 0) continue;
+                if (st is null) continue;
+                // Checked before the empty-slot skip: a layer that has already run and died still
+                // told us it wanted the player's colour.
+                if (st.ReadsTeamColor) teamLayers.Add(st.Def.Name);
+                if (st.Count == 0) continue;
                 int fl = st.LifeRatioField, fi = st.InvLifeField;
                 foreach (var r in st.Def.Renderers)
                 {
@@ -161,7 +173,9 @@ public sealed class PkRendererStats
         {
             var list = tracks.Where(kv => ReferenceEquals(kv.Key.Item1, renderer)).Select(kv => kv.Value).ToList();
             if (list.Count == 0) continue;
-            result.Add(Reduce(renderer, layer, list, end, dt));
+            var stats = Reduce(renderer, layer, list, end, dt);
+            stats.TeamColoured = teamLayers.Contains(layer);
+            result.Add(stats);
         }
         return result;
     }
