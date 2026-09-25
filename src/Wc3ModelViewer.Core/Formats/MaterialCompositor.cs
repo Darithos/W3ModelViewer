@@ -102,6 +102,34 @@ public static class MaterialCompositor
     /// <summary>The engine's alpha-test threshold for filter mode Transparent.</summary>
     public const float CutoutThreshold = 0.75f;
 
+    /// <summary>
+    /// True when every layer of a material is statically transparent — the layer's own
+    /// <see cref="MdxLayer.Alpha"/> is 0 and no <c>KMTA</c> track ever raises it.
+    /// </summary>
+    /// <remarks>
+    /// This is how Warcraft III carries helper geometry that must never be drawn: the smooth ramp a
+    /// unit walks up instead of the visible steps (Blizzard names its bone <c>ultraGlide_geo</c>),
+    /// the sphere a cyclone is bound to (<c>CycloneBound_Diffuse</c>), a portal's empty carrier.
+    /// The panel is deliberately bigger than the art it sits on, so drawing it swallows the model —
+    /// most Reforged and Definitive staircases rendered as one flat bridge-textured slab until this
+    /// was honoured. 1,417 layers across the archive carry the flag; it is not an edge case.
+    /// <para>
+    /// The geoset-level equivalent, a <c>GEOA</c> whose static alpha is 0, is handled separately by
+    /// each caller: both mean "not drawn", but they are different chunks and either can occur alone.
+    /// </para>
+    /// </remarks>
+    public static bool IsInvisible(MdxMaterial material)
+        => material.Layers.Count > 0
+           && material.Layers.All(l => l.AlphaTrack is null && l.Alpha <= 0.001f);
+
+    /// <summary>
+    /// <see cref="IsInvisible(MdxMaterial)"/> for the material a geoset draws with. A geoset whose
+    /// material index is out of range is left to the caller's own bounds check, so it reads false.
+    /// </summary>
+    public static bool IsInvisible(MdxModel model, MdxGeoset geoset)
+        => (uint)geoset.MaterialId < (uint)model.Materials.Count
+           && IsInvisible(model.Materials[geoset.MaterialId]);
+
     /// <param name="bakeTeam">
     /// True to paint the player's colour into the result, which is what a preview wants. False
     /// substitutes <b>black</b> for it, which leaves exactly the part of the surface that is not

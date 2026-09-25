@@ -65,6 +65,12 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
     private sealed class TexSet
     {
         public int BaseColor = -1, MetallicRoughness = -1, Normal = -1, Emissive = -1;
+
+        /// <summary>
+        /// Where the player's colour goes, as a greyscale image. glTF 2.0 has no slot for it, so it
+        /// rides in the material's <c>extras</c> — ignored by every importer, found by any script.
+        /// </summary>
+        public int TeamMask = -1;
     }
 
     public GltfExportResult Export(Wc3TextureCache textures, string modelCascName)
@@ -77,6 +83,7 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         var prims = new List<Prim>();
         var materials = new List<(string Name, CompositeMaterial Mat, TexSet Tex)>();
         var pngs = new List<GltfFile>();
+        int teamMasks = 0;
 
         // Every PNG is one glTF image and one glTF texture, sharing an index.
         int AddImage(string stem, RgbaImage image)
@@ -90,9 +97,16 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
             if (g.LodId != options.Lod || g.VertexCount == 0 || g.Indices.Length < 3) continue;
             if (options.Geosets is not null && !options.Geosets.Contains(g.Index)) continue;
             if ((uint)g.MaterialId >= (uint)mdx.Materials.Count) continue;
+            // Invisible helper geometry — a walk ramp, a bound volume. Never drawn, never exported.
+            if (MaterialCompositor.IsInvisible(mdx.Materials[g.MaterialId])) continue;
 
+            // bakeTeam: false leaves the player's contribution OUT of base colour and hands it over
+            // as a mask instead — the same split the .m3 path makes. Baking it in was wrong twice:
+            // this format's whole job is the Blender → m3studio route, so a baked colour would be
+            // welded into the .m3 that comes back out, and the two export paths disagreed about the
+            // same model. The mask ships beside it so a Blender shader can add any colour live.
             var composite = MaterialCompositor.Compose(mdx, mdx.Materials[g.MaterialId], textures,
-                                                       modelCascName, options.TeamColor);
+                                                       modelCascName, options.TeamColor, bakeTeam: false);
             int matIndex = materials.FindIndex(m => ReferenceEquals(m.Mat.Texture, composite.Texture)
                                                     && m.Mat.Blend == composite.Blend);
             if (matIndex < 0)
@@ -105,8 +119,13 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
                 // .m3 path hands the composite to PbrConverter rather than the file on disk.
                 var set = new TexSet { BaseColor = AddImage(stem + "_diff", composite.Texture) };
 
+                // The PBR set is written unconditionally. It used to hang off options.ConvertPbr,
+                // which is the dialog's "Convert Reforged PBR → SC2 specular" — a question about
+                // the .m3 file and nothing to do with this one. glTF *is* metallic-roughness, and
+                // Reforged's ORM is already packed the way it wants, so turning the StarCraft II
+                // conversion off silently stripped glTF of the maps it carries best.
                 var pbrLayer = mdx.Materials[g.MaterialId].Layers.FirstOrDefault(l => l.IsPbr);
-                if (options.ConvertPbr && pbrLayer is not null)
+                if (pbrLayer is not null)
                 {
                     RgbaImage? Slot(MdxTextureSlot slot) =>
                         MaterialCompositor.LoadSlot(mdx, pbrLayer, slot, textures, modelCascName, options.TeamColor);
@@ -114,13 +133,27 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
                     if (Slot(MdxTextureSlot.Normal) is { } nrm) set.Normal = AddImage(stem + "_norm", GltfNormal(nrm));
                     if (Slot(MdxTextureSlot.Emissive) is { } emi) set.Emissive = AddImage(stem + "_emis", emi);
                 }
+
+                // Player colour, as its own greyscale image. Both places Warcraft III writes the
+                // signal — the HD ORM's alpha and the classic team layer — arrive here as one mask.
+                if (MaterialCompositor.TeamMaskOf(mdx, mdx.Materials[g.MaterialId], textures, modelCascName)
+                        is { } teamMask && teamMask.Coverage > 0f)
+                {
+                    set.TeamMask = AddImage(stem + "_team", GltfTeamMask(teamMask));
+                    teamMasks++;
+                }
+
                 materials.Add((stem, composite, set));
                 matIndex = materials.Count - 1;
             }
             prims.Add(new Prim { Geoset = g, Material = composite, MaterialIndex = matIndex });
         }
         if (prims.Count == 0)
-            throw new InvalidOperationException($"No geosets at LOD {options.Lod} — nothing to export.");
+            throw new InvalidOperationException($"No geosets at LOD {options.Lod} — nothing to export."
+                + (mdx.Geosets.Any(g => g.LodId == options.Lod && MaterialCompositor.IsInvisible(mdx, g))
+                    ? " Every geoset here is invisible helper geometry (material alpha 0), which"
+                      + " Warcraft III never draws."
+                    : ""));
 
         // ---- nodes: [0] scene root (Y-up rotation), then one joint per MDX node ----
         var nodes = mdx.Nodes;
@@ -243,6 +276,12 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
                 json.Raw("emissiveTexture", $"{{\"index\":{tex.Emissive}}}");
                 json.Raw("emissiveFactor", "[1.0,1.0,1.0]");
             }
+            // glTF 2.0 has no player-colour slot, so the mask travels in extras: the texture index
+            // for a script, the file name for a human wiring it up by hand in Blender. Importers
+            // that do not know the key ignore it, which is exactly what the spec promises.
+            if (tex.TeamMask >= 0)
+                json.Raw("extras", $"{{\"teamColorMask\":{tex.TeamMask},"
+                                 + $"\"teamColorMaskUri\":\"{pngs[tex.TeamMask].FileName}\"}}");
             if (mat.TwoSided) json.Bool("doubleSided", true);
             switch (mat.Blend)
             {
@@ -293,6 +332,10 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         };
         files.AddRange(pngs);
         _log.Add($"{prims.Count} geosets, {nodes.Count} joints, {materials.Count} materials");
+        _log.Add(teamMasks > 0
+            ? $"{teamMasks} team-colour mask(s) written as *_team.png — base colour has the player's "
+              + "contribution removed, so add it back through the mask (material extras.teamColorMask)"
+            : "no team-colour mask: nothing in this model is player-coloured");
 
         // A loose custom model usually ships only its own art, so most of what just got packaged as
         // PNG came out of the game install. Say so, and name what could not be found at all — an
@@ -457,6 +500,26 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
             px[i + 3] = 255;
         }
         return new RgbaImage { Width = normal.Width, Height = normal.Height, Pixels = px };
+    }
+
+    /// <summary>
+    /// The team mask as a plain greyscale image: 0 = keep the base colour, 255 = fully the player's.
+    /// </summary>
+    /// <remarks>
+    /// Written to RGB <i>and</i> alpha, unlike the .m3 path's alpha-only file. StarCraft II samples
+    /// an A-only layer and needs the diffuse's luminance folded in because its team channel is
+    /// additive; Blender wants a factor it can drop straight into a Mix node, and reading that from
+    /// an otherwise black PNG's alpha is a trap for anyone wiring it up by hand.
+    /// </remarks>
+    private static RgbaImage GltfTeamMask(TeamMask mask)
+    {
+        var px = new byte[mask.Width * mask.Height * 4];
+        for (int i = 0; i < mask.Values.Length; i++)
+        {
+            byte m = mask.Values[i];
+            px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = px[i * 4 + 3] = m;
+        }
+        return new RgbaImage { Width = mask.Width, Height = mask.Height, Pixels = px };
     }
 
     private static string San(string s)

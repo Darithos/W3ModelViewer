@@ -413,7 +413,11 @@ public sealed class M3Exporter
 
         if (_regions.Count == 0 && _emitters.Count > 0) AddCarrierRegion();
         if (_regions.Count == 0)
-            throw new InvalidOperationException($"No geosets at LOD {_opt.Lod} — nothing to export.");
+            throw new InvalidOperationException($"No geosets at LOD {_opt.Lod} — nothing to export."
+                + (_mdx.Geosets.Any(g => g.LodId == _opt.Lod && MaterialCompositor.IsInvisible(_mdx, g))
+                    ? " Every geoset here is invisible helper geometry (material alpha 0), which"
+                      + " Warcraft III never draws."
+                    : ""));
 
         PublishTextureNames();
         var m3 = WriteM3(sequences);
@@ -613,6 +617,16 @@ public sealed class M3Exporter
             if (g.LodId != _opt.Lod || g.VertexCount == 0 || g.Indices.Length < 3) continue;
             if (_opt.Geosets is not null && !_opt.Geosets.Contains(g.Index)) continue;
             if ((uint)g.MaterialId >= (uint)_mdx.Materials.Count) continue;
+
+            // A material at static alpha 0 is Warcraft III's invisible helper geometry — the ramp a
+            // unit walks up instead of the steps, a spell's bound volume. It is drawn by nothing in
+            // Warcraft III and must not become solid geometry in StarCraft II either.
+            if (MaterialCompositor.IsInvisible(_mdx.Materials[g.MaterialId]))
+            {
+                _log.Add($"geoset {g.Index}: skipped, its material is fully transparent "
+                       + "(layer alpha 0) — invisible helper geometry");
+                continue;
+            }
 
             var anim = _mdx.GeosetAnims.FirstOrDefault(a => a.GeosetId == g.Index);
 

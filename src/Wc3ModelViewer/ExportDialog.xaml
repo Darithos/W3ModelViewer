@@ -73,7 +73,7 @@
             <TextBlock Text="Textures" Foreground="#DDD" FontWeight="Bold" Margin="0,10,0,4"/>
             <CheckBox x:Name="ConvertPbrCheck" Content="Convert Reforged PBR → SC2 specular (_diff / _norm / _spec)"
                       IsChecked="True" Foreground="#CCC" Margin="0,2,0,2"
-                      ToolTip="Replaces the Photoshop reforged.jsx step; SD models always export their composited diffuse"/>
+                      ToolTip="Affects the .m3 only — it replaces the Photoshop reforged.jsx step. glTF is metallic-roughness itself and always carries the full PBR set. SD models always export their composited diffuse"/>
             <CheckBox x:Name="GeosetVisCheck" Content="Geoset visibility animation (GEOA)" IsChecked="True"
                       Foreground="#CCC" Margin="0,2,0,2"
                       ToolTip="Hides weapons/corpse parts per sequence, like in game"/>
