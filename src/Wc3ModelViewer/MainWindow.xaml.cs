@@ -22,6 +22,12 @@ public partial class MainWindow : Window
     private Wc3TextureCache? _cascTextures;              // persistent cache for CASC models
     private Wc3TextureCache? _textures;                  // cache of the CURRENT model (may be loose-file)
     private bool _busy;
+    private bool _exportable;                            // a model is loaded and shown
+
+    private const int CustomSet = 4;                     // the art-set combo's "Custom" entry
+    private string? _customDir;                          // folder the Custom list shows
+    private List<Wc3ModelEntry> _customModels = [];      // every .mdx under it, relative paths
+    private int _lastArtSet;                             // to step back when the folder prompt is cancelled
 
     private Wc3ModelEntry? _entry;                       // currently displayed model
     private MdxModel? _model;
@@ -189,10 +195,97 @@ public partial class MainWindow : Window
 
     private void OnFilterChanged(object sender, RoutedEventArgs e) => ApplyFilter();
 
+    /// <summary>
+    /// Switching to Custom lists the user's own folder instead of the install. The first time, or
+    /// when the remembered folder has gone, it asks for one; cancelling steps back to the art set
+    /// that was showing, since an empty list would read as "the folder has no models".
+    /// </summary>
+    private void OnArtSetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CustomDirButton is null) return;             // fires once from InitializeComponent
+        if (ArtSetCombo.SelectedIndex == CustomSet)
+        {
+            if (_customDir is null && UserSettings.Get("custom.dir") is { Length: > 0 } saved && Directory.Exists(saved))
+                _customDir = saved;
+            if (_customDir is null && !PickCustomDir())
+            {
+                ArtSetCombo.SelectedIndex = _lastArtSet;
+                return;
+            }
+            // Rescanned on every switch: the point of the folder is that models get added to it.
+            ScanCustomDir();
+        }
+        _lastArtSet = ArtSetCombo.SelectedIndex;
+        CustomDirButton.Visibility = ArtSetCombo.SelectedIndex == CustomSet ? Visibility.Visible : Visibility.Collapsed;
+        ApplyFilter();
+    }
+
+    private void OnCustomDirClick(object sender, RoutedEventArgs e)
+    {
+        if (_busy || !PickCustomDir()) return;
+        ScanCustomDir();
+        ApplyFilter();
+    }
+
+    private bool PickCustomDir()
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose the folder holding your custom models" };
+        if (_customDir is not null) dlg.InitialDirectory = _customDir;
+        if (dlg.ShowDialog(this) != true) return false;
+        _customDir = dlg.FolderName;
+        UserSettings.Set("custom.dir", _customDir);
+        return true;
+    }
+
+    /// <summary>
+    /// Every <c>.mdx</c> under the custom folder, subfolders included: downloaded models usually
+    /// arrive one per folder, with their textures beside them.
+    /// </summary>
+    private void ScanCustomDir()
+    {
+        if (_customDir is null) return;
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            MatchCasing = MatchCasing.CaseInsensitive,
+        };
+        try
+        {
+            _customModels = Directory.EnumerateFiles(_customDir, "*.mdx", options)
+                .Select(f => new Wc3ModelEntry
+                {
+                    CascName = "",
+                    RelativePath = Path.GetRelativePath(_customDir, f),
+                    ArtSet = Wc3ArtSet.Classic,          // unknown until read; the list says "custom"
+                })
+                .OrderBy(m => m.RelativePath, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            Status.Text = $"{_customModels.Count:N0} custom model(s) in {_customDir}";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _customModels = [];
+            Status.Text = "Could not read the custom folder: " + ex.Message;
+        }
+    }
+
     private void OnAssetSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (AssetList.SelectedItem is AssetItem item)
-            _ = LoadModelAsync(item.Entry);
+        // Several models selected is a batch to export, not a model to view: the viewer keeps what
+        // it shows and the Export button counts the selection instead.
+        UpdateExportButton();
+        if (AssetList.SelectedItems.Count == 1 && AssetList.SelectedItem is AssetItem item)
+            _ = item.FilePath is not null ? LoadLooseAsync(item.FilePath, fromBrowser: true) : LoadModelAsync(item.Entry);
+    }
+
+    private List<AssetItem> SelectedBatch() => AssetList.SelectedItems.OfType<AssetItem>().ToList();
+
+    private void UpdateExportButton()
+    {
+        int n = AssetList.SelectedItems.Count;
+        ExportButton.Content = n > 1 ? $"Export {n}…" : "Export…";
+        ExportButton.IsEnabled = !_busy && (n > 1 ? _storage is not null : _exportable);
     }
 
     private async Task OpenStorageAsync()
@@ -250,12 +343,14 @@ public partial class MainWindow : Window
             _ => (Wc3ArtSet?)null,
         };
 
-        IEnumerable<Wc3ModelEntry> items = _index.Models;
+        bool custom = ArtSetCombo.SelectedIndex == CustomSet && _customDir is not null;
+        IEnumerable<Wc3ModelEntry> items = custom ? _customModels : _index.Models;
         if (wanted is not null) items = items.Where(m => m.ArtSet == wanted);
         if (q.Length > 0)
             items = items.Where(m => m.RelativePath.Contains(q, StringComparison.OrdinalIgnoreCase));
 
-        AssetList.ItemsSource = items.Take(5000).Select(m => new AssetItem(m)).ToList();
+        AssetList.ItemsSource = items.Take(5000)
+            .Select(m => new AssetItem(m, custom ? Path.Combine(_customDir!, m.RelativePath) : null)).ToList();
     }
 
     private async Task LoadModelAsync(Wc3ModelEntry entry)
@@ -279,7 +374,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             ModelHost.Content = null;
-            ExportButton.IsEnabled = false;
+            _exportable = false;
             Status.Text = "Could not load model: " + ex.Message;
         }
         finally
@@ -288,7 +383,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnOpenFileClick(object sender, RoutedEventArgs e) => _ = OpenLooseFileAsync();
+    private void OnOpenFileClick(object sender, RoutedEventArgs e) => OpenLooseFile();
 
     /// <summary>
     /// Opens a loose .mdx from disk — custom models. Textures resolve from the model's own folder
@@ -296,7 +391,7 @@ public partial class MainWindow : Window
     /// is the usual case, since most custom models ship only the art their author made and leave
     /// every borrowed Warcraft III texture as a bare path.
     /// </summary>
-    private async Task OpenLooseFileAsync()
+    private void OpenLooseFile()
     {
         // The button is disabled without one, so this is a guard rather than a path users reach.
         if (_busy || _storage is null) return;
@@ -306,11 +401,19 @@ public partial class MainWindow : Window
             Filter = "Warcraft III models (*.mdx)|*.mdx|All files (*.*)|*.*",
         };
         if (dlg.ShowDialog(this) != true) return;
+        _ = LoadLooseAsync(dlg.FileName, fromBrowser: false);
+    }
 
-        SetBusy(true, "Loading " + Path.GetFileName(dlg.FileName) + " …");
+    /// <summary>
+    /// Loads a model file from disk: one picked with Open file…, or one listed from the custom
+    /// folder (<paramref name="fromBrowser"/>, which keeps the browser's selection).
+    /// </summary>
+    private async Task LoadLooseAsync(string path, bool fromBrowser)
+    {
+        if (_busy || _storage is null) return;
+        SetBusy(true, "Loading " + Path.GetFileName(path) + " …");
         try
         {
-            string path = dlg.FileName;
             var storage = _storage;
             var model = await Task.Run(() =>
             {
@@ -319,27 +422,11 @@ public partial class MainWindow : Window
                 return m;
             });
 
-            // CascName "" = no archive prefix: the texture cache probes LocalRoots, then the
-            // classic CASC tree for stock references like Textures\gutz.blp.
-            var entry = new Wc3ModelEntry
-            {
-                CascName = "",
-                RelativePath = Path.GetFileName(path),
-                ArtSet = model.IsReforged ? Wc3ArtSet.Reforged : Wc3ArtSet.Classic,
-            };
-            // The catalog is what lets a custom model's re-pathed reference (war3mapImported\x.blp,
-            // a bare file name, an absolute path off the author's desktop) still find the stock
-            // texture it means — a loose model has no archive prefix to anchor a guess to.
-            var cache = new Wc3TextureCache(_storage, _index) { PreferHd = model.IsReforged };
-            string dir = Path.GetDirectoryName(path) ?? "";
-            if (dir.Length > 0)
-            {
-                cache.LocalRoots.Add(dir);
-                // Common layouts for downloaded models: textures one level up or in a subfolder.
-                if (Directory.Exists(Path.Combine(dir, "Textures"))) cache.LocalRoots.Add(Path.Combine(dir, "Textures"));
-                if (Path.GetDirectoryName(dir) is { Length: > 0 } parent) cache.LocalRoots.Add(parent);
-            }
+            var entry = LooseEntry(path, model);
+            var cache = LooseTextureCache(storage, _index, path, model);
             PresentModel(entry, model, cache);
+            // The loose model is what Export now means, not a batch still selected in the browser.
+            if (!fromBrowser) AssetList.UnselectAll();
 
             // PresentModel has already resolved every texture to draw the model, so the cache can
             // now say where each one came from. A custom model borrowing stock art is the normal
@@ -349,13 +436,43 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             ModelHost.Content = null;
-            ExportButton.IsEnabled = false;
+            _exportable = false;
             Status.Text = "Could not load model: " + ex.Message;
         }
         finally
         {
             SetBusy(false, null);
         }
+    }
+
+    /// <summary>
+    /// CascName "" = no archive prefix: the texture cache probes LocalRoots, then the classic CASC
+    /// tree for stock references like Textures\gutz.blp.
+    /// </summary>
+    private static Wc3ModelEntry LooseEntry(string path, MdxModel model) => new()
+    {
+        CascName = "",
+        RelativePath = Path.GetFileName(path),
+        ArtSet = model.IsReforged ? Wc3ArtSet.Reforged : Wc3ArtSet.Classic,
+    };
+
+    /// <summary>
+    /// Textures for a model loaded from disk. The catalog is what lets a custom model's re-pathed
+    /// reference (war3mapImported\x.blp, a bare file name, an absolute path off the author's desktop)
+    /// still find the stock texture it means — a loose model has no archive prefix to anchor a guess to.
+    /// </summary>
+    private static Wc3TextureCache LooseTextureCache(Wc3Storage storage, Wc3AssetIndex? index, string path, MdxModel model)
+    {
+        var cache = new Wc3TextureCache(storage, index) { PreferHd = model.IsReforged };
+        string dir = Path.GetDirectoryName(path) ?? "";
+        if (dir.Length > 0)
+        {
+            cache.LocalRoots.Add(dir);
+            // Common layouts for downloaded models: textures one level up or in a subfolder.
+            if (Directory.Exists(Path.Combine(dir, "Textures"))) cache.LocalRoots.Add(Path.Combine(dir, "Textures"));
+            if (Path.GetDirectoryName(dir) is { Length: > 0 } parent) cache.LocalRoots.Add(parent);
+        }
+        return cache;
     }
 
     /// <summary>
@@ -403,7 +520,8 @@ public partial class MainWindow : Window
         // After RebuildScene: the panel reports where each texture actually came from, which the
         // cache only knows once something has asked it to resolve them.
         PopulateTexturePanel();
-        ExportButton.IsEnabled = true;
+        _exportable = true;
+        UpdateExportButton();
 
         var shown = _geosetItems.Where(i => i.IsVisible).Select(i => i.Geoset).ToList();
         int hidden = _geosetItems.Count - shown.Count;
@@ -1130,14 +1248,23 @@ public partial class MainWindow : Window
 
     private void OnExportClick(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
+        var batch = SelectedBatch();
+        if (batch.Count > 1)
+        {
+            var bdlg = new ExportDialog(batch.Select(i => i.ToString()).ToList()) { Owner = this };
+            if (bdlg.ShowDialog() == true)
+                _ = RunBatchExportAsync(batch, bdlg);
+            return;
+        }
         if (_model is null || _entry is null) return;
         var visible = _geosetItems.Where(i => i.IsVisible).Select(i => i.Geoset.Index).ToHashSet();
         var dlg = new ExportDialog(_model, _entry, _lod, visible) { Owner = this };
         if (dlg.ShowDialog() == true)
-            _ = RunExportAsync(dlg.Options, dlg.OutputDir, dlg.ExportGltf, dlg.ExportM3);
+            _ = RunExportAsync(dlg.Options, dlg.OutputDir, dlg.ExportGltf, dlg.ExportM3, dlg.Layout);
     }
 
-    private async Task RunExportAsync(M3ExportOptions options, string outDir, bool doGltf, bool doM3)
+    private async Task RunExportAsync(M3ExportOptions options, string outDir, bool doGltf, bool doM3, ExportLayout layout)
     {
         if (_model is null || _entry is null || _textures is null) return;
         SetBusy(true, "Exporting…");
@@ -1146,89 +1273,115 @@ public partial class MainWindow : Window
             var model = _model;
             var entry = _entry;
             var textures = _textures;
+            var r = await Task.Run(() => ExportWriter.Write(model, entry.CascName, textures, options,
+                                                            outDir, doGltf, doM3, layout));
 
-            // <OutDir>\<ModelName>\ holds the glTF set at the top and the m3 package under an
-            // Assets\ folder that mirrors the paths baked into the .m3.
-            var (fileCount, totalBytes, unitDir, m3Note) = await Task.Run(() =>
-            {
-                string dir = Path.Combine(outDir, options.ModelName);
-                Directory.CreateDirectory(dir);
-                int count = 0;
-                long bytes = 0;
-                string note = "";
-
-                if (doGltf)
-                {
-                    var result = new GltfExporter(model, options).Export(textures, entry.CascName);
-                    foreach (var file in result.Files)
-                    {
-                        File.WriteAllBytes(Path.Combine(dir, file.FileName), file.Data);
-                        bytes += file.Data.Length;
-                    }
-                    count += result.Files.Count;
-                }
-                if (doM3)
-                {
-                    var result = new M3Exporter(model, options).Export(textures, entry.CascName);
-                    // The .m3 and its textures go inside a real Assets\ folder mirroring the paths
-                    // baked into the file, so the package is one folder to merge rather than two
-                    // pieces to place correctly — see M3ExportOptions.TexturePrefix.
-                    string assetsDir = Path.Combine(dir, "Assets");
-                    Directory.CreateDirectory(assetsDir);
-                    string m3Path = Path.Combine(assetsDir, options.ModelName + ".m3");
-                    File.WriteAllBytes(m3Path, result.M3);
-                    bytes += result.M3.Length;
-                    string texDir = Path.Combine(assetsDir, options.TextureFolder);
-                    Directory.CreateDirectory(texDir);
-                    foreach (var tex in result.Textures)
-                    {
-                        File.WriteAllBytes(Path.Combine(texDir, tex.FileName), tex.Data);
-                        bytes += tex.Data.Length;
-                    }
-                    count += 1 + result.Textures.Count;
-
-                    // Resolve every path the written .m3 asks for against what is now on disk. SC2
-                    // draws a layer it cannot find as black rather than reporting anything, so a
-                    // broken reference would otherwise only show up as a shading bug in the editor.
-                    var refs = M3TextureAudit.Verify(m3Path);
-                    var missing = refs.Where(r => !r.Resolved).Select(r => r.Path).ToList();
-
-                    // That audit only proves each referenced file exists; a texture the converter
-                    // could not find was written as a magenta placeholder, which exists too. Both
-                    // are reported: they are different faults, and reporting only one lets an
-                    // export that has both look like it only has the second.
-                    var missingTex = textures.ProvenanceOf(model, entry.CascName, options.TeamColor).Missing;
-
-                    var warnings = new List<string>();
-                    if (missing.Count > 0)
-                        warnings.Add($"{missing.Count} texture reference(s) do not resolve — "
-                                     + string.Join(", ", missing.Take(3)));
-                    if (missingTex.Count > 0)
-                        warnings.Add($"{missingTex.Count} texture(s) exported as magenta placeholders "
-                                     + "(not beside the model and not in the game install): "
-                                     + string.Join(", ", missingTex.Take(3))
-                                     + (missingTex.Count > 3 ? $" (+{missingTex.Count - 3} more)" : ""));
-
-                    // The size figure is the point of the reduction option, so it is reported
-                    // where the user looks rather than left to a folder listing.
-                    string keys = result.KeyReduction is { KeysIn: > 0 } k
-                        ? $"{result.M3.Length / 1048576.0:0.0} MB .m3, {100.0 * k.Dropped / k.KeysIn:0}% of animation keys dropped" +
-                          $" (within {k.MaxRotationDeg:0.00}° / {k.MaxVector / options.Scale:0.00} WC3 units of the full bake)"
-                        : $"{result.M3.Length / 1048576.0:0.0} MB .m3";
-                    note = keys + "   —   " + (warnings.Count == 0
-                        ? @"copy the Assets folder into your map/mod root (merge with the existing Assets\)"
-                        : "WARNING: " + string.Join("; ", warnings));
-                }
-                return (count, bytes, dir, note);
-            });
-
-            Status.Text = $"Exported {fileCount} file(s), {totalBytes / 1048576.0:0.0} MB, to {unitDir}" +
-                          (doM3 ? $"   —   {m3Note}"
+            string reused = r.TexturesReused > 0 ? $" ({r.TexturesReused} texture(s) were already there)" : "";
+            Status.Text = $"Exported {r.Files} file(s){reused}, {r.Bytes / 1048576.0:0.0} MB, to {r.Location}" +
+                          (doM3 ? $"   —   {r.Note}"
                                 : "   —   import the .gltf into Blender, then export .m3 with m3studio");
         }
         catch (Exception ex)
         {
             Status.Text = "Export failed: " + ex.Message;
+        }
+        finally
+        {
+            SetBusy(false, null);
+        }
+    }
+
+    /// <summary>
+    /// Exports every model selected in the browser with one set of options. Each is read and
+    /// converted in turn, off the UI thread; one that fails is logged and skipped rather than
+    /// ending the run, and <c>export-log.txt</c> in the output folder keeps each model's report,
+    /// which a single status line cannot hold for fifty models.
+    /// </summary>
+    private async Task RunBatchExportAsync(IReadOnlyList<AssetItem> batch, ExportDialog dlg)
+    {
+        if (_storage is null || _index is null || _cascTextures is null) return;
+        SetBusy(true, $"Exporting {batch.Count} models…");
+        var storage = _storage;
+        var index = _index;
+        var overrides = _cascTextures.Overrides.ToList();
+        string outDir = dlg.OutputDir;
+        bool doGltf = dlg.ExportGltf, doM3 = dlg.ExportM3;
+        var layout = dlg.Layout;
+        var optionsFor = dlg.OptionsFor;
+        IProgress<string> progress = new Progress<string>(s => Status.Text = s);
+        try
+        {
+            var (ok, failed, warned, files, reused, bytes, logPath) = await Task.Run(() =>
+            {
+                var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var log = new System.Text.StringBuilder();
+                log.AppendLine($"Batch export, {DateTime.Now:yyyy-MM-dd HH:mm}, {batch.Count} models, "
+                               + (layout == ExportLayout.SharedAssets ? "shared Assets folder" : "one folder per model"));
+                int ok = 0, warned = 0, files = 0, reused = 0;
+                long bytes = 0;
+                var failed = new List<string>();
+                for (int i = 0; i < batch.Count; i++)
+                {
+                    var item = batch[i];
+                    var entry = item.Entry;
+                    // Stock names repeat across art sets, custom ones across download folders; the
+                    // suffix says which copy a renamed model is.
+                    string name = ExportWriter.UniqueName(entry.Name, item.FilePath is null
+                        ? entry.ArtSet switch { Wc3ArtSet.Definitive => "_de", Wc3ArtSet.Reforged => "_hd", _ => "_sd" }
+                        : "_" + Path.GetFileName(Path.GetDirectoryName(item.FilePath)), used);
+                    string source = item.FilePath ?? entry.CascName;
+                    progress.Report($"Exporting {i + 1} of {batch.Count}: {entry.RelativePath} …");
+                    try
+                    {
+                        MdxModel model;
+                        Wc3TextureCache textures;
+                        // A cache per model: one keeps every decoded image, and fifty HD models'
+                        // 2048² sets would run to gigabytes. The user's texture mappings carry over.
+                        if (item.FilePath is not null)
+                        {
+                            model = MdxReader.Read(File.ReadAllBytes(item.FilePath));
+                            PopcornApproximation.Attach(model, storage.TryReadFile, "");
+                            textures = LooseTextureCache(storage, index, item.FilePath, model);
+                        }
+                        else
+                        {
+                            model = MdxReader.Read(storage.ReadFile(entry.CascName));
+                            PopcornApproximation.Attach(model, storage.TryReadFile, entry.CascName);
+                            textures = new Wc3TextureCache(storage, index);
+                        }
+                        foreach (var (reference, file) in overrides) textures.SetOverride(reference, file);
+                        var r = ExportWriter.Write(model, entry.CascName, textures, optionsFor(name),
+                                                   outDir, doGltf, doM3, layout);
+                        ok++;
+                        if (r.Warned) warned++;
+                        files += r.Files;
+                        reused += r.TexturesReused;
+                        bytes += r.Bytes;
+                        log.AppendLine($"{name}  <-  {source}: {r.Files} file(s)" +
+                                       (r.Note.Length > 0 ? "   —   " + r.Note : ""));
+                    }
+                    catch (Exception ex)
+                    {
+                        failed.Add(entry.Name);
+                        log.AppendLine($"{name}  <-  {source}: FAILED — {ex.Message}");
+                    }
+                }
+                Directory.CreateDirectory(outDir);
+                string logPath = Path.Combine(outDir, "export-log.txt");
+                File.WriteAllText(logPath, log.ToString());
+                return (ok, failed, warned, files, reused, bytes, logPath);
+            });
+
+            string text = $"Exported {ok} of {batch.Count} models — {files} file(s), {bytes / 1048576.0:0.0} MB, to {outDir}";
+            if (reused > 0) text += $"; {reused} shared texture(s) were written only once";
+            if (warned > 0) text += $"   —   {warned} with texture warnings";
+            if (failed.Count > 0) text += $"   —   FAILED: {string.Join(", ", failed.Take(4))}" +
+                                          (failed.Count > 4 ? $" (+{failed.Count - 4} more)" : "");
+            Status.Text = text + $"   —   details in {Path.GetFileName(logPath)}";
+        }
+        catch (Exception ex)
+        {
+            Status.Text = "Batch export failed: " + ex.Message;
         }
         finally
         {
@@ -1245,6 +1398,7 @@ public partial class MainWindow : Window
         AssetList.IsEnabled = !busy;
         // Stays disabled while no install is open — see the button's XAML.
         OpenFileButton.IsEnabled = !busy && _storage is not null;
+        UpdateExportButton();
         if (status is not null) Status.Text = status;
         Mouse.OverrideCursor = busy ? Cursors.Wait : null;
     }
@@ -1256,11 +1410,15 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
-    private sealed class AssetItem(Wc3ModelEntry entry)
+    /// <summary>A browser row: an install model, or a file in the custom folder (<see cref="FilePath"/>).</summary>
+    private sealed class AssetItem(Wc3ModelEntry entry, string? filePath = null)
     {
         public Wc3ModelEntry Entry { get; } = entry;
+        public string? FilePath { get; } = filePath;
         public override string ToString()
-            => $"{Entry.Name}  · {Entry.ArtSet switch { Wc3ArtSet.Definitive => "DE", Wc3ArtSet.Reforged => "HD", _ => "SD" }}   ({Entry.Folder})";
+            => FilePath is not null
+                ? $"{Entry.Name}  · custom" + (Entry.Folder.Length > 0 ? $"   ({Entry.Folder})" : "")
+                : $"{Entry.Name}  · {Entry.ArtSet switch { Wc3ArtSet.Definitive => "DE", Wc3ArtSet.Reforged => "HD", _ => "SD" }}   ({Entry.Folder})";
     }
 
     /// <summary>One row in the geoset toggle panel: wraps a geoset with a bindable visibility flag.</summary>

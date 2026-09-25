@@ -32,10 +32,20 @@ Working end to end:
   curves, shapes and spatial layers (see `mdxres/research/popcornfx-vm.md`). Sizes, lifetimes,
   motion, colours and timing are the effect's own — Holy Light's beam grows from 5.4 to 13.2 m over
   half a second, Lightning Shield's orbs circle with arcs chasing them. All 2,165 bakes load and run.
-  Export to StarCraft II still writes approximations: each rendered layer becomes a stand-in `PAR_`
-  system with the bake's sprite, blend, billboarding and colour curve (fixed-length tails for beams,
-  emitter-facing cards for discs), and an effect-only model gets one invisible carrier triangle, as
-  Blizzard's own effect `.m3` files have.
+  Export to StarCraft II **bakes** each effect: the same scripts are run headless, every frame's
+  sprites are rendered on the CPU at the Warcraft III editor's camera angle, tone-mapped to what
+  that renderer shows, and packed into an 8×8 sprite sheet that one camera-facing SC2 particle plays
+  end to end — Blizzard's own recipe for their fire and smoke (`Storm_FB_*`). A one-shot spell
+  plays once when its sequence starts; a steady effect is baked over one period and two cards
+  cross-fade so the sheet never visibly wraps; a picture that never changes is one cell. What an
+  effect leaves behind it as it moves — its ribbons and the layers spawned per distance travelled,
+  a missile's flame and smoke — is baked separately: the effect is flown at missile speed, the
+  trail is rendered from beside the flight line into one strip with the head at its left edge,
+  and one SC2 `RIB_` ribbon lays that strip along the model's real path, stretching with its
+  speed and vanishing when it stands still. Player-coloured layers keep a per-layer stand-in so
+  SC2's live player colour still applies. An effect-only model gets one
+  invisible carrier triangle, as Blizzard's own effect `.m3` files have. The dialog's "Bake
+  PopcornFX effects" checkbox turns the bake off, leaving every layer a stand-in.
 - **Animated texture flipbooks** — HD water, fountains and coral animate their diffuse through a
   `KMTF` texture-id track of up to 50 frames. The viewer plays these on the track's own timeline;
   export resolves the flipbook's first frame instead of falling back to texture 0.
@@ -53,6 +63,16 @@ Working end to end:
   they were left, so porting a collection does not mean retyping the scale on every model. LOD, the
   sequence list and the geoset selection are properties of the model in front of you and are not
   restored.
+- **Batch export** — Ctrl- or Shift-click several models in the browser (install or Custom folder) and **Export N…** writes
+  them all with one set of options (every geoset at full detail, all sequences or none). A model
+  that fails is skipped and named rather than ending the run, and `export-log.txt` in the output
+  folder keeps each model's report. Where two selected models share a name (the SD, HD and DE
+  knight), the later ones take the art set as a suffix: `knight_hd`; custom models take their
+  folder's name.
+- **Two output layouts** — *One folder per model* writes `<Out>\<Name>\Assets\…`, a package per
+  model. *Shared Assets folder* writes every model to `<Out>\Assets\<Name>.m3` and every texture to
+  one `<Out>\Assets\textures\`, so a whole collection is one folder to merge and a texture the
+  models share is written once. The export dialog also lets you rename the `.m3`.
 - **Scale is in StarCraft II's units** — everything this tool exports ends up in StarCraft II, so
   **1.0 is SC2's own art size** (a unit around 2.3 SC2 units tall) rather than a Warcraft III one.
   Type `40` for native Warcraft III units, which is what a war3mod map wants. The export log states
@@ -142,8 +162,11 @@ Working end to end:
    `C:\games\Warcraft III`) and click **Open**. Everything else waits on this, custom models
    included — they borrow most of their textures from the installed game.
 3. Filter the list, click a model to preview it, double-click a sequence to play it. **Open file…**
-   loads a custom `.mdx` from disk instead.
-4. **Export…** chooses formats, geosets, animations, scale and output folder.
+   loads a custom `.mdx` from disk instead; for a whole collection, pick **Custom** in the art-set
+   dropdown and choose the folder once. It then lists every `.mdx` in that folder and its
+   subfolders, and **Folder…** switches to another.
+4. **Export…** chooses formats, geosets, animations, scale, output folder and layout. Select
+   several models first to export them as one batch.
 
 To use an exported model in a map: copy the `Assets` folder from the export into your map's root,
 merging it with the map's existing `Assets` folder. Keep the `.m3` and its `textures\` folder

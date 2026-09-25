@@ -393,6 +393,14 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     public MdxParticleType ParticleType { get; init; }
     public float TailLength { get; init; }
     public float MiddleTime { get; init; }
+    /// <summary>
+    /// When the size ramp's middle falls, 0..1, where it differs from <see cref="MiddleTime"/>. A
+    /// PRE2 emitter has one middle for size, colour and alpha; a PopcornFX stand-in measures each
+    /// ramp's own, and StarCraft II keeps them apart. The fireball's trail wisps peak in alpha at
+    /// 0.2 of their life and shrink through 0.5 — on the colour's middle they were dots before
+    /// they were bright.
+    /// </summary>
+    public float? SizeMiddleTime { get; init; }
 
     public Vector3 StartColor { get; init; } = Vector3.One;
     public Vector3 MiddleColor { get; init; } = Vector3.One;
@@ -422,6 +430,57 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     /// <c>__a_Game.TeamColor</c> — how Warcraft III colours an item's light beam.
     /// </summary>
     public bool TeamColoured { get; init; }
+
+    /// <summary>
+    /// How far past 1.0 this emitter's colour reaches, for a PopcornFX stand-in whose scripts write
+    /// HDR colour (Thunder Clap's sparks run to 10). The colour ramp is divided by it so it fits a
+    /// byte, and the export hands it back through the material's emissive HDR multiplier. 1 for
+    /// every PRE2 emitter.
+    /// </summary>
+    public float Intensity { get; init; } = 1f;
+
+    /// <summary>
+    /// A PopcornFX stand-in for a <em>ribbon</em> renderer: its particles are the points of one
+    /// continuous strip that a moving emitter draws behind it (a missile's flame trail). The viewer
+    /// draws its points as cards; the export writes a StarCraft II ribbon instead, since cards born
+    /// once per frame at missile speed read as a dotted line of separate sprites.
+    /// </summary>
+    public bool Ribbon { get; init; }
+
+    /// <summary>
+    /// Ribbons only: the speed its points carry away from the emitter, and the gravity pulling them
+    /// down, in StarCraft II units per second. Both are 0 for a pure trail, which draws only where
+    /// its bone has been. Blizzard's missile trails often set a small speed (1 on 302 of 585) so the
+    /// strip keeps extruding even while its emitter stands still.
+    /// </summary>
+    public float RibbonSpeed { get; init; }
+
+    /// <summary>
+    /// The SC2 <c>RIB_.ribbon_type</c> to write: 0 PlanarBillboarded, 1 Planar, 2 Cylinder,
+    /// 3 Star Shaped. 0 is what every export uses and what 509 of 610 Blizzard ribbons use; the
+    /// others exist so a test model can put them side by side.
+    /// </summary>
+    public int RibbonType { get; init; }
+
+    /// <summary>
+    /// The SC2 <c>RIB_.length</c> to write. We have always written 0; 97% of Blizzard's missile
+    /// ribbons write 1. Exposed so a test model can tell whether it does anything.
+    /// </summary>
+    public float RibbonLength { get; init; }
+    public float RibbonGravity { get; init; }
+
+    /// <summary>
+    /// The PopcornFX renderer this measured stand-in stands for. The export drops a stand-in whose
+    /// renderer an impostor bake has replaced, matched by identity rather than by name.
+    /// </summary>
+    public Popcorn.PkRendererDef? PopcornRenderer { get; init; }
+
+    /// <summary>
+    /// Export only: a sprite sheet rendered by the exporter itself — an impostor bake of a PopcornFX
+    /// effect, or a calibration card — written out in place of a texture looked up by
+    /// <see cref="TextureId"/>. Never set on emitters the viewer draws.
+    /// </summary>
+    public RgbaImage? BakedSprite { get; init; }
 
     public MdxTrack<float>? SpeedTrack { get; init; }
     public MdxTrack<float>? VariationTrack { get; init; }
@@ -501,6 +560,15 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     public Vector3? FaceDirection { get; init; }
 
     /// <summary>
+    /// PopcornFX stand-ins only: the beam axis, travel direction or card facing stays put in model
+    /// space when the node turns — the layer's scripts write it without the effect transform, which
+    /// only moves where particles are born. An item's rarity beam stands straight up while the item
+    /// it hangs from tilts and sways. Export then hosts the emitter on a bone that follows the
+    /// node's position but not its rotation or scale.
+    /// </summary>
+    public bool WorldDirections { get; init; }
+
+    /// <summary>
     /// Set when this emitter was synthesised from a PopcornFX layer rather than read from a PRE2
     /// chunk — the exporter and the viewer report those separately, because they are approximations.
     /// </summary>
@@ -549,6 +617,13 @@ public sealed class MdxPopcornEmitter : MdxNodeAttachedObject
     /// bake is missing or its scripts did not load.
     /// </summary>
     public Popcorn.PkEffectDef? Runtime { get; set; }
+
+    /// <summary>
+    /// What <see cref="PopcornApproximation.Attach"/> measured of each renderer in its headless
+    /// runs, kept so the exporter can decide which layers an impostor bake may replace without
+    /// running the scripts again. Empty until attached, or when the scripts did not load.
+    /// </summary>
+    public List<Popcorn.PkRendererStats> Stats { get; set; } = [];
 
     /// <summary>Archive name the bake was read from, for diagnostics.</summary>
     public string BakeName { get; set; } = "";

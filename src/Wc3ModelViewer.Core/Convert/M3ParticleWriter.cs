@@ -53,8 +53,15 @@ internal static class M3ParticleWriter
     private const int OffEmitShape = 424;
     private const int OffEmitShapeSize = 428;
     private const int OffEmitCount = 704;
+    private const int OffFlipbookStartInit = 720;   // u8
+    private const int OffFlipbookStartStop = 721;   // u8
+    private const int OffFlipbookEndInit = 722;     // u8
+    private const int OffFlipbookEndStop = 723;     // u8
+    private const int OffFlipbookLifeFactor = 724;  // f32
     private const int OffFlipbookCols = 728;
     private const int OffFlipbookRows = 730;
+    private const int OffFlipbookColFraction = 732;
+    private const int OffFlipbookRowFraction = 736;
     private const int OffParticleType = 772;
     private const int OffInstanceTail = 776;
     private const int OffFlags = 1232;
@@ -175,7 +182,7 @@ internal static class M3ParticleWriter
         // particle was drawn at half size.
         Vector3Anim(b, OffSize, new Vector3(e.StartScale, e.MiddleScale, e.EndScale) * (2 * scale),
                     nextAnimId());
-        WriteF32(b, OffSizeAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
+        WriteF32(b, OffSizeAnimMid, Math.Clamp(e.SizeMiddleTime ?? e.MiddleTime, 0f, 1f));
         WriteF32(b, OffColorAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
         WriteF32(b, OffAlphaAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
 
@@ -183,8 +190,28 @@ internal static class M3ParticleWriter
         ColorAnim(b, OffColorMid, e.MiddleColor, e.MiddleAlpha, nextAnimId());
         ColorAnim(b, OffColorEnd, e.EndColor, e.EndAlpha, nextAnimId());
 
-        WriteI16(b, OffFlipbookCols, (short)Math.Clamp(e.Columns, 1, short.MaxValue));
-        WriteI16(b, OffFlipbookRows, (short)Math.Clamp(e.Rows, 1, short.MaxValue));
+        int cols = Math.Clamp(e.Columns, 1, short.MaxValue), rows = Math.Clamp(e.Rows, 1, short.MaxValue);
+        WriteI16(b, OffFlipbookCols, (short)cols);
+        WriteI16(b, OffFlipbookRows, (short)rows);
+        // Sheet playback, as Blizzard's 1,132 HotS flipbook systems spell it: the first range runs
+        // start_init -> start_stop over `start_lifespan_factor` of the life, a second range runs
+        // start_stop -> end_init over the rest, and end_stop is 0 on every one of them. The
+        // commonest combination (268 systems) is (0, 63, 63, 0, 1.0): the whole sheet once over the
+        // particle's life, which is what a Warcraft III head-cell range means too. Unset, the cell
+        // fractions are +inf and StarCraft II showed cell 0 for the particle's whole life.
+        if (cols * rows > 1)
+        {
+            int last = Math.Min(cols * rows - 1, 255);
+            int first = Math.Clamp(e.HeadCellStart, 0, last);
+            int stop = e.HeadCellEnd < first ? last : Math.Clamp(e.HeadCellEnd, first, last);
+            b[OffFlipbookStartInit] = (byte)first;
+            b[OffFlipbookStartStop] = (byte)stop;
+            b[OffFlipbookEndInit] = (byte)stop;
+            b[OffFlipbookEndStop] = 0;
+            WriteF32(b, OffFlipbookLifeFactor, 1f);
+            WriteF32(b, OffFlipbookColFraction, 1f / cols);
+            WriteF32(b, OffFlipbookRowFraction, 1f / rows);
+        }
 
         // A live cap so a high emission rate cannot allocate without bound: rate x lifespan is the
         // steady-state population, which is what Blizzard's own emitters store here.
@@ -251,7 +278,114 @@ internal static class M3ParticleWriter
         // "tail fix": the tail is exactly `instance_tail` long regardless of velocity — the
         // fixed-length beam. Only meaningful on particle type 1.
         if (e.Orientation == MdxParticleOrientation.Ray && e.BeamLength > 0) flags |= 0x100000;
+        // "random flipbook start": a sheet whose head-cell range is a single cell is one the
+        // emitter picks a cell from at random (a PopcornFX atlas layer's TextureID, Warcraft III's
+        // one-cell ranges on multi-cell sheets), not one it plays.
+        if (e.Columns * e.Rows > 1 && e.HeadCellStart == e.HeadCellEnd) flags |= 0x10000;
         return flags;
+    }
+
+    // ---- RIB_ ribbons -----------------------------------------------------------------------------
+
+    public const int RibbonVersion = 9;
+    public const int RibbonSize = 760;
+
+    // Field offsets for RIB_ v9, from m3studio's structures.xml.
+    private const int RibBone = 0;
+    private const int RibMaterialIndex = 4;
+    private const int RibAdditionalFlags = 8;
+    private const int RibLifespan = 132;
+    private const int RibScaleAnimMid = 188;
+    private const int RibColorAnimMid = 192;
+    private const int RibAlphaAnimMid = 196;
+    private const int RibTwistAnimMid = 200;
+    private const int RibScale = 220;
+    private const int RibTwist = 256;
+    private const int RibColorBase = 292;
+    private const int RibColorMid = 312;
+    private const int RibColorTip = 332;
+    private const int RibMass = 356;
+    private const int RibNoiseEdge = 392;
+    private const int RibIndexPlusLength = 396;
+    private const int RibType = 400;
+    private const int RibCullMethod = 404;
+    private const int RibDivisions = 408;
+    private const int RibSides = 412;
+    private const int RibStarRatio = 416;
+    private const int RibLength = 420;
+    private const int RibSpeed = 12;         // float anim ref: the points' own speed away from the bone
+    private const int RibGravity = 184;      // plain float
+    private const int RibActive = 452;
+    private const int RibFlags = 472;
+    private const int RibFriction = 484;
+    private const int RibLodReduce = 492;
+
+    /// <summary>Every float anim ref in RIB_ v9 that the writer leaves at zero, but which still needs its own id.</summary>
+    private static readonly int[] RibZeroFloats =
+        [12, 32, 52, 72, 92, 112, 152, 504, 524, 548, 568, 592, 612, 636, 656, 680, 700, 720, 740];
+
+    /// <summary>
+    /// Builds one <c>RIB_</c> v9 trail from a PopcornFX ribbon stand-in: a strip that the bone drags
+    /// through the world, each edge living <see cref="MdxParticleEmitter2.Life"/> seconds.
+    /// </summary>
+    /// <remarks>
+    /// Modelled on Blizzard's own missile trails. Across 294 world-space, zero-speed ribbons on the
+    /// HotS missiles, the typical one is a planar billboard (type 0, 242 of them) culled by lifespan
+    /// (cull 0, 248), 30 divisions (172), 5 sides, flags 0xC080 (vertex alpha plus the two high bits
+    /// every one of them sets), mass and friction 1 and a noise edge of 0.1; their scale is the
+    /// strip's width at the base, middle and tip, and their colour runs base to tip over the same
+    /// three stages — so the particle's life ramp maps straight on, young at the missile and old at
+    /// the tail. <c>length</c> is 0 as on the catapult missile's gradient trail, the closest match to
+    /// a PopcornFX strip that stretches one gradient over its whole length.
+    /// </remarks>
+    public static byte[] BuildRibbon(MdxParticleEmitter2 e, int boneIndex, int materialIndex, float scale, Func<uint> nextAnimId)
+    {
+        var b = new byte[RibbonSize];
+        WriteU16(b, RibBone, (ushort)Math.Clamp(boneIndex, 0, ushort.MaxValue));
+        WriteI32(b, RibMaterialIndex, materialIndex);
+        WriteU32(b, RibAdditionalFlags, 0x8);                  // world_space: the trail stays where it was drawn
+
+        foreach (int at in RibZeroFloats) FloatAnim(b, at, 0f, nextAnimId());
+        FloatAnim(b, RibLifespan, MathF.Max(e.Life, 0.02f), nextAnimId());
+        FloatAnim(b, RibLength, e.RibbonLength, nextAnimId());
+        // Written after the zero loop, which covers speed's offset.
+        FloatAnim(b, RibSpeed, e.RibbonSpeed, nextAnimId());
+        WriteF32(b, RibGravity, e.RibbonGravity);
+
+        float mid = Math.Clamp(e.MiddleTime, 0f, 1f);
+        WriteF32(b, RibScaleAnimMid, Math.Clamp(e.SizeMiddleTime ?? e.MiddleTime, 0f, 1f));
+        WriteF32(b, RibColorAnimMid, mid);
+        WriteF32(b, RibAlphaAnimMid, mid);
+        WriteF32(b, RibTwistAnimMid, 1f);
+
+        // Full width, as PAR_ size is: a PopcornFX ribbon's size is its half-width.
+        Vector3Anim(b, RibScale, new Vector3(e.StartScale, e.MiddleScale, e.EndScale) * (2 * scale), nextAnimId());
+        Vector3Anim(b, RibTwist, Vector3.Zero, nextAnimId());
+        // The base is the strip's newest edge, at the missile. The measured ramp starts at a
+        // particle's first frame, when a PopcornFX ribbon point is still fading in (the fireball's
+        // reads 5 of 255), and a base that faint drew the trail as a streak floating behind the head
+        // (VfxFireballG). Warcraft III's strip leaves the head at full strength.
+        ColorAnim(b, RibColorBase, e.StartColor, Math.Max(e.StartAlpha, e.MiddleAlpha), nextAnimId());
+        ColorAnim(b, RibColorMid, e.MiddleColor, e.MiddleAlpha, nextAnimId());
+        ColorAnim(b, RibColorTip, e.EndColor, e.EndAlpha, nextAnimId());
+
+        WriteF32(b, RibMass, 1f);
+        WriteF32(b, RibNoiseEdge, 0.1f);
+        WriteI32(b, RibIndexPlusLength, 1);
+        WriteI32(b, RibType, e.RibbonType);                     // 0 = planar billboard
+        WriteI32(b, RibCullMethod, 0);                          // by lifespan
+        WriteF32(b, RibDivisions, 30f);
+        WriteI32(b, RibSides, 5);
+        WriteF32(b, RibStarRatio, 0.5f);
+
+        // active: an animated uint32 held at 1.
+        AnimHeader(b, RibActive, nextAnimId());
+        WriteU32(b, RibActive + 8, 1); WriteU32(b, RibActive + 12, 0); WriteI32(b, RibActive + 16, -1);
+
+        WriteU32(b, RibFlags, 0xC080);                          // vertex_alpha | 0x4000 | 0x8000
+        WriteF32(b, RibFriction, 1f);
+        WriteI32(b, RibLodReduce, 2);
+        return b;
     }
 
     // ---- primitive writers ---------------------------------------------------------------------

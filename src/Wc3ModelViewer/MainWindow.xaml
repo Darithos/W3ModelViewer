@@ -25,9 +25,9 @@
             <Button Grid.Column="3" x:Name="OpenFileButton" Content="Open file…" Width="90" Margin="8,0,0,0"
                     Padding="4" Click="OnOpenFileClick" IsEnabled="False"
                     ToolTip="Open a loose .mdx model from disk (custom models); textures are found next to the file, and everything it borrows from Warcraft III comes out of your install"/>
-            <Button Grid.Column="4" x:Name="ExportButton" Content="Export…" Width="90" Margin="8,0,0,0"
+            <Button Grid.Column="4" x:Name="ExportButton" Content="Export…" MinWidth="90" Margin="8,0,0,0"
                     Padding="4" Click="OnExportClick" IsEnabled="False"
-                    ToolTip="Export the loaded model to .m3 for StarCraft II (and optionally .gltf for Blender)"/>
+                    ToolTip="Export the loaded model to .m3 for StarCraft II (and optionally .gltf for Blender). Ctrl- or Shift-click several models in the list to export them all in one batch."/>
         </Grid>
 
         <!-- Status bar -->
@@ -61,17 +61,22 @@
             <!-- Asset browser -->
             <DockPanel Grid.Column="0" Margin="8,0,0,8">
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                    <!-- Only shown while browsing Custom: changes which folder that lists. -->
+                    <Button DockPanel.Dock="Right" x:Name="CustomDirButton" Content="Folder…" Margin="4,0,0,0"
+                            Padding="6,0" Click="OnCustomDirClick" Visibility="Collapsed"/>
                     <ComboBox DockPanel.Dock="Right" x:Name="ArtSetCombo" Width="76" Margin="4,0,0,0"
-                              SelectionChanged="OnFilterChanged" ToolTip="Which art set to browse">
+                              SelectionChanged="OnArtSetChanged" ToolTip="Which art set to browse">
                         <ComboBoxItem Content="All" IsSelected="True"/>
                         <ComboBoxItem Content="DE" ToolTip="Definitive Edition art (patch 3.0)"/>
                         <ComboBoxItem Content="HD" ToolTip="Reforged art"/>
                         <ComboBoxItem Content="SD" ToolTip="Classic art"/>
+                        <ComboBoxItem Content="Custom" ToolTip="Your own models: every .mdx in a folder you choose, subfolders included"/>
                     </ComboBox>
                     <TextBox x:Name="Filter" Padding="4" TextChanged="OnFilterChanged"
                              ToolTip="Filter models by name or folder"/>
                 </DockPanel>
-                <ListBox x:Name="AssetList" SelectionChanged="OnAssetSelected"
+                <!-- Extended selection: Ctrl/Shift-click several models to export them as one batch. -->
+                <ListBox x:Name="AssetList" SelectionChanged="OnAssetSelected" SelectionMode="Extended"
                          Background="#14161A" Foreground="#DDD" BorderBrush="#333"
                          VirtualizingStackPanel.IsVirtualizing="True"/>
             </DockPanel>

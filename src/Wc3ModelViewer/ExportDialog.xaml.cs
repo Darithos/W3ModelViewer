@@ -14,16 +14,48 @@ namespace Wc3ModelViewer;
 /// </summary>
 public partial class ExportDialog : Window
 {
-    private readonly MdxModel _model;
-    private readonly Wc3ModelEntry _entry;
-    private readonly HashSet<int> _visibleGeosets;
-    private readonly List<SequenceRow> _rows;
+    private readonly MdxModel? _model;                   // null in a batch
+    private readonly Wc3ModelEntry? _entry;
+    private readonly HashSet<int> _visibleGeosets = [];
+    private readonly List<SequenceRow> _rows = [];
+    private readonly IReadOnlyList<string>? _batch;      // the batch's models, as the browser lists them
 
     /// <summary>Valid after the dialog closes with true.</summary>
     public M3ExportOptions Options { get; private set; } = new();
+
+    /// <summary>
+    /// The same options under another model name, for a batch — which names each model as it
+    /// writes it. Valid after the dialog closes with true.
+    /// </summary>
+    public Func<string, M3ExportOptions> OptionsFor { get; private set; } = _ => new();
     public string OutputDir { get; private set; } = "";
     public bool ExportGltf { get; private set; } = true;
     public bool ExportM3 { get; private set; }
+    public ExportLayout Layout { get; private set; }
+
+    /// <summary>
+    /// A batch export: every model selected in the browser, with one set of options. What is a
+    /// property of one model — its sequence list, LOD choice and visible geosets — cannot be picked
+    /// per model here, so a batch exports every geoset at full detail with all sequences or none.
+    /// </summary>
+    public ExportDialog(IReadOnlyList<string> batch)
+    {
+        InitializeComponent();
+        _batch = batch;
+        SequencePanel.Visibility = Visibility.Collapsed;
+        BatchPanel.Visibility = Visibility.Visible;
+        BatchTitle.Text = $"Models to export ({batch.Count})";
+        BatchList.ItemsSource = batch;
+        BatchSeqCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.batchseq", 0), BatchSeqCombo.Items.Count);
+        LodCombo.ItemsSource = new[] { "LOD 0 (full)" };
+        LodCombo.SelectedIndex = 0;
+        LodCombo.IsEnabled = false;
+        VisibleOnlyCheck.IsChecked = false;
+        VisibleOnlyCheck.IsEnabled = false;
+        ModelNameRow.Visibility = Visibility.Collapsed;
+        RestoreSettings();
+        Title = $"Export {batch.Count} models (.m3)";
+    }
 
     public ExportDialog(MdxModel model, Wc3ModelEntry entry, int viewerLod, HashSet<int> visibleGeosets)
     {
@@ -49,7 +81,15 @@ public partial class ExportDialog : Window
         var lods = model.LodLevels;
         LodCombo.ItemsSource = lods.Select(l => l == 0 ? "LOD 0 (full)" : $"LOD {l}").ToList();
         LodCombo.SelectedIndex = Math.Max(0, lods.IndexOf(viewerLod));
+        ModelNameBox.Text = entry.Name;
 
+        RestoreSettings();
+        VisibleOnlyCheck.IsChecked = UserSettings.GetBool("export.visibleonly", false);
+        Title = $"Export {entry.Name} (.m3)";
+    }
+
+    private void RestoreSettings()
+    {
         // Everything that means the same thing for the next model comes back as it was left —
         // porting a collection otherwise means retyping the scale on every single export. LOD and
         // the geoset/sequence selections are properties of *this* model and are not restored.
@@ -65,8 +105,8 @@ public partial class ExportDialog : Window
                                  .ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)),
                 ("export.scaleunit", "sc2"));
         ScaleBox.Text = UserSettings.Get("export.scale", "1.0");
-        // The export itself creates a <ModelName> subfolder (D3-exporter layout), so the
-        // default here is just the collection root.
+        // Both layouts build below this root (a <ModelName> subfolder, or one shared Assets\),
+        // so the default here is just the collection root.
         OutDirBox.Text = UserSettings.Get("export.outdir", Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Wc3Exports"));
         M3Check.IsChecked = UserSettings.GetBool("export.m3", true);
@@ -74,11 +114,27 @@ public partial class ExportDialog : Window
         ConvertPbrCheck.IsChecked = UserSettings.GetBool("export.convertpbr", true);
         GeosetVisCheck.IsChecked = UserSettings.GetBool("export.geoavis", true);
         ReduceKeysCheck.IsChecked = UserSettings.GetBool("export.reducekeys", true);
-        VisibleOnlyCheck.IsChecked = UserSettings.GetBool("export.visibleonly", false);
         TeamColorCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.teamcolor", 0), TeamColorCombo.Items.Count);
         TexSizeCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.texsize", 2), TexSizeCombo.Items.Count);
+        BakeFxCheck.IsChecked = UserSettings.GetBool("export.bakefx", true);
+        FxAtlasCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.fxatlas", 0), FxAtlasCombo.Items.Count);
+        LayoutCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.layout", 0), LayoutCombo.Items.Count);
+        UpdateLayoutHint();
+    }
 
-        Title = $"Export {entry.Name} (.m3)";
+    private void OnOutputChanged(object sender, RoutedEventArgs e) => UpdateLayoutHint();
+
+    /// <summary>Spells out where the files will land, since the two layouts differ only in that.</summary>
+    private void UpdateLayoutHint()
+    {
+        // Fires from InitializeComponent, before the named elements below the combo exist.
+        if (LayoutHint is null || OutDirBox is null || ModelNameBox is null) return;
+        string root = OutDirBox.Text.Trim();
+        string name = _batch is null ? ModelNameBox.Text.Trim() : "<model>";
+        if (root.Length == 0 || name.Length == 0) { LayoutHint.Text = ""; return; }
+        LayoutHint.Text = LayoutCombo.SelectedIndex == 1
+            ? $"→ {Path.Combine(root, "Assets", name + ".m3")}\n   textures in {Path.Combine(root, "Assets", "textures")}\\ — shared by every model"
+            : $"→ {Path.Combine(root, name, "Assets", name + ".m3")}\n   textures in {Path.Combine(root, name, "Assets", "textures")}\\";
     }
 
     private void OnAllSeqClick(object sender, RoutedEventArgs e)
@@ -129,29 +185,56 @@ public partial class ExportDialog : Window
             return;
         }
 
-        var lods = _model.LodLevels;
+        string modelName = _batch is null ? ModelNameBox.Text.Trim() : "";
+        if (_batch is null && (modelName.Length == 0 || modelName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+        {
+            MessageBox.Show(this, "The model name must be a valid file name.", "Export",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var lods = _model?.LodLevels ?? [0];
         int lod = LodCombo.SelectedIndex >= 0 && LodCombo.SelectedIndex < lods.Count
             ? lods[LodCombo.SelectedIndex] : 0;
+        // A batch has no per-model sequence list: all of them (null) or none (static).
+        HashSet<int>? sequences = _batch is not null
+            ? (BatchSeqCombo.SelectedIndex == 1 ? [] : null)
+            : selected.Select(r => r.Index).ToHashSet();
 
-        Options = new M3ExportOptions
+        // Read out of the controls now: a batch calls OptionsFor from its worker thread.
+        var sequenceNames = selected
+            .Where(r => r.ExportName.Trim().Length > 0)
+            .ToDictionary(r => r.Index, r => r.ExportName.Trim());
+        int teamColor = TeamColorCombo.SelectedIndex;
+        bool convertPbr = ConvertPbrCheck.IsChecked == true;
+        bool geosetVis = GeosetVisCheck.IsChecked == true;
+        var geosets = VisibleOnlyCheck.IsChecked == true ? _visibleGeosets : null;
+        bool reduceKeys = ReduceKeysCheck.IsChecked == true;
+        int maxTex = TexSizeCombo.SelectedIndex switch { 1 => 2048, 2 => 1024, 3 => 512, _ => 0 };
+        bool bakeFx = BakeFxCheck.IsChecked == true;
+        int fxAtlas = FxAtlasCombo.SelectedIndex switch { 1 => 1024, 2 => 2048, _ => 0 };
+        OptionsFor = name => new M3ExportOptions
         {
-            Sequences = selected.Select(r => r.Index).ToHashSet(),
-            SequenceNames = selected
-                .Where(r => r.ExportName.Trim().Length > 0)
-                .ToDictionary(r => r.Index, r => r.ExportName.Trim()),
+            Sequences = sequences,
+            SequenceNames = sequenceNames,
             Lod = lod,
             Scale = scale,
-            TeamColor = TeamColorCombo.SelectedIndex,
-            ConvertPbr = ConvertPbrCheck.IsChecked == true,
-            GeosetVisibility = GeosetVisCheck.IsChecked == true,
-            Geosets = VisibleOnlyCheck.IsChecked == true ? _visibleGeosets : null,
-            ReduceKeys = ReduceKeysCheck.IsChecked == true,
-            MaxTextureSize = TexSizeCombo.SelectedIndex switch { 1 => 2048, 2 => 1024, 3 => 512, _ => 0 },
-            ModelName = _entry.Name,
+            TeamColor = teamColor,
+            ConvertPbr = convertPbr,
+            GeosetVisibility = geosetVis,
+            Geosets = geosets,
+            ReduceKeys = reduceKeys,
+            MaxTextureSize = maxTex,
+            BakeEffects = bakeFx,
+            ImpostorAtlasSize = fxAtlas,
+            ModelName = name,
         };
+        // A batch names each model as it goes — see ExportWriter.UniqueName.
+        Options = OptionsFor(_batch is null ? modelName : "Model");
         OutputDir = OutDirBox.Text.Trim();
         ExportGltf = GltfCheck.IsChecked == true;
         ExportM3 = M3Check.IsChecked == true;
+        Layout = LayoutCombo.SelectedIndex == 1 ? ExportLayout.SharedAssets : ExportLayout.FolderPerModel;
 
         // Remembered on a real export only: a cancelled dialog was not a decision.
         UserSettings.SetMany(
@@ -160,12 +243,17 @@ public partial class ExportDialog : Window
             ("export.outdir", OutputDir),
             ("export.m3", ExportM3 ? "1" : "0"),
             ("export.gltf", ExportGltf ? "1" : "0"),
-            ("export.convertpbr", Options.ConvertPbr ? "1" : "0"),
-            ("export.geoavis", Options.GeosetVisibility ? "1" : "0"),
-            ("export.reducekeys", Options.ReduceKeys ? "1" : "0"),
-            ("export.visibleonly", VisibleOnlyCheck.IsChecked == true ? "1" : "0"),
+            ("export.convertpbr", ConvertPbrCheck.IsChecked == true ? "1" : "0"),
+            ("export.geoavis", GeosetVisCheck.IsChecked == true ? "1" : "0"),
+            ("export.reducekeys", ReduceKeysCheck.IsChecked == true ? "1" : "0"),
+            ("export.layout", LayoutCombo.SelectedIndex.ToString()),
             ("export.teamcolor", TeamColorCombo.SelectedIndex.ToString()),
-            ("export.texsize", TexSizeCombo.SelectedIndex.ToString()));
+            ("export.texsize", TexSizeCombo.SelectedIndex.ToString()),
+            ("export.bakefx", BakeFxCheck.IsChecked == true ? "1" : "0"),
+            ("export.fxatlas", FxAtlasCombo.SelectedIndex.ToString()));
+        // Each only means something in the mode that shows it.
+        if (_batch is null) UserSettings.Set("export.visibleonly", VisibleOnlyCheck.IsChecked == true);
+        else UserSettings.Set("export.batchseq", BatchSeqCombo.SelectedIndex);
 
         DialogResult = true;
     }

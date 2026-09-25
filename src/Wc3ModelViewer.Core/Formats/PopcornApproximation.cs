@@ -117,12 +117,22 @@ public static class PopcornApproximation
             {
                 // The scripts run: measure what each renderer's particles really do.
                 List<Popcorn.PkRendererStats> stats;
-                try { stats = Popcorn.PkRendererStats.Measure(corn.Runtime, colourMultiplier: corn.ColorMultiplier); }
+                try
+                {
+                    stats = Popcorn.PkRendererStats.Measure(corn.Runtime, colourMultiplier: corn.ColorMultiplier);
+                    // And which of them keep their directions when the node turns: an item's beam
+                    // stands straight up in Warcraft III however the item bobs and tilts.
+                    Popcorn.PkRendererStats.MarkWorldDirections(stats, corn.Runtime, colourMultiplier: corn.ColorMultiplier);
+                    // And which travel with the effect rather than being left where they were born:
+                    // a missile's head keeps up with it, its trail does not.
+                    Popcorn.PkRendererStats.MarkFollowsEmitter(stats, corn.Runtime, colourMultiplier: corn.ColorMultiplier);
+                }
                 catch (Exception e) when (e is InvalidDataException or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
                 {
                     log.Add($"'{corn.Name}': measuring {Path.GetFileName(corn.EffectPath)} failed — {e.Message}; using recovered constants");
                     stats = [];
                 }
+                corn.Stats = stats;
                 foreach (var s in stats)
                 {
                     int symmetry = s.OrbitAngularVelocity == 0 ? 1
@@ -312,6 +322,47 @@ public static class PopcornApproximation
         // The CORN multiplier went into the measurement as the scripts' __a_Game.ColorMultiplier,
         // so it is not applied again here: the hero glow's is (1,1,1,0), which its script ignores.
         var (c0, c1, c2, cMid) = s.Colour;
+        // A team-coloured layer's hue is the player's, and StarCraft II supplies it live, so only
+        // its brightness belongs in the ramp. The measuring run has no player and passes white,
+        // which the item rarity beams turn into pure red (they saturate the player colour, and
+        // white has no hue) — baked in, every player's beam was red, and layers that kept white
+        // came out white. Their strongest channel is the one thing the same for every player
+        // (n18 on TG4: 0.43 as white, red or blue), so the ramp is that, in grey.
+        if (s.TeamColoured) (c0, c1, c2) = (Brightness(c0), Brightness(c1), Brightness(c2));
+        // PopcornFX colour is HDR; a PAR_ ramp is a byte per channel. Clamping threw the excess
+        // away, so the ramp is scaled into range instead and the factor travels as Intensity, which
+        // the export writes as the material's hdr_emis — Blizzard's own knob for bright particles.
+        float peak = MathF.Max(MathF.Max(Brightness(c0).X, Brightness(c1).X), Brightness(c2).X);
+        float intensity = peak > 1f ? peak : 1f;
+        if (intensity > 1f)
+        {
+            var k = new Vector4(1f / intensity, 1f / intensity, 1f / intensity, 1f);
+            (c0, c1, c2) = (c0 * k, c1 * k, c2 * k);
+            // Warcraft III clips an HDR colour channel by channel, so a hot layer's hue is not its
+            // ramp's: the fireball's sparks are (11, 1, 0) and show yellow, as red clips at 1 while
+            // green still rises. StarCraft II's hdr_emis keeps the ramp's ratio, and the same layer
+            // drew as a red smear. So the ramp takes the hue Warcraft III actually shows at the
+            // sprite's brightest texel, keeping its own brightness; hdr_emis still carries the glow.
+            if (!s.TeamColoured)
+                (c0, c1, c2) = (ClippedHue(c0, intensity), ClippedHue(c1, intensity), ClippedHue(c2, intensity));
+        }
+        // StarCraft II applies hdr_emis to the emissive before the vertex alpha, and what clips at
+        // 1 there is gone before alpha can scale it: the fireball's ribbon (alpha 0.26 under x4.7,
+        // which Warcraft III's HDR made a bright strip) drew faint and short in VfxFireballH under
+        // the same numbers. So the alpha ramp is normalised to a peak of 1 and its old peak moves
+        // into the intensity — the same product where nothing clips, the whole ramp where it does.
+        // A ramp peaking above 1 (PopcornFX alpha is unclamped; the wisps reach 3.6) moves its
+        // excess the same way instead of losing it to the byte. Additive layers only: alpha-blend
+        // coverage cannot exceed 1 in either game.
+        bool additive = r.Blend is not (PopcornBlend.AlphaBlend or PopcornBlend.PremultipliedAlpha);
+        float aPeak = MathF.Max(MathF.Max(c0.W, c1.W), c2.W);
+        if (additive && aPeak > 0f && MathF.Abs(aPeak - 1f) > 1e-3f)
+        {
+            float fold = aPeak < 1f ? MathF.Min(1f / aPeak, intensity) : 1f / aPeak;
+            var k = new Vector4(1, 1, 1, fold);
+            (c0, c1, c2) = (c0 * k, c1 * k, c2 * k);
+            intensity /= fold;
+        }
         var (sc0, a0) = SplitColour(c0, Vector4.One);
         var (sc1, a1) = SplitColour(c1, Vector4.One);
         var (sc2, a2) = SplitColour(c2, Vector4.One);
@@ -324,7 +375,9 @@ public static class PopcornApproximation
         // Half a particle of headroom, so a one-particle burst is not lost to rounding at the window's end.
         float rate = s.Immortal ? 1f / s.Life : s.Continuous ? s.Births / MathF.Max(s.LastBirth - s.FirstBirth, 0.2f) : (s.Births + 0.5f) / window;
         var vis = corn.VisibilityTrack ?? GateTrack(model, corn.PopcornFlags);
-        bool burst = corn.EmissionRateTrack is null && !s.Immortal && !s.Continuous && EmitBursts;
+        // A distance-driven trail barely emits standing still; in flight it is a steady stream.
+        if (s.TrailRate > 0) rate = s.TrailRate;
+        bool burst = corn.EmissionRateTrack is null && !s.Immortal && !s.Continuous && s.TrailRate == 0 && EmitBursts;
         bool asCount = burst && CountBursts && s.LastBirth - s.FirstBirth <= CountBurstMaxSeconds;
         var rateTrack = corn.EmissionRateTrack is not null
             ? ScaledTrack(corn.EmissionRateTrack, rate)
@@ -358,17 +411,24 @@ public static class PopcornApproximation
             Length = 0, Width = 0,
             Blend = blend, Rows = Math.Max(1, r.AtlasRows), Columns = Math.Max(1, r.AtlasColumns),
             ParticleType = MdxParticleType.Head, TailLength = 0, MiddleTime = Math.Clamp(cMid, 0.05f, 0.95f),
+            SizeMiddleTime = Math.Clamp(s.Size.MiddleTime, 0.05f, 0.95f),
             StartColor = sc0, MiddleColor = sc1, EndColor = sc2,
             StartAlpha = a0, MiddleAlpha = a1, EndAlpha = a2,
             StartScale = s.Size.Start * m, MiddleScale = s.Size.Middle * m, EndScale = s.Size.End * m,
             TextureId = TextureIndex(model, r.Texture), PriorityPlane = 0, ReplaceableId = 0,
             TeamColoured = s.TeamColoured,
+            Intensity = intensity,
+            Ribbon = r.Kind == Popcorn.PkRendererKind.Ribbon,
+            PopcornRenderer = r,
             Squirt = false, HeadCellStart = 0, HeadCellEnd = 0, HeadCellRepeat = 1,
             // An orbiting particle is hosted to its (spinning) emitter bone rather than left in
             // world space, so the bone carries it round.
-            Unshaded = true, Unfogged = false, ModelSpace = s.OrbitAngularVelocity != 0, LineEmitter = false,
+            // A particle that travels with its effect (a missile's head) is simulated in the
+            // emitter's space, so a flying missile carries it; the rest stay in the world.
+            Unshaded = true, Unfogged = false, ModelSpace = s.OrbitAngularVelocity != 0 || s.FollowsEmitter, LineEmitter = false,
             OrbitAngularVelocity = s.OrbitAngularVelocity, OrbitSymmetry = Math.Max(1, orbitSymmetry),
             FaceDirection = face,
+            WorldDirections = s.WorldDirections,
             EmissionRateTrack = rateTrack,
             EmitCountTrack = countTrack,
             LifeTrack = ScaledTrack(corn.LifespanTrack, s.Life),
@@ -423,14 +483,165 @@ public static class PopcornApproximation
         return (Vector3.Clamp(rgb, Vector3.Zero, Vector3.One), (byte)Math.Clamp(alpha * 255f + 0.5f, 0, 255));
     }
 
+    /// <summary>A colour's strongest channel as a grey, alpha kept.</summary>
+    private static Vector4 Brightness(Vector4 v)
+    {
+        float max = MathF.Max(v.X, MathF.Max(v.Y, v.Z));
+        return new Vector4(max, max, max, v.W);
+    }
+
+    /// <summary>
+    /// The hue a normalised HDR ramp key shows in Warcraft III: the key scaled back up by
+    /// <paramref name="intensity"/> and its alpha, clipped per channel, then brought back to the
+    /// key's own brightness.
+    /// </summary>
+    private static Vector4 ClippedHue(Vector4 v, float intensity)
+    {
+        float bright = MathF.Max(v.X, MathF.Max(v.Y, v.Z));
+        var shown = Vector3.Min(new Vector3(v.X, v.Y, v.Z) * (intensity * MathF.Max(v.W, 0f)), Vector3.One);
+        float peak = MathF.Max(shown.X, MathF.Max(shown.Y, shown.Z));
+        if (peak <= 1e-4f) return v;
+        var hue = shown / peak * bright;
+        return new Vector4(hue, v.W);
+    }
+
+    /// <summary>
+    /// The one camera-facing card that plays an impostor sheet: hosted to the effect's node, sized
+    /// and placed by the bake's footprint, and emitted once when the effect gates on. A steady-state
+    /// effect instead keeps two cards alive half a period apart at all times — emitted at twice the
+    /// period's rate with a triangle alpha ramp, so their alphas sum to one and the card that is at
+    /// the sheet's last frame is always the one at alpha zero: the wrap is never seen.
+    /// </summary>
+    public static MdxParticleEmitter2 SynthesizeImpostor(MdxModel model, MdxPopcornEmitter corn, Popcorn.PkImpostorBake bake)
+    {
+        var vis = corn.VisibilityTrack ?? GateTrack(model, corn.PopcornFlags);
+        float life = bake.Duration;
+        float rate;
+        MdxTrack<float>? count = null;
+        byte startAlpha = 255, endAlpha = 255;
+        if (bake.Static)
+        {
+            // Identical cards end to end: no fade needed, and none wanted on a blended card, where
+            // two half-alpha copies do not add up to one.
+            rate = 1f / life;
+        }
+        else if (bake.Loops)
+        {
+            rate = 2f / life;
+            startAlpha = 0; endAlpha = 0;
+        }
+        else
+        {
+            // One card at each sequence's gate-on, through the same edge-triggered count burst the
+            // measured stand-ins use; a model with no sequences replays it once per life instead.
+            count = BurstTrack(model, vis, 0f, 1f / 30f, 1f);
+            rate = count is null ? 1f / life : 0f;
+        }
+        int cells = bake.Columns * bake.Rows;
+        return new MdxParticleEmitter2
+        {
+            Name = $"{corn.Name}/impostor",
+            NodeIndex = corn.NodeIndex,
+            PopcornSource = $"{Path.GetFileNameWithoutExtension(corn.EffectPath)}:impostor (baked {bake.Layers.Count} layers)",
+            Orientation = MdxParticleOrientation.CameraFacing,
+            BeamLength = 0,
+            SpawnImmediately = bake.Loops,
+            SpawnOffset = bake.Centre,
+            SpawnHalfExtents = Vector3.Zero,
+            EmitDirection = Vector3.UnitZ,
+            Speed = 0, Variation = 0, Latitude = 0,
+            Gravity = 0, Life = life, EmissionRate = rate,
+            Length = 0, Width = 0,
+            Blend = bake.Additive ? MdxParticleBlend.Add : MdxParticleBlend.Blend,
+            Rows = bake.Rows, Columns = bake.Columns,
+            ParticleType = MdxParticleType.Head, TailLength = 0, MiddleTime = 0.5f,
+            StartColor = Vector3.One, MiddleColor = Vector3.One, EndColor = Vector3.One,
+            StartAlpha = startAlpha, MiddleAlpha = 255, EndAlpha = endAlpha,
+            StartScale = bake.HalfSize, MiddleScale = bake.HalfSize, EndScale = bake.HalfSize,
+            TextureId = -1, PriorityPlane = 0, ReplaceableId = 0,
+            HeadCellStart = 0, HeadCellEnd = cells - 1, HeadCellRepeat = 1,
+            Squirt = false, Unshaded = true, Unfogged = false, ModelSpace = true, LineEmitter = false,
+            Intensity = 1f,
+            BakedSprite = bake.Atlas,
+            EmitCountTrack = count,
+            VisibilityTrack = vis,
+        };
+    }
+
+    /// <summary>
+    /// The one ribbon that lays a trail bake behind the effect's node: its texture is the strip,
+    /// head at U=0, and its width and lifespan are the bake's, so at the speed the bake flew the
+    /// picture is drawn at its own scale — and at any other speed it stretches or shortens with
+    /// the strip, as Warcraft III's per-distance trail does. A ribbon has no length until the
+    /// model moves, so a standing missile shows no trail, as in Warcraft III.
+    /// </summary>
+    /// <param name="ribbonSpeed">
+    /// Diagnostic only, 0 in a real export: the speed the strip's own points carry away from the
+    /// emitter. A trail draws only where its bone has travelled, so a parked model shows none —
+    /// correct, and also untestable anywhere that does not move the model. A small speed makes the
+    /// strip extrude on the spot so its artwork can be judged standing still.
+    /// </param>
+    /// <param name="widthScale">
+    /// Multiplies the ribbon's width without touching the strip, so the baked art is stretched
+    /// across a wider band. 1 is the width the bake measured. Measured against the editor on
+    /// 2026-09-25: beyond the head ball, Warcraft III's comet runs about 1.5x wider than our strip
+    /// at the same distance behind it (WC3 0.57/0.53/0.40/0.30 of the head's width at 94/125/157/188
+    /// units along, ours 0.38/0.31/0.26/0.18), while the brightness along it already matches. Why
+    /// the simulated trail comes out narrow is not yet explained, so this stays an explicit knob at
+    /// its measured default rather than a silent correction somewhere in the bake.
+    /// </param>
+    public static MdxParticleEmitter2 SynthesizeTrail(MdxModel model, MdxPopcornEmitter corn, Popcorn.PkTrailBake trail,
+                                                      float ribbonSpeed = 0f, float widthScale = 1f)
+    {
+        float half = trail.Width * widthScale / 2;
+        var vis = corn.VisibilityTrack ?? GateTrack(model, corn.PopcornFlags);
+        return new MdxParticleEmitter2
+        {
+            Name = $"{corn.Name}/trail",
+            NodeIndex = corn.NodeIndex,
+            PopcornSource = $"{Path.GetFileNameWithoutExtension(corn.EffectPath)}:trail (baked {trail.Layers.Count} layers)",
+            Orientation = MdxParticleOrientation.CameraFacing,
+            BeamLength = 0,
+            SpawnImmediately = false,
+            SpawnOffset = Vector3.Zero,
+            SpawnHalfExtents = Vector3.Zero,
+            EmitDirection = Vector3.UnitZ,
+            Speed = 0, Variation = 0, Latitude = 0,
+            Gravity = 0, Life = trail.Duration, EmissionRate = 1f,
+            Length = 0, Width = 0,
+            Blend = trail.Additive ? MdxParticleBlend.Add : MdxParticleBlend.Blend,
+            Rows = 1, Columns = 1,
+            ParticleType = MdxParticleType.Head, TailLength = 0, MiddleTime = 0.5f,
+            StartColor = Vector3.One, MiddleColor = Vector3.One, EndColor = Vector3.One,
+            StartAlpha = 255, MiddleAlpha = 255, EndAlpha = 255,
+            StartScale = half, MiddleScale = half, EndScale = half,
+            TextureId = -1, PriorityPlane = 0, ReplaceableId = 0,
+            HeadCellStart = 0, HeadCellEnd = 0, HeadCellRepeat = 1,
+            Squirt = false, Unshaded = true, Unfogged = false, ModelSpace = false, LineEmitter = false,
+            Intensity = 1f,
+            Ribbon = true,
+            RibbonSpeed = ribbonSpeed,
+            BakedSprite = trail.Texture,
+            VisibilityTrack = vis,
+        };
+    }
+
+    /// <summary>
+    /// A bake texture path as an HD model spells its own: <c>_HD.w3mod/Textures/FX/Flare/Flare_BW.tif</c>
+    /// becomes <c>Textures\FX\Flare\Flare_BW.tif</c>. The tree prefix is the model's own, and the
+    /// texture cache maps <c>.tif</c> to the <c>.dds</c> the archive holds.
+    /// </summary>
+    public static string TextureRelPath(string bakePath)
+    {
+        string rel = bakePath.Replace('/', '\\');
+        int cut = rel.IndexOf(".w3mod\\", StringComparison.OrdinalIgnoreCase);
+        return cut >= 0 ? rel[(cut + ".w3mod\\".Length)..] : rel;
+    }
+
     /// <summary>Finds or adds the TEXS entry for a bake texture, spelled the way HD models spell theirs.</summary>
     private static int TextureIndex(MdxModel model, string bakePath)
     {
-        // "_HD.w3mod/Textures/FX/Flare/Flare_BW.tif" -> "Textures\FX\Flare\Flare_BW.tif": the tree
-        // prefix is the model's own, and the texture cache maps .tif to the .dds the archive holds.
-        string rel = bakePath.Replace('/', '\\');
-        int cut = rel.IndexOf(".w3mod\\", StringComparison.OrdinalIgnoreCase);
-        if (cut >= 0) rel = rel[(cut + ".w3mod\\".Length)..];
+        string rel = TextureRelPath(bakePath);
 
         for (int i = 0; i < model.Textures.Count; i++)
             if (model.Textures[i].ReplaceableId == 0 && string.Equals(model.Textures[i].FileName, rel, StringComparison.OrdinalIgnoreCase))

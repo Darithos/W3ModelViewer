@@ -160,50 +160,54 @@ public sealed class PkCornPlayer
     {
         var batches = new List<PkRenderBatch>();
         if (_corn.Runtime is null) return batches;
-        const float m = PopcornApproximation.MetresToWc3;
-        var colourMul = _corn.ColorMultiplier;
-
         foreach (var layer in _corn.Runtime.Layers)
             foreach (var r in layer.Renderers)
                 batches.Add(new PkRenderBatch { Renderer = r, LayerName = layer.Name });
+        foreach (var fx in _instances) CollectSprites(fx, batches, PopcornApproximation.MetresToWc3);
+        return batches;
+    }
 
-        foreach (var fx in _instances)
+    /// <summary>
+    /// Appends one running instance's sprites to the batch of each Billboard and Distortion renderer
+    /// in <paramref name="batches"/> (a renderer with no batch is skipped), positions and sizes
+    /// scaled from the simulation's metres by <paramref name="unitsPerMetre"/>.
+    /// </summary>
+    public static void CollectSprites(PkEffectInstance fx, List<PkRenderBatch> batches, float unitsPerMetre)
+    {
+        float m = unitsPerMetre;
+        foreach (var st in fx.Slots)
         {
-            foreach (var st in fx.Slots)
+            if (st is null || st.Count == 0) continue;
+            foreach (var r in st.Def.Renderers)
             {
-                if (st is null || st.Count == 0) continue;
-                foreach (var r in st.Def.Renderers)
+                if (r.Kind is not (PkRendererKind.Billboard or PkRendererKind.Distortion)) continue;
+                var batch = batches.FirstOrDefault(b => ReferenceEquals(b.Renderer, r));
+                if (batch is null) continue;
+                int fPos = r.Input("Position"), fSize = r.Input("Size"), fSize2 = r.Input("Size2"), fAxis = r.Input("Axis"),
+                    fNormal = r.Input("NormalAxis"), fRot = r.Input("Rotation"), fCol = r.Input("Color"), fEn = r.Input("Enabled"),
+                    fTex = r.Input("TextureID");
+                for (int p = 0; p < st.Count; p++)
                 {
-                    if (r.Kind is not (PkRendererKind.Billboard or PkRendererKind.Distortion)) continue;
-                    var batch = batches.First(b => ReferenceEquals(b.Renderer, r));
-                    int fPos = r.Input("Position"), fSize = r.Input("Size"), fSize2 = r.Input("Size2"), fAxis = r.Input("Axis"),
-                        fNormal = r.Input("NormalAxis"), fRot = r.Input("Rotation"), fCol = r.Input("Color"), fEn = r.Input("Enabled"),
-                        fTex = r.Input("TextureID");
-                    for (int p = 0; p < st.Count; p++)
+                    if (fEn >= 0 && st.Fields[fEn][p].I0 == 0) continue;
+                    var col = fCol >= 0 ? st.Fields[fCol][p].Xyzw : Vector4.One;
+                    if (r.Kind == PkRendererKind.Distortion) col = new Vector4(1, 1, 1, 0.15f);
+                    if (col.W <= 0.002f && r.Blend != PopcornBlend.AdditiveNoAlpha) continue;
+                    Vector2 half;
+                    if (r.Size2D && fSize2 >= 0) { var s2 = st.Fields[fSize2][p]; half = new Vector2(s2.X, s2.Y); }
+                    else { float s = fSize >= 0 ? st.Fields[fSize][p].X : 1f; half = new Vector2(s, s); }
+                    if (!(half.X > 0) && !(half.Y > 0)) continue;
+                    batch.Sprites.Add(new PkSprite
                     {
-                        if (fEn >= 0 && st.Fields[fEn][p].I0 == 0) continue;
-                        var col = fCol >= 0 ? st.Fields[fCol][p].Xyzw : Vector4.One;
-                        if (r.Kind == PkRendererKind.Distortion) col = new Vector4(1, 1, 1, 0.15f);
-                        if (col.W <= 0.002f && r.Blend != PopcornBlend.AdditiveNoAlpha) continue;
-                        Vector2 half;
-                        if (r.Size2D && fSize2 >= 0) { var s2 = st.Fields[fSize2][p]; half = new Vector2(s2.X, s2.Y); }
-                        else { float s = fSize >= 0 ? st.Fields[fSize][p].X : 1f; half = new Vector2(s, s); }
-                        if (!(half.X > 0) && !(half.Y > 0)) continue;
-                        batch.Sprites.Add(new PkSprite
-                        {
-                            Position = (fPos >= 0 ? st.Fields[fPos][p].Xyz : Vector3.Zero) * m,
-                            HalfSize = half * m,
-                            Axis = (fAxis >= 0 ? st.Fields[fAxis][p].Xyz : Vector3.UnitZ) * m,
-                            Normal = fNormal >= 0 ? st.Fields[fNormal][p].Xyz : Vector3.UnitZ,
-                            Rotation = fRot >= 0 ? float.DegreesToRadians(st.Fields[fRot][p].X) : 0f,
-                            Color = col,
-                            Frame = fTex >= 0 ? (int)MathF.Max(0, st.Fields[fTex][p].X) : 0,
-                        });
-                    }
+                        Position = (fPos >= 0 ? st.Fields[fPos][p].Xyz : Vector3.Zero) * m,
+                        HalfSize = half * m,
+                        Axis = (fAxis >= 0 ? st.Fields[fAxis][p].Xyz : Vector3.UnitZ) * m,
+                        Normal = fNormal >= 0 ? st.Fields[fNormal][p].Xyz : Vector3.UnitZ,
+                        Rotation = fRot >= 0 ? float.DegreesToRadians(st.Fields[fRot][p].X) : 0f,
+                        Color = col,
+                        Frame = fTex >= 0 ? (int)MathF.Max(0, st.Fields[fTex][p].X) : 0,
+                    });
                 }
             }
         }
-        _ = colourMul;
-        return batches;
     }
 }
