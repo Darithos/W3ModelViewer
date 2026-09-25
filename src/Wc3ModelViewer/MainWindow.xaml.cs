@@ -569,9 +569,15 @@ public partial class MainWindow : Window
         _suppressRebuild = false;
     }
 
-    /// <summary>Statically invisible geosets (GEOA alpha 0, no track) carry corpses and alternate forms.</summary>
+    /// <summary>
+    /// Statically invisible geosets start unticked. Warcraft III says this two ways and means it
+    /// both times: a GEOA at alpha 0 (corpses, alternate forms) and a material whose every layer is
+    /// at alpha 0 (walk ramps, bound volumes — see <see cref="MaterialCompositor.IsInvisible"/>).
+    /// They stay listed, so the ramp hiding inside a staircase can still be ticked on and looked at.
+    /// </summary>
     private bool DefaultVisible(MdxGeoset geo)
     {
+        if (_model is not null && MaterialCompositor.IsInvisible(_model, geo)) return false;
         var anim = _model?.GeosetAnims.FirstOrDefault(a => a.GeosetId == geo.Index);
         return anim is null || anim.AlphaTrack is not null || anim.Alpha >= 0.01f;
     }

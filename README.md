@@ -124,7 +124,21 @@ Working end to end:
   equivalent and keep their rest pose.
 - **glTF export** — skeleton, skinning, PNG textures and every sequence baked as a separate
   animation, for editing in Blender (re-export `.m3` there with m3studio if desired). Verified
-  headlessly: Blender imports the armature, skinned mesh and all actions.
+  headlessly: Blender imports the armature, skinned mesh and all actions. glTF **is**
+  metallic-roughness and Reforged's ORM is already packed the way it asks for, so the full PBR set
+  — base colour, ORM (shared as `metallicRoughnessTexture` and `occlusionTexture`), normal and
+  emissive — is always written; the *Convert Reforged PBR → SC2 specular* checkbox governs the
+  `.m3` and nothing else. Player colour is **not** baked into base colour, exactly as the `.m3`
+  path leaves it out: each material ships a greyscale `*_team.png` and names it in the material's
+  `extras.teamColorMask`, so a Blender shader can mix any player colour in live instead of being
+  stuck with the one that was exported.
+- **Invisible geometry stays invisible** — a material whose every layer sits at static alpha 0 is
+  how Warcraft III carries helper geometry: the smooth ramp a unit walks up instead of the visible
+  steps (Blizzard names the bone `ultraGlide_geo`), the sphere a cyclone is bound to, a portal's
+  empty carrier. These panels are deliberately larger than the art they sit on, so drawing them
+  swallows the model — most Reforged and Definitive staircases rendered as one flat, bridge-textured
+  slab. 1,417 layers across 604 models carry the flag; they are now unticked in the viewer's geoset
+  list (still listed, so you can tick one on and look at it) and dropped by both exporters.
 - **Custom models** — *Open file…* loads a loose `.mdx` from disk (Hive Workshop downloads etc.);
   textures resolve from the model's folder (`.blp` including JPEG-content, `.dds`), then by file
   name anywhere in the folder tree beside it — a download that references
