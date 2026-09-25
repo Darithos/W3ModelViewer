@@ -83,6 +83,22 @@ public sealed class CompositeMaterial
 /// </remarks>
 public static class MaterialCompositor
 {
+    /// <summary>
+    /// The image behind one of a layer's texture slots, or null when the slot is empty or is a
+    /// generated one. Team-colour and team-glow slots have no file behind them — StarCraft II and
+    /// glTF both carry the player's colour themselves — and a tileset tree or cliff (replaceable
+    /// 11, 31-37) has already been given a real file name at load, so it resolves like any other.
+    /// </summary>
+    public static RgbaImage? LoadSlot(MdxModel mdx, MdxLayer layer, MdxTextureSlot slot,
+                                      Casc.Wc3TextureCache textures, string modelCascName, int teamColor)
+    {
+        int texId = layer.Slot(slot);
+        if ((uint)texId >= (uint)mdx.Textures.Count) return null;
+        var tex = mdx.Textures[texId];
+        if (tex.IsTeamColor || tex.IsTeamGlow || tex.FileName.Length == 0) return null;
+        return textures.Load(modelCascName, tex, teamColor);
+    }
+
     /// <summary>The engine's alpha-test threshold for filter mode Transparent.</summary>
     public const float CutoutThreshold = 0.75f;
 
