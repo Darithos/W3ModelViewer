@@ -1237,15 +1237,7 @@ public sealed class M3Exporter
     }
 
     private RgbaImage? LoadSlot(Casc.Wc3TextureCache textures, string modelCascName, MdxLayer layer, MdxTextureSlot slot)
-    {
-        int texId = layer.Slot(slot);
-        if ((uint)texId >= (uint)_mdx.Textures.Count) return null;
-        var tex = _mdx.Textures[texId];
-        // Team slots are generated, not files; a tileset tree or cliff (replaceable 11, 31-37) has
-        // been given a default file name at load and exports like any other texture.
-        if (tex.IsTeamColor || tex.IsTeamGlow || tex.FileName.Length == 0) return null;
-        return textures.Load(modelCascName, tex, _opt.TeamColor);
-    }
+        => MaterialCompositor.LoadSlot(_mdx, layer, slot, textures, modelCascName, _opt.TeamColor);
 
     /// <param name="alphaIsData">
     /// The normal map (X in alpha) and the team texture (the mask in alpha): filtered plainly and

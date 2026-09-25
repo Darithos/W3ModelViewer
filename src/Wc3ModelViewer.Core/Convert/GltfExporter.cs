@@ -51,6 +51,22 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         public int MaterialIndex;
     }
 
+    /// <summary>
+    /// One material's glTF texture set. Each field indexes the shared <c>textures</c> array, or -1.
+    /// </summary>
+    /// <remarks>
+    /// Warcraft III's HD materials are already metallic-roughness, and its ORM map is packed exactly
+    /// the way glTF asks for: occlusion in R, roughness in G, metallic in B. So one image serves
+    /// both <c>metallicRoughnessTexture</c> and <c>occlusionTexture</c>, which the spec explicitly
+    /// allows and which keeps the export smaller. This is deliberately *not* the conversion the .m3
+    /// path does: that one converts to StarCraft II's specular workflow and repacks normals into its
+    /// two-channel (X in alpha, Y in green) convention, neither of which glTF wants.
+    /// </remarks>
+    private sealed class TexSet
+    {
+        public int BaseColor = -1, MetallicRoughness = -1, Normal = -1, Emissive = -1;
+    }
+
     public GltfExportResult Export(Wc3TextureCache textures, string modelCascName)
     {
         var bin = new BinWriter();
@@ -59,8 +75,15 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
 
         // ---- geosets & materials ----
         var prims = new List<Prim>();
-        var materials = new List<(string Name, CompositeMaterial Mat, string PngName)>();
+        var materials = new List<(string Name, CompositeMaterial Mat, TexSet Tex)>();
         var pngs = new List<GltfFile>();
+
+        // Every PNG is one glTF image and one glTF texture, sharing an index.
+        int AddImage(string stem, RgbaImage image)
+        {
+            pngs.Add(new GltfFile(Unique(stem, pngs) + ".png", PngWriter.Write(image)));
+            return pngs.Count - 1;
+        }
 
         foreach (var g in mdx.Geosets)
         {
@@ -77,9 +100,21 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
                 string stem = composite.PrimaryTexturePath.Length > 0
                     ? San(Path.GetFileNameWithoutExtension(composite.PrimaryTexturePath.Replace('/', '\\').Split('\\')[^1]))
                     : $"material{materials.Count:00}";
-                string png = Unique(stem, pngs) + ".png";
-                pngs.Add(new GltfFile(png, PngWriter.Write(composite.Texture)));
-                materials.Add(($"{stem}", composite, png));
+                // Base colour is the composite, not the raw diffuse: the layer stack is already
+                // flattened into it and the player's contribution taken out — the same reason the
+                // .m3 path hands the composite to PbrConverter rather than the file on disk.
+                var set = new TexSet { BaseColor = AddImage(stem + "_diff", composite.Texture) };
+
+                var pbrLayer = mdx.Materials[g.MaterialId].Layers.FirstOrDefault(l => l.IsPbr);
+                if (options.ConvertPbr && pbrLayer is not null)
+                {
+                    RgbaImage? Slot(MdxTextureSlot slot) =>
+                        MaterialCompositor.LoadSlot(mdx, pbrLayer, slot, textures, modelCascName, options.TeamColor);
+                    if (Slot(MdxTextureSlot.Orm) is { } orm) set.MetallicRoughness = AddImage(stem + "_orm", orm);
+                    if (Slot(MdxTextureSlot.Normal) is { } nrm) set.Normal = AddImage(stem + "_norm", GltfNormal(nrm));
+                    if (Slot(MdxTextureSlot.Emissive) is { } emi) set.Emissive = AddImage(stem + "_emis", emi);
+                }
+                materials.Add((stem, composite, set));
                 matIndex = materials.Count - 1;
             }
             prims.Add(new Prim { Geoset = g, Material = composite, MaterialIndex = matIndex });
@@ -186,13 +221,28 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
 
         // ---- materials & textures ----
         json.BeginArray("materials");
-        foreach (var (name, mat, _) in materials)
+        foreach (var (name, mat, tex) in materials)
         {
             json.BeginObject();
             json.Str("name", name);
-            json.Raw("pbrMetallicRoughness",
-                $"{{\"baseColorTexture\":{{\"index\":{materials.FindIndex(m => m.Name == name)}}}," +
-                "\"metallicFactor\":0.0,\"roughnessFactor\":0.9}");
+            // With an ORM map the factors must be 1: glTF multiplies them into the texture, so the
+            // old 0.0/0.9 stand-ins would flatten every metal back to a dielectric. Without one
+            // they stay, because then they are the only description of the surface there is.
+            string pbr = $"{{\"baseColorTexture\":{{\"index\":{tex.BaseColor}}}";
+            pbr += tex.MetallicRoughness >= 0
+                ? $",\"metallicRoughnessTexture\":{{\"index\":{tex.MetallicRoughness}}},\"metallicFactor\":1.0,\"roughnessFactor\":1.0}}"
+                : ",\"metallicFactor\":0.0,\"roughnessFactor\":0.9}";
+            json.Raw("pbrMetallicRoughness", pbr);
+            // Occlusion is the R channel of that same ORM image; glTF allows the sharing.
+            if (tex.MetallicRoughness >= 0)
+                json.Raw("occlusionTexture", $"{{\"index\":{tex.MetallicRoughness}}}");
+            if (tex.Normal >= 0)
+                json.Raw("normalTexture", $"{{\"index\":{tex.Normal}}}");
+            if (tex.Emissive >= 0)
+            {
+                json.Raw("emissiveTexture", $"{{\"index\":{tex.Emissive}}}");
+                json.Raw("emissiveFactor", "[1.0,1.0,1.0]");
+            }
             if (mat.TwoSided) json.Bool("doubleSided", true);
             switch (mat.Blend)
             {
@@ -209,13 +259,13 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         json.EndArray();
 
         json.BeginArray("textures");
-        for (int i = 0; i < materials.Count; i++)
+        for (int i = 0; i < pngs.Count; i++)
             json.Raw(null, $"{{\"source\":{i}}}");
         json.EndArray();
 
         json.BeginArray("images");
-        foreach (var (_, _, png) in materials)
-            json.Raw(null, $"{{\"uri\":\"{png}\"}}");
+        foreach (var f in pngs)
+            json.Raw(null, $"{{\"uri\":\"{f.FileName}\"}}");
         json.EndArray();
 
         // ---- animations: one per sequence, baked LINEAR ----
@@ -385,6 +435,28 @@ public sealed class GltfExporter(MdxModel mdx, M3ExportOptions options)
         samplers.Append($"{{\"input\":{timeAcc},\"output\":{outputAcc},\"interpolation\":\"LINEAR\"}}");
         channels.Append($"{{\"sampler\":{samplerCount},\"target\":{{\"node\":{node},\"path\":\"{path}\"}}}}");
         samplerCount++;
+    }
+
+    /// <summary>
+    /// Warcraft III's normal maps arrive from a BC5 decode with X in red and Y in green and nothing
+    /// usable in blue, which glTF cannot sample: it wants a tangent-space RGB normal. Z is
+    /// reconstructed from the other two, the way any two-channel format is unpacked.
+    /// </summary>
+    private static RgbaImage GltfNormal(RgbaImage normal)
+    {
+        var px = new byte[normal.Pixels.Length];
+        var s = normal.Pixels;
+        for (int i = 0; i < px.Length; i += 4)
+        {
+            float x = s[i + 2] / 127.5f - 1f;                 // R
+            float y = s[i + 1] / 127.5f - 1f;                 // G
+            float z = MathF.Sqrt(Math.Clamp(1f - x * x - y * y, 0f, 1f));
+            px[i] = (byte)Math.Clamp((z + 1f) * 127.5f, 0f, 255f);   // B
+            px[i + 1] = s[i + 1];
+            px[i + 2] = s[i + 2];
+            px[i + 3] = 255;
+        }
+        return new RgbaImage { Width = normal.Width, Height = normal.Height, Pixels = px };
     }
 
     private static string San(string s)
