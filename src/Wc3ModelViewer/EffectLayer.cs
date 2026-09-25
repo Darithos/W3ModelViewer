@@ -198,46 +198,9 @@ public sealed class EffectLayer
                 bucket.ColourSum += shade;
                 bucket.Count++;
 
-                Vector3 r, u, centre = s.Position;
-                switch (def.Billboard)
-                {
-                    case PopcornBillboardMode.AxisAligned:
-                    case PopcornBillboardMode.AxisAlignedSpheroid:
-                    case PopcornBillboardMode.AxisAlignedCapsule:
-                    {
-                        var axis = s.Axis;
-                        float len = axis.Length();
-                        var dir = len > 1e-5f ? axis / len : Vector3.UnitZ;
-                        var side = Vector3.Cross(dir, look);
-                        side = side.LengthSquared() > 1e-8f ? Vector3.Normalize(side) : right;
-                        r = side * s.HalfSize.X;
-                        u = dir * (len * 0.5f + (def.Billboard == PopcornBillboardMode.AxisAligned ? 0 : s.HalfSize.X));
-                        break;
-                    }
-                    case PopcornBillboardMode.PlaneAligned:
-                    {
-                        var n = s.Normal.LengthSquared() > 1e-8f ? Vector3.Normalize(s.Normal) : Vector3.UnitZ;
-                        var a = s.Axis - n * Vector3.Dot(s.Axis, n);
-                        if (a.LengthSquared() < 1e-8f) a = MathF.Abs(n.Z) < 0.9f ? Vector3.Cross(n, Vector3.UnitZ) : Vector3.Cross(n, Vector3.UnitX);
-                        a = Vector3.Normalize(a);
-                        var side = Vector3.Normalize(Vector3.Cross(a, n));
-                        float cos = MathF.Cos(s.Rotation), sin = MathF.Sin(s.Rotation);
-                        r = (side * cos + a * sin) * s.HalfSize.X;
-                        u = (a * cos - side * sin) * s.HalfSize.Y;
-                        break;
-                    }
-                    default:
-                    {
-                        float cos = MathF.Cos(s.Rotation), sin = MathF.Sin(s.Rotation);
-                        r = (right * cos + up * sin) * s.HalfSize.X;
-                        u = (up * cos - right * sin) * s.HalfSize.Y;
-                        break;
-                    }
-                }
-
-                int frame = s.Frame % (cols * rows);
-                float u0 = (frame % cols) / (float)cols, u1 = u0 + 1f / cols;
-                float v0 = (frame / cols) / (float)rows, v1 = v0 + 1f / rows;
+                Vector3 centre = s.Position;
+                PkSpriteGeometry.Quad(in s, def.Billboard, right, up, look, out var r, out var u);
+                var (u0, v0, u1, v1) = PkSpriteGeometry.CellUv(s.Frame, cols, rows);
                 var v = bucket.Visual;
                 int bi = v.Positions.Count;
                 Add(v.Positions, centre - r - u);
@@ -270,10 +233,7 @@ public sealed class EffectLayer
     private static BitmapSource? PopcornTexture(Wc3TextureCache textures, string cascName, string bakePath)
     {
         if (bakePath.Length == 0) return null;
-        string rel = bakePath.Replace('/', '\\');
-        int cut = rel.IndexOf(".w3mod\\", StringComparison.OrdinalIgnoreCase);
-        if (cut >= 0) rel = rel[(cut + ".w3mod\\".Length)..];
-        var img = textures.Load(cascName, new MdxTexture { ReplaceableId = 0, FileName = rel, Flags = 0 });
+        var img = textures.Load(cascName, new MdxTexture { ReplaceableId = 0, FileName = PopcornApproximation.TextureRelPath(bakePath), Flags = 0 });
         if (img is null) return null;
         var bmp = BitmapSource.Create(img.Width, img.Height, 96, 96, PixelFormats.Bgra32, null, img.Pixels, img.Width * 4);
         bmp.Freeze();

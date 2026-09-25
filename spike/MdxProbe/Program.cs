@@ -396,6 +396,99 @@ if (args.Contains("--map"))
     return MdxProbe.MapProbe.Run(install, args[mi + 1], refName, refFile);
 }
 
+// --nodeworld <cascPath|file> <node> [sequence] samples one node's world transform every 100 ms —
+// where an emitter parented to it actually sits, and whether its parent chain bobs or spins.
+if (args.Contains("--nodeworld"))
+{
+    int wi = Array.IndexOf(args, "--nodeworld");
+    using var s = File.Exists(args[wi + 1]) ? null : new Wc3Storage(install);
+    var raw = File.Exists(args[wi + 1]) ? File.ReadAllBytes(args[wi + 1]) : s!.TryReadFile(args[wi + 1]);
+    if (raw is null) { Console.WriteLine("not found"); return 1; }
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    int node = int.Parse(args[wi + 2]);
+    var seq = wi + 3 < args.Length && !args[wi + 3].StartsWith("--")
+        ? mdl.Sequences.First(q => q.Name == args[wi + 3]) : mdl.Sequences[0];
+    var anim = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
+    var pivot = mdl.Nodes[node].Pivot;
+    Console.WriteLine($"node {node} '{mdl.Nodes[node].Name}' parent {mdl.Nodes[node].ParentId}, seq '{seq.Name}'");
+    for (int t = seq.IntervalStart; t <= seq.IntervalEnd; t += 100)
+    {
+        anim.Evaluate(seq, t);
+        var w = anim.World(node);
+        var at = System.Numerics.Vector3.Transform(pivot, w);
+        var z = System.Numerics.Vector3.TransformNormal(System.Numerics.Vector3.UnitZ, w);
+        float tilt = float.RadiansToDegrees(MathF.Acos(Math.Clamp(z.Z / z.Length(), -1f, 1f)));
+        Console.WriteLine($"  t={t - seq.IntervalStart,5}  pivot at ({at.X,7:F2},{at.Y,7:F2},{at.Z,7:F2})  Z axis ({z.X:F2},{z.Y:F2},{z.Z:F2}) tilt {tilt,5:F1} deg, scale {z.Length():F3}");
+    }
+    return 0;
+}
+
+// --worlddirs [filter] lists every model whose PopcornFX stand-ins keep world directions on a CORN
+// node that turns or scales — the exports that host such emitters on a location-only root bone
+// instead of the node (M3Exporter.EmitterBone). Every other export is unchanged by that rule.
+if (args.Contains("--worlddirs"))
+{
+    int wi = Array.IndexOf(args, "--worlddirs");
+    string filter = wi + 1 < args.Length && !args[wi + 1].StartsWith("--") ? args[wi + 1] : "";
+    using var ws = new Wc3Storage(install);
+    int models = 0, hits = 0;
+    foreach (var e in ws.BuildIndex().Models.Where(m => m.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+    {
+        var raw = ws.TryReadFile(e.CascName);
+        if (raw is null) continue;
+        Wc3ModelViewer.Core.Formats.MdxModel mdl;
+        try { mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw); } catch { continue; }
+        if (mdl.PopcornEmitters.Count == 0) continue;
+        models++;
+        Wc3ModelViewer.Core.Formats.PopcornApproximation.Attach(mdl, ws.TryReadFile, e.CascName);
+        bool Turns(int n)
+        {
+            for (int g = 0; (uint)n < (uint)mdl.Nodes.Count && g < 256; g++)
+            {
+                var x = mdl.Nodes[n];
+                if (x.Rotation is { Count: > 0 } || x.Scale is { Count: > 0 }) return true;
+                n = x.ParentId < 0 ? -1 : mdl.Nodes.FindIndex(p => p.ObjectId == x.ParentId);
+            }
+            return false;
+        }
+        var moved = mdl.ParticleEmitters.Where(p => p.IsPopcorn && p.WorldDirections && Turns(p.NodeIndex)).ToList();
+        int world = mdl.ParticleEmitters.Count(p => p.IsPopcorn && p.WorldDirections);
+        int all = mdl.ParticleEmitters.Count(p => p.IsPopcorn);
+        if (moved.Count == 0) continue;
+        hits++;
+        Console.WriteLine($"{e.CascName}: {moved.Count} of {all} stand-ins re-hosted ({world} world-direction) — " +
+                          string.Join(", ", moved.Select(p => p.Name).Distinct().Take(4)));
+    }
+    Console.WriteLine($"--- {hits} of {models} CORN models change ---");
+    return 0;
+}
+
+// --pkfollow <cascModel> runs each CORN effect twice, once at the origin and once with the effect
+// frame moved 1 m up and tilted 20 degrees, and reports per renderer how far the particles moved —
+// which layers carry the emitter's transform (spawn through effect.position / xform) and which
+// ignore it and stay put in model space.
+if (args.Contains("--pkfollow"))
+{
+    int fi = Array.IndexOf(args, "--pkfollow");
+    using var fs = new Wc3Storage(install);
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(fs.TryReadFile(args[fi + 1]) ?? throw new FileNotFoundException(args[fi + 1]));
+    Wc3ModelViewer.Core.Formats.PopcornApproximation.Attach(mdl, fs.TryReadFile, args[fi + 1]);
+    foreach (var c in mdl.PopcornEmitters.Where(c => c.Runtime is not null))
+    {
+        var moved = System.Numerics.Matrix4x4.CreateRotationX(float.DegreesToRadians(20)) * System.Numerics.Matrix4x4.CreateTranslation(0, 0, 1);
+        var a = Wc3ModelViewer.Core.Formats.Popcorn.PkRendererStats.Measure(c.Runtime!);
+        var b = Wc3ModelViewer.Core.Formats.Popcorn.PkRendererStats.Measure(c.Runtime!, localToWorld: moved);
+        Console.WriteLine($"corn '{c.Name}' {c.BakeName}");
+        for (int i = 0; i < a.Count; i++)
+        {
+            var sb = b.FirstOrDefault(x => ReferenceEquals(x.Renderer, a[i].Renderer));
+            if (sb is null) { Console.WriteLine($"  {a[i].LayerName,-12} missing in moved run"); continue; }
+            Console.WriteLine($"  {a[i].LayerName,-12} {a[i].Renderer.Billboard,-22} centre {a[i].SpawnCentre:F2} -> {sb.SpawnCentre:F2}  axis {a[i].AxisDirection:F2} -> {sb.AxisDirection:F2}  dir {a[i].Direction:F2} -> {sb.Direction:F2}");
+        }
+    }
+    return 0;
+}
+
 // --uv <model.mdx> <geoset|-1> <outDir> draws a geoset's UV triangles over its composited
 // texture, so a mis-mapped face can be seen rather than deduced.
 if (args.Contains("--uv"))
@@ -964,6 +1057,16 @@ if (args.Contains("--export1"))
     using var es = new Wc3Storage(install);
     var raw = es.TryReadFile(args[pi + 1]) ?? throw new FileNotFoundException(args[pi + 1]);
     var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(raw);
+    // --fly [units/s] flies the root in a circle so a world-space trail ribbon has something to
+    // extrude along; nothing the user can open moves a model for us. Applied before Attach so the
+    // stand-ins and the bake see the same model the exporter will.
+    if (Array.IndexOf(args, "--fly") is int fy && fy >= 0)
+    {
+        float ups = fy + 1 < args.Length && float.TryParse(args[fy + 1], System.Globalization.CultureInfo.InvariantCulture, out float u)
+            ? u : MdxProbe.FlyTest.DefaultSpeed;
+        mdl = MdxProbe.FlyTest.Fly(mdl, ups, out string flyLog);
+        Console.WriteLine("  " + flyLog);
+    }
     if (args.Contains("--noburst")) Wc3ModelViewer.Core.Formats.PopcornApproximation.EmitBursts = false;
     if (args.Contains("--burst")) Wc3ModelViewer.Core.Formats.PopcornApproximation.EmitBursts = true;
     if (args.Contains("--noplace")) Wc3ModelViewer.Core.Formats.PopcornApproximation.PlaceEmitters = false;
@@ -974,7 +1077,9 @@ if (args.Contains("--export1"))
                           $"speed {pe.Speed:F0} spread {pe.Latitude:F0} life {pe.Life:F2} rate {pe.EmissionRate:F1} beam {pe.BeamLength:F0} scale {pe.StartScale:F0}/{pe.MiddleScale:F0}/{pe.EndScale:F0} " +
                           $"alpha {pe.StartAlpha}/{pe.MiddleAlpha}/{pe.EndAlpha} rateKeys {pe.EmissionRateTrack?.Count ?? 0}"
                           + (pe.OrbitAngularVelocity != 0 ? $" orbit {pe.OrbitAngularVelocity:F2} rad/s" : "")
-                          + (pe.FaceDirection is { } fd ? $" face {fd:F2}" : ""));
+                          + (pe.FaceDirection is { } fd ? $" face {fd:F2}" : "")
+                          + (pe.WorldDirections ? " worldDirs" : "")
+                          + $" col {pe.StartColor:F2}/{pe.MiddleColor:F2}/{pe.EndColor:F2} int {pe.Intensity:F1} {pe.Blend}" + (pe.ModelSpace ? " modelSpace" : "") + (pe.TeamColoured ? " team" : ""));
     {
         var anim = new Wc3ModelViewer.Core.Formats.MdxAnimator(mdl);
         foreach (var seq in mdl.Sequences)
@@ -991,10 +1096,31 @@ if (args.Contains("--export1"))
                                   + (pe.EmitCountTrack is { } ct ? $" countKeys [{string.Join(" ", ct.Times.Zip(ct.Values, (a, b) => $"{a}:{b:F0}"))}]" : ""));
             }
     }
+    // --nobake keeps every PopcornFX layer a per-layer stand-in; the bake's knobs (--atlas, --exposure,
+    // --tonemap, --pitch, --loop, --alphaadd) are BakeProbe.Options', shared with --bake.
+    var bakeOpts = MdxProbe.BakeProbe.Options(args);
     var opts = new Wc3ModelViewer.Core.Convert.M3ExportOptions
     {
         Lod = mdl.LodLevels.FirstOrDefault(),
         ModelName = Array.IndexOf(args, "--name") is int ni && ni >= 0 ? args[ni + 1] : Path.GetFileNameWithoutExtension(args[pi + 1]),
+        BakeEffects = !args.Contains("--nobake"),
+        // The trail is per-layer camera-facing particles by default; --trailbake puts it back on
+        // one baked RIB_ strip, which measurably does not face the camera.
+        BakeTrails = args.Contains("--trailbake"),
+        ImpostorAtlasSize = bakeOpts.MaxCellSize == bakeOpts.CellSize ? bakeOpts.CellSize * 8 : 0,
+        ImpostorExposure = bakeOpts.Exposure,
+        ImpostorToneMap = bakeOpts.ToneMap,
+        ImpostorPitchDegrees = bakeOpts.PitchDegrees,
+        ImpostorLoopPeriod = bakeOpts.LoopPeriod,
+        ImpostorAlphaAdd = bakeOpts.AlphaAdd,
+        ImpostorTrailSpeed = bakeOpts.TrailSpeedMetres * Wc3ModelViewer.Core.Formats.PopcornApproximation.MetresToWc3,
+        ImpostorTrailFrames = bakeOpts.TrailFrames,
+        // --trailribbonspeed N: diagnostic, lets the baked strip extrude on a standing model.
+        TrailRibbonSpeed = Array.IndexOf(args, "--trailribbonspeed") is int trs && trs >= 0 && trs + 1 < args.Length
+            ? float.Parse(args[trs + 1], System.Globalization.CultureInfo.InvariantCulture) : 0f,
+        // --trailwidth N: multiplies the trail ribbon's width; 1 is what the bake measured.
+        TrailWidthScale = Array.IndexOf(args, "--trailwidth") is int tws && tws >= 0 && tws + 1 < args.Length
+            ? float.Parse(args[tws + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
         Scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
         // --static exports no sequence at all, as the dialog does with every one unticked.
         Sequences = args.Contains("--static") ? [] : null,
@@ -1003,9 +1129,22 @@ if (args.Contains("--export1"))
         MaxTextureSize = args.Contains("--full") ? 0 : 1024,
         KeyToleranceDeg = Array.IndexOf(args, "--keydeg") is int kd && kd >= 0 ? float.Parse(args[kd + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.25f,
         KeyToleranceUnits = Array.IndexOf(args, "--keyunits") is int ku && ku >= 0 ? float.Parse(args[ku + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.05f,
+        // --glow N sets the extra emissive HDR on additive PopcornFX stand-ins (default 2).
+        // --glow N overrides; without it, fall through to M3ExportOptions' own default rather than
+        // repeating a number here, which silently pinned exports at 2 after the default moved to 1.
+        ParticleGlow = Array.IndexOf(args, "--glow") is int gi && gi >= 0
+            ? float.Parse(args[gi + 1], System.Globalization.CultureInfo.InvariantCulture)
+            : new Wc3ModelViewer.Core.Convert.M3ExportOptions().ParticleGlow,
+        // --hdrcap N caps hdr_emis (default 50; Blizzard's own materials stop near 10).
+        HdrEmisCap = Array.IndexOf(args, "--hdrcap") is int hc && hc >= 0
+            ? float.Parse(args[hc + 1], System.Globalization.CultureInfo.InvariantCulture)
+            : new Wc3ModelViewer.Core.Convert.M3ExportOptions().HdrEmisCap,
     };
     var res = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, opts).Export(new Wc3TextureCache(es) { PreferHd = mdl.IsReforged }, args[pi + 1]);
-    string dir = Path.Combine(args[pi + 2], opts.ModelName);
+    // --export1 <casc> map  (or the Assets path itself) writes straight into the unpacked test
+    // map, flat, the way the editor wants it; see Deploy.cs.
+    string dir = MdxProbe.Deploy.Resolve(args[pi + 2], opts.ModelName);
+    string exportTexFolder = opts.TextureFolder;
     // --gltf writes the glTF set beside the .m3, as the dialog does with both formats ticked.
     if (args.Contains("--gltf"))
     {
@@ -1016,9 +1155,18 @@ if (args.Contains("--export1"))
         Console.WriteLine($"  glTF: {gl.Files.Count} file(s)");
         foreach (string l in gl.Log) Console.WriteLine("  gltf | " + l);
     }
-    Directory.CreateDirectory(Path.Combine(dir, opts.TextureFolder));
+    Directory.CreateDirectory(Path.Combine(dir, exportTexFolder));
     File.WriteAllBytes(Path.Combine(dir, opts.ModelName + ".m3"), res.M3);
-    foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(dir, opts.TextureFolder, t.FileName), t.Data);
+    foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(dir, exportTexFolder, t.FileName), t.Data);
+    // --bakepng <dir> also writes every impostor sheet as PNG, to look at beside the editor clip.
+    if (Array.IndexOf(args, "--bakepng") is int bp && bp >= 0 && bp + 1 < args.Length)
+    {
+        Directory.CreateDirectory(args[bp + 1]);
+        foreach (var (corn, bake) in res.Impostors)
+            File.WriteAllBytes(Path.Combine(args[bp + 1], MdxProbe.BakeProbe.Stem(corn) + "_atlas.png"), Wc3ModelViewer.Core.Formats.PngWriter.Write(bake.Atlas));
+        foreach (var (corn, trail) in res.Trails)
+            File.WriteAllBytes(Path.Combine(args[bp + 1], MdxProbe.BakeProbe.Stem(corn) + "_trail.png"), Wc3ModelViewer.Core.Formats.PngWriter.Write(trail.Texture));
+    }
     foreach (string l in res.Log) Console.WriteLine("  | " + l);
     foreach (var t in res.Textures) Console.WriteLine($"  tex {t.FileName,-40} {t.Data.Length / 1024,7} KB {System.Text.Encoding.ASCII.GetString(t.Data, 84, 4)}");
     Console.WriteLine($"-> {Path.Combine(dir, opts.ModelName + ".m3")}  {res.M3.Length / 1024} KB .m3, {res.Textures.Sum(t => (long)t.Data.Length) / 1024} KB textures");
@@ -1077,6 +1225,66 @@ if (args.Contains("--calib"))
     foreach (string l in cres.Log) Console.WriteLine("  | " + l);
     Console.WriteLine($"-> {Path.Combine(cdir, copts.ModelName + ".m3")}");
     return 0;
+}
+// --fbcalib <outDir> [--scale s] [--name n] writes a flipbook-calibration model: one camera-facing
+// card, 2 units wide, alpha-blended, playing a synthetic 8x8 sheet over a 4 s life. Cell k has a
+// hue of k/64 over its whole area, a grey square of value k/63 in its top-left quarter and k dots
+// in its lower right. One import in the StarCraft II editor answers three questions at once: in
+// what order the cells play (dots count up?), whether the whole sheet plays over the life
+// (start_stop 63, factor 1.0), and whether the sheet is read as sRGB (the grey ramp against a
+// screenshot). Cell edges are feathered so a bleed between cells shows as a coloured seam.
+if (args.Contains("--fbcalib"))
+{
+    int pi = Array.IndexOf(args, "--fbcalib");
+    float scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 0.025f;
+    string calibName = Array.IndexOf(args, "--name") is int cni && cni >= 0 ? args[cni + 1] : "FlipbookCalib";
+    using var cs = new Wc3Storage(install);
+    const string src = "war3.w3mod:abilities\\spells\\human\\holybolt\\holyboltspecialart.mdx";
+    var mdl = Wc3ModelViewer.Core.Formats.MdxReader.Read(cs.TryReadFile(src) ?? throw new FileNotFoundException(src));
+    mdl.Geosets.Clear(); mdl.GeosetAnims.Clear(); mdl.ParticleEmitters.Clear();
+    var atlas = MdxProbe.FlipbookCalib.Atlas(cells: 8, cellPx: 128);
+    float half = 2f / (2 * scale);                              // a 2-unit card; the writer doubles the half-width
+    mdl.ParticleEmitters.Add(new()
+    {
+        Name = "FlipbookCalib", NodeIndex = -1, TextureId = -1, BakedSprite = atlas,
+        Blend = Wc3ModelViewer.Core.Formats.MdxParticleBlend.Blend,
+        Rows = 8, Columns = 8, HeadCellStart = 0, HeadCellEnd = 63, HeadCellRepeat = 1,
+        Speed = 0, Life = 4f, EmissionRate = 0.25f, MiddleTime = 0.5f,
+        StartScale = half, MiddleScale = half, EndScale = half,
+        StartAlpha = 255, MiddleAlpha = 255, EndAlpha = 255, Unshaded = true,
+        SpawnOffset = new System.Numerics.Vector3(0, 0, 1f / scale),
+        SpawnImmediately = true,
+    });
+    var copts = new Wc3ModelViewer.Core.Convert.M3ExportOptions { Lod = mdl.LodLevels.FirstOrDefault(), ModelName = calibName, Scale = scale };
+    var cres = new Wc3ModelViewer.Core.Convert.M3Exporter(mdl, copts).Export(new Wc3TextureCache(cs), src);
+    string cdir = Path.Combine(args[pi + 1], copts.ModelName);
+    Directory.CreateDirectory(Path.Combine(cdir, copts.TextureFolder));
+    File.WriteAllBytes(Path.Combine(cdir, copts.ModelName + ".m3"), cres.M3);
+    foreach (var t in cres.Textures) File.WriteAllBytes(Path.Combine(cdir, copts.TextureFolder, t.FileName), t.Data);
+    File.WriteAllBytes(Path.Combine(cdir, copts.ModelName + "_atlas.png"), Wc3ModelViewer.Core.Formats.PngWriter.Write(atlas));
+    foreach (string l in cres.Log) Console.WriteLine("  | " + l);
+    Console.WriteLine($"-> {Path.Combine(cdir, copts.ModelName + ".m3")}");
+    return 0;
+}
+// --ribtest <outDir> [--name N] [--scale s] writes a model whose ribbon bones circle under their own
+// animation, so every RIB_ draws while the model stands still — the only way to tell "no trail
+// because nothing moved" from "the ribbon does not draw" without dragging something in the editor.
+if (args.Contains("--ribtest"))
+{
+    int ri = Array.IndexOf(args, "--ribtest");
+    if (ri + 1 >= args.Length) { Console.WriteLine("usage: --ribtest <outDir> [--name N] [--scale s]"); return 1; }
+    return MdxProbe.RibTest.Run(install, args[ri + 1], args);
+}
+// --bake <cascName> <outDir> [--frames] [--stats] [--exposure X] [--tonemap clip|reinhard|aces] [--pitch N]
+// [--onlylayer n30[,n18]] bakes only those layers and [--footprint cx cy side] holds the frame
+// fixed while it does, so one layer's contribution can be looked at beside the whole.
+//        [--yaw N] [--loop N] [--atlas N] [--alphaadd] [--supersample N]
+// bakes every CORN effect into its impostor sheet and writes it (and its cells) as PNG.
+if (args.Contains("--bake"))
+{
+    int bi = Array.IndexOf(args, "--bake");
+    if (bi + 2 >= args.Length) { Console.WriteLine("usage: --bake <cascName> <outDir> [--frames] [--stats] ..."); return 1; }
+    return MdxProbe.BakeProbe.Run(install, args[bi + 1], args[bi + 2], args);
 }
 // --pkmeasure <bakeDir> times PkRendererStats.Measure over every dumped bake and reports failures.
 if (args.Contains("--pkmeasure"))

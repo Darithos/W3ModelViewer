@@ -71,6 +71,39 @@ public sealed class PkRendererStats
     public float OrbitRadius { get; set; }
 
     /// <summary>
+    /// The beam axis, travel direction and card normal above stay put when the effect's frame turns:
+    /// the scripts write them in the simulation's world rather than through the effect transform,
+    /// which then only moves where particles are born. Set by <see cref="MarkWorldDirections"/>.
+    /// An item's rarity beam is the case that matters — it stands straight up while the item it
+    /// hangs from tilts and sways, and a StarCraft II emitter hosted on that item's bone would lean
+    /// and swing with it.
+    /// </summary>
+    public bool WorldDirections { get; set; }
+
+    /// <summary>
+    /// The particles travel with the effect: when its frame moves they stay where they are relative
+    /// to it, instead of being left behind where they were born. Set by <see cref="MarkFollowsEmitter"/>.
+    /// A missile's head is the case that matters — the fireball's core flares keep up with it while
+    /// its trail and smoke fall behind, and exported in world space the head strung itself out along
+    /// the flight path as a line of separate flame puffs.
+    /// </summary>
+    public bool FollowsEmitter { get; set; }
+
+    /// <summary>
+    /// Births per second while the effect flies at <see cref="MissileSpeed"/>, when that is far more
+    /// than it manages standing still: a spawner driven by distance travelled, as a missile's trail
+    /// is. Standing still the fireball's trail layers emitted once per loop, and the export's one
+    /// burst per 0.5 s Stand strung the trail out as separate beads. 0 for everything else.
+    /// </summary>
+    public float TrailRate { get; set; }
+
+    /// <summary>
+    /// Speed the moving run flies at, metres per second: ~900 Warcraft III units a second, a typical
+    /// missile. A distance-driven trail's rate is measured at it, since StarCraft II's rate is per second.
+    /// </summary>
+    public const float MissileSpeed = 18f;
+
+    /// <summary>
     /// This renderer's layer reads <c>__a_Game.TeamColor</c>: its colour is the player's, and the
     /// measured colour above is only what it comes to under the white the run was given. The
     /// export hands such a renderer to StarCraft II's own player-colour channel instead.
@@ -86,10 +119,15 @@ public sealed class PkRendererStats
     /// exactly as the viewer hands it in. Scripts that read it apply it themselves; scripts that do not
     /// are unaffected — the hero glow's is (1,1,1,0) and applying it afterwards zeroed the glow.
     /// </param>
-    public static List<PkRendererStats> Measure(PkEffectDef def, float seconds = 5f, int seed = 7, Vector4? colourMultiplier = null)
+    public static List<PkRendererStats> Measure(PkEffectDef def, float seconds = 5f, int seed = 7, Vector4? colourMultiplier = null,
+                                                Matrix4x4? localToWorld = null)
     {
         const float dt = 1f / 30f;
-        var fx = new PkEffectInstance(def, new PkEnvironment { ColorMultiplier = colourMultiplier ?? Vector4.One }, seed);
+        var fx = new PkEffectInstance(def, new PkEnvironment
+        {
+            ColorMultiplier = colourMultiplier ?? Vector4.One,
+            LocalToWorld = localToWorld ?? Matrix4x4.Identity,
+        }, seed);
         var tracks = new Dictionary<(PkRendererDef, long), Track>();
         var order = new List<(PkRendererDef Renderer, string Layer)>();
         var teamLayers = new HashSet<string>(StringComparer.Ordinal);
@@ -108,7 +146,10 @@ public sealed class PkRendererStats
                 int fl = st.LifeRatioField, fi = st.InvLifeField;
                 foreach (var r in st.Def.Renderers)
                 {
-                    if (r.Kind != PkRendererKind.Billboard) continue;
+                    // A ribbon's points are particles too: measured like billboards (it reads the
+                    // default ScreenAligned mode), and the stand-in is flagged Ribbon: the export
+                    // writes a StarCraft II RIB_ trail from the same size and colour ramps.
+                    if (r.Kind is not (PkRendererKind.Billboard or PkRendererKind.Ribbon)) continue;
                     if (!order.Any(o => ReferenceEquals(o.Renderer, r))) order.Add((r, st.Def.Name));
                     int fp = r.Input("Position"), fs = r.Input("Size"), fs2 = r.Input("Size2"), fc = r.Input("Color"),
                         fa = r.Input("Axis"), fn = r.Input("NormalAxis"), fe = r.Input("Enabled");
@@ -178,6 +219,100 @@ public sealed class PkRendererStats
             result.Add(stats);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="def"/> again with the effect frame turned 30° about a horizontal
+    /// diagonal and sets <see cref="WorldDirections"/> on every renderer in <paramref name="stats"/>
+    /// whose measured directions stayed where they were rather than turning with the frame. A
+    /// renderer with no direction to speak of (a still, camera-facing card) is left unmarked.
+    /// </summary>
+    /// <remarks>
+    /// The same seed draws the same random numbers, so the two runs differ only by the frame. Each
+    /// direction votes by which it lies closer to: its first-run self, or that turned by the frame.
+    /// </remarks>
+    public static void MarkWorldDirections(List<PkRendererStats> stats, PkEffectDef def, float seconds = 5f, int seed = 7,
+                                           Vector4? colourMultiplier = null)
+    {
+        var turn = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1, 1, 0)), float.DegreesToRadians(30));
+        var turned = Measure(def, seconds, seed, colourMultiplier, Matrix4x4.CreateFromQuaternion(turn));
+        foreach (var s in stats)
+        {
+            var t = turned.FirstOrDefault(o => ReferenceEquals(o.Renderer, s.Renderer) && o.LayerName == s.LayerName);
+            if (t is null) continue;
+            int stayed = 0, followed = 0;
+            // Axes and card normals are lines, not arrows: compare them without their sign.
+            void Vote(Vector3 before, Vector3 after, bool line)
+            {
+                float Near(Vector3 a) => line ? MathF.Abs(Vector3.Dot(a, after)) : Vector3.Dot(a, after);
+                if (Near(before) >= Near(Vector3.Transform(before, turn))) stayed++; else followed++;
+            }
+            if (s.Renderer.Billboard is PopcornBillboardMode.AxisAligned or PopcornBillboardMode.AxisAlignedSpheroid
+                    or PopcornBillboardMode.AxisAlignedCapsule && s.AxisLength > 1e-3f)
+                Vote(s.AxisDirection, t.AxisDirection, line: true);
+            if (s.Speed > 0.05f && s.SpreadDegrees < 90f && t.Speed > 0.05f)
+                Vote(s.Direction, t.Direction, line: false);
+            if (s.Renderer.Billboard == PopcornBillboardMode.PlaneAligned)
+                Vote(s.CardNormal, t.CardNormal, line: true);
+            s.WorldDirections = stayed > 0 && followed == 0;
+        }
+    }
+
+    /// <summary>
+    /// Runs the effect again with its frame moving steadily and sets <see cref="FollowsEmitter"/> on
+    /// each renderer whose particles keep pace. A particle left in the world lags the frame by its
+    /// age times the speed; one that follows lags by nothing, so the ratio of the two says which.
+    /// </summary>
+    public static void MarkFollowsEmitter(List<PkRendererStats> stats, PkEffectDef def, float seconds = 2f, int seed = 7,
+                                          Vector4? colourMultiplier = null)
+    {
+        const float speed = MissileSpeed, dt = 1f / 30f;
+        var env = new PkEnvironment { ColorMultiplier = colourMultiplier ?? Vector4.One };
+        var fx = new PkEffectInstance(def, env, seed);
+        var lag = new Dictionary<(PkRendererDef, string), (double Lag, double Expected)>();
+        // Ages come from each particle's first sighting, not its life fields: the fireball's core
+        // flares are immortal (invLife 0), and they are the ones that most need to follow.
+        var born = new Dictionary<(int Slot, long Id), float>();
+        var births = new Dictionary<string, int>();   // per layer: its renderers draw the same particles
+        const float warmUp = 0.25f;                   // launch bursts are not the trail
+        for (float t = 0; t < seconds && fx.IsAlive; t += dt)
+        {
+            env.LocalToWorld = Matrix4x4.CreateTranslation(speed * t, 0, 0);
+            fx.Update(dt);
+            foreach (var st in fx.Slots)
+            {
+                if (st is null || st.Count == 0) continue;
+                foreach (var r in st.Def.Renderers)
+                {
+                    int fp = r.Input("Position");
+                    if (fp < 0) continue;
+                    var key = (r, st.Def.Name);
+                    var a = lag.GetValueOrDefault(key);
+                    for (int p = 0; p < st.Count; p++)
+                    {
+                        // A particle first seen this step was born during it, a step's travel ago at most.
+                        if (!born.TryGetValue((st.SlotIndex, st.Ids[p]), out float b))
+                        {
+                            born[(st.SlotIndex, st.Ids[p])] = b = t - dt;
+                            if (t >= warmUp) births[st.Def.Name] = births.GetValueOrDefault(st.Def.Name) + 1;
+                        }
+                        a = (a.Lag + (speed * t - st.Fields[fp][p].X), a.Expected + speed * (t - b));
+                    }
+                    lag[key] = a;
+                }
+            }
+        }
+        float flown = MathF.Max(seconds - warmUp, dt);
+        foreach (var s in stats)
+        {
+            if (lag.TryGetValue((s.Renderer, s.LayerName), out var a) && a.Expected > 1e-3)
+                s.FollowsEmitter = Math.Abs(a.Lag / a.Expected) < 0.15;
+            if (s.FollowsEmitter || s.Immortal) continue;
+            // Standing still: the births of the whole run, spread over its window.
+            float still = s.Births / MathF.Max(s.LastBirth - s.FirstBirth + s.Life, 0.25f);
+            float moving = births.GetValueOrDefault(s.LayerName) / flown;
+            if (moving > 3f * still && moving > 2f) s.TrailRate = moving;
+        }
     }
 
     private sealed class Track

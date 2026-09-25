@@ -27,3 +27,7 @@ sdcustommodels/
 sdcustommodels-export/
 reference/
 Simple Edits Pack/
+
+# Probe test exports: baked sheets and comparison images derived from game art.
+spike/MdxProbe/sc2test/
+__pycache__/

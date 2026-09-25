@@ -109,6 +109,114 @@ public sealed class M3ExportOptions
     public bool ExportEffects { get; init; } = true;
 
     /// <summary>
+    /// Emissive HDR multiplier for additive PopcornFX stand-ins, on top of the HDR their own colour
+    /// carries (<see cref="MdxParticleEmitter2.Intensity"/>).
+    /// </summary>
+    /// <remarks>
+    /// Was 2 from 2026-09-24, when every effect exported at 1.0 drew a fraction as bright in
+    /// StarCraft II. **Back to 1 on 2026-09-25**: that comparison predates the fix that made
+    /// particle materials declare <c>vertex_color | vertex_alpha</c> (<c>additional_flags</c> 0xC),
+    /// without which a particle could not deliver its own colour and alpha ramps at all. With the
+    /// ramps working the 2x became an overshoot, and the user said so — "they all look great, but
+    /// maybe a bit on the brighter side".
+    /// <para>
+    /// Measured on the Unholy Aura against <c>VfxUnholyAuraA-wc3editor</c>, as light added over the
+    /// background: the editor peaks at 137 with the lit area averaging 44 and a median of 37; ours
+    /// peaked at a comparable 158 but averaged 97 with a median of 113. The peak was near right and
+    /// the **mid-tones were 2.2-3x too high** — the signature of a gain that pushes everything
+    /// toward the clip rather than one that is simply too strong. Halving it lands the median near
+    /// 57 against the editor's 37; the rest is not gain, so it is not chased here.
+    /// </para>
+    /// Note the floor in <c>AddParticleMaterial</c> clamps <c>hdr_emis</c> to at least 1, so values
+    /// below 1 have no effect on a layer whose own intensity is 1.
+    /// </remarks>
+    public float ParticleGlow { get; init; } = 1f;
+
+    /// <summary>
+    /// Ceiling on a particle material's <c>hdr_emis</c>. Blizzard's own stop at about 10 (99.9% of
+    /// 5,900 HotS particle and ribbon materials; 97% at or below 5): StarCraft II does not tone-map,
+    /// so a soft flare under x22 clips to a hard white quad where Warcraft III's renderer keeps a
+    /// bright core with a falloff. 50 is the historical cap; the fireball A/B (I vs J) tries 6.
+    /// </summary>
+    public float HdrEmisCap { get; init; } = 50f;
+
+    /// <summary>
+    /// Render each PopcornFX effect's camera-facing layers, as its scripts play them, into a
+    /// flipbook sheet played by one StarCraft II particle — the picture Warcraft III shows, tone
+    /// mapping included — instead of one particle system per layer. Ribbons, layers spawned per
+    /// distance travelled and player-coloured layers stay stand-ins either way.
+    /// </summary>
+    public bool BakeEffects { get; init; } = true;
+
+    /// <summary>
+    /// Side of an impostor sheet: 1024 is Blizzard's own 8x8 sheets (128-pixel frames, ~1.4 MB),
+    /// 2048 is four times the size. 0 lets each effect choose — 1024 unless its footprint would
+    /// spread past 2.5 units a pixel (a 600-unit Holy Light column), then 2048.
+    /// </summary>
+    public int ImpostorAtlasSize { get; init; } = 0;
+
+    /// <summary>Exposure applied before the bake's tone map; calibrated against the World Editor's recordings.</summary>
+    public float ImpostorExposure { get; init; } = 1f;
+
+    /// <summary>
+    /// Multiplies the baked trail ribbon's width; see
+    /// <see cref="Formats.PopcornApproximation.SynthesizeTrail"/> for the measurement behind it.
+    /// 1 is the width the bake measured.
+    /// </summary>
+    public float TrailWidthScale { get; init; } = 1f;
+
+    /// <summary>
+    /// Bake what the effect leaves behind into one <c>RIB_</c> strip. **Off by default since
+    /// 2026-09-25**: those layers stay per-layer camera-facing <c>PAR_</c> stand-ins, which is what
+    /// actually matches the World Editor. The head still bakes either way.
+    /// </summary>
+    /// <remarks>
+    /// A <c>RIB_</c> does not hold its face to the camera. Five levers were tried and measured in
+    /// the StarCraft II previewer and none worked: <c>ribbon_type</c> (all four values, including 0
+    /// = PlanarBillboarded), <c>RIB_.length</c>, a vertical path, a world-axis bone roll and a
+    /// path-relative bone roll. The band lies in the plane of the motion, so from the game's
+    /// ~55-degree camera it is foreshortened to about 0.57 and from a low camera it vanishes —
+    /// "a flat 2D trail that doesn't face the camera", and the 1.5-1.8x width deficit measured twice.
+    /// Blizzard's own ribbon trails most likely read correctly only because the RTS camera is fixed.
+    /// <para>
+    /// A camera-facing card has none of that by construction. Measured against
+    /// <c>VfxFireball2-wc3editor</c>, trail width as a fraction of the head's, at 0.43 / 1.30 / 1.73
+    /// head-widths behind it: the editor 0.78 / 0.57 / 0.53, the particle trail 0.96 / 0.80 / 0.27,
+    /// the baked ribbon 0.37 / 0.20 / 0.14. The particle trail also brings back the dark smoke the
+    /// strip never showed, so the comet has the editor's structure — bright head, flame, smoke
+    /// curling off — for the first time.
+    /// </para>
+    /// Trailing off sooner than the editor's is the one thing left, but the reference clip is a
+    /// hand-drag at unknown speed, so its length is not a fair target from that recording.
+    /// </remarks>
+    public bool BakeTrails { get; init; }
+
+    /// <summary>How the bake brings HDR light down to the sheet; see <see cref="Formats.Popcorn.PkImpostorOptions.ToneMap"/>.</summary>
+    public Formats.Popcorn.PkToneMap ImpostorToneMap { get; init; } = Formats.Popcorn.PkToneMap.Clip;
+
+    /// <summary>Camera pitch the sheet is rendered at; Warcraft III's default angle of attack.</summary>
+    public float ImpostorPitchDegrees { get; init; } = 56f;
+
+    /// <summary>The period a steady-state effect is baked over, seconds.</summary>
+    public float ImpostorLoopPeriod { get; init; } = 2f;
+
+    /// <summary>Build the sheet for an additive card rather than an alpha-blended one (an A/B switch).</summary>
+    public bool ImpostorAlphaAdd { get; init; }
+    /// <summary>
+    /// Model units per second the trail bake flies an effect at: the speed its per-distance layers
+    /// and ribbons are pictured at. 900 is a typical Warcraft III missile. The strip stretches with
+    /// the model's real speed either way.
+    /// </summary>
+    public float ImpostorTrailSpeed { get; init; } = 900f;
+    /// <summary>Moments of the flight averaged into the trail strip; 1 keeps one moment's licks.</summary>
+    public int ImpostorTrailFrames { get; init; } = 1;
+    /// <summary>
+    /// Diagnostic only, 0 in a real export: gives the baked trail ribbon its own speed so the strip
+    /// extrudes while the model stands still. A real trail draws only where the model has travelled.
+    /// </summary>
+    public float TrailRibbonSpeed { get; init; }
+
+    /// <summary>
     /// Path prefix baked into the .m3's texture references. SC2 resolves these against the mod or
     /// map archive ROOT; any root-relative path works, the folder name carries no meaning.
     /// <para>
@@ -174,6 +282,11 @@ public sealed class M3ExportResult
 
     /// <summary>What <see cref="M3ExportOptions.ReduceKeys"/> removed, or null when it was off.</summary>
     public KeyReducer.Stats? KeyReduction { get; init; }
+
+    /// <summary>The impostor sheets baked for PopcornFX effects, by CORN emitter name — for looking at.</summary>
+    public List<(string Corn, Formats.Popcorn.PkImpostorBake Bake)> Impostors { get; init; } = [];
+    /// <summary>The trail strips baked for this export, by CORN emitter name, for looking at.</summary>
+    public List<(string Corn, Formats.Popcorn.PkTrailBake Bake)> Trails { get; init; } = [];
 }
 
 /// <summary>
@@ -248,6 +361,10 @@ public sealed class M3Exporter
         public string SpecularPath = "";
         public string EmissivePath = "";
         public string TeamPath = "";                // bitmap whose alpha scales the live player colour
+        public string AlphaPath = "";               // alpha1 bitmap when it is not the diffuse's
+        public float HdrEmis = 1f;                  // MAT_.hdr_emis: scales emis1/emis2, player colour included
+        public bool BlackDiffuse;                   // untextured diffuse, colour 0,0,0,0 — Blizzard's emissive-particle value
+        public float UvTurn;                        // LAYR.uv_angle about Z on every textured layer (a ribbon's U runs across it)
         public int TeamBlendSlot;                   // 4 = emis1, 5 = emis2, 0 = no player colour
         public MdxGeosetAnim? VisibilityAnim;       // GEOA feeding this material's colour track
         public uint ColorAnimId;                    // LAYR color_value anim id, filled during write
@@ -317,6 +434,8 @@ public sealed class M3Exporter
         {
             M3 = m3, Textures = _textures, Log = _log, TextureReferences = refs,
             KeyReduction = _opt.ReduceKeys ? KeyReduction : null,
+            Impostors = _bakes,
+            Trails = _trails,
         };
     }
 
@@ -575,9 +694,29 @@ public sealed class M3Exporter
             return;
         }
 
+        if (_opt.BakeEffects) BakeImpostors(textures, modelCascName);
+
         int skipped = 0;
-        foreach (var e in _mdx.ParticleEmitters)
+        foreach (var e in _mdx.ParticleEmitters.Concat(_impostors))
         {
+            // A sheet the exporter rendered itself (an impostor bake, a calibration card) needs no
+            // texture lookup and no mask: it is written as it is.
+            if (e.BakedSprite is not null)
+            {
+                _emitters.Add(new ExportEmitter
+                {
+                    Source = e,
+                    MaterialIndex = AddParticleMaterial(e, e.BakedSprite, null, ribbon: e.Ribbon),
+                    NodeIndex = e.NodeIndex,
+                    Bone = EmitterBone(e),
+                    RestEmissionRate = RestEmissionRateOf(e),
+                    Ribbon = e.Ribbon,
+                });
+                continue;
+            }
+            // A layer an impostor sheet already shows.
+            if (e.PopcornRenderer is not null && _bakedRenderers.Contains(e.PopcornRenderer)) continue;
+
             // A PREM emitter spawns models rather than sprites and parses with no texture; there is
             // nothing to draw, so it is dropped rather than exported as an invisible system.
             // A team-glow emitter has no sprite file — its art *is* the player's colour, shaped by
@@ -609,21 +748,94 @@ public sealed class M3Exporter
             if (glowMask is null && e.TeamColoured && MaterialCompositor.SpriteMask(image) is { } spriteMask)
                 glowMask = spriteMask;
 
+            // A PopcornFX ribbon becomes a StarCraft II ribbon when it runs steadily in the world:
+            // a trail drawn behind whatever carries the model. A ribbon has no emission rate to
+            // gate, so one switched on and off per animation stays a stream of cards.
+            float restRate = RestEmissionRateOf(e);
+            bool ribbon = e.Ribbon && !e.ModelSpace && glowMask is null && restRate > 0
+                          && e.EmissionRateTrack is null && e.EmitCountTrack is null;
             _emitters.Add(new ExportEmitter
             {
                 Source = e,
-                MaterialIndex = AddParticleMaterial(e, glowMask is null ? image : BlackSprite, glowMask),
+                MaterialIndex = AddParticleMaterial(e, glowMask is null ? image : BlackSprite, glowMask, ribbon),
                 NodeIndex = e.NodeIndex,
                 Bone = EmitterBone(e),
-                RestEmissionRate = RestEmissionRateOf(e),
+                RestEmissionRate = restRate,
+                Ribbon = ribbon,
             });
         }
 
-        if (_emitters.Count > 0)
-            _log.Add($"{_emitters.Count} particle emitter(s) exported as SC2 particle systems"
+        int ribbons = _emitters.Count(em => em.Ribbon);
+        if (_emitters.Count > ribbons)
+            _log.Add($"{_emitters.Count - ribbons} particle emitter(s) exported as SC2 particle systems"
                      + (skipped > 0 ? $" ({skipped} skipped: no usable sprite)" : ""));
+        if (ribbons > 0)
+            _log.Add($"{ribbons} PopcornFX ribbon layer(s) exported as SC2 ribbons (trails drawn behind the moving model)");
         else if (skipped > 0)
             _log.Add($"{skipped} particle emitter(s) dropped — no usable sprite texture");
+    }
+
+    /// <summary>
+    /// Renders each PopcornFX effect's bakeable layers into an impostor sheet and keeps one card
+    /// per effect to play it; the emitter loop then drops the stand-ins those layers had. A bake
+    /// that fails or draws nothing leaves the effect's stand-ins as they were.
+    /// </summary>
+    private void BakeImpostors(Casc.Wc3TextureCache textures, string modelCascName)
+    {
+        var options = new Formats.Popcorn.PkImpostorOptions
+        {
+            CellSize = _opt.ImpostorAtlasSize <= 0 ? 128 : Math.Max(16, _opt.ImpostorAtlasSize / 8),
+            MaxCellSize = _opt.ImpostorAtlasSize <= 0 ? 256 : Math.Max(16, _opt.ImpostorAtlasSize / 8),
+            Exposure = _opt.ImpostorExposure,
+            ToneMap = _opt.ImpostorToneMap,
+            PitchDegrees = _opt.ImpostorPitchDegrees,
+            LoopPeriod = _opt.ImpostorLoopPeriod,
+            AlphaAdd = _opt.ImpostorAlphaAdd,
+            TrailSpeedMetres = _opt.ImpostorTrailSpeed / PopcornApproximation.MetresToWc3,
+            TrailFrames = _opt.ImpostorTrailFrames,
+        };
+        foreach (var corn in _mdx.PopcornEmitters)
+        {
+            if (corn.Runtime is null || corn.Stats.Count == 0) continue;
+            RgbaImage? Load(string path) => textures.Load(modelCascName, new MdxTexture { ReplaceableId = 0, FileName = PopcornApproximation.TextureRelPath(path), Flags = 0 });
+            Formats.Popcorn.PkImpostorBake? bake;
+            Formats.Popcorn.PkTrailBake? trail;
+            try
+            {
+                bake = Formats.Popcorn.PkImpostorBaker.Bake(corn.Runtime, corn.Stats, Load, options, corn.ColorMultiplier);
+                // What the effect leaves behind it as it moves — per-distance layers and ribbons —
+                // is one strip on one ribbon, whether or not anything baked into the sheet.
+                trail = _opt.BakeTrails
+                    ? Formats.Popcorn.PkImpostorBaker.BakeTrail(corn.Runtime, corn.Stats, Load, options, corn.ColorMultiplier)
+                    : null;
+            }
+            catch (Exception e) when (e is InvalidDataException or IndexOutOfRangeException or ArgumentException or InvalidOperationException)
+            {
+                _log.Add($"'{corn.Name}': baking {Path.GetFileName(corn.EffectPath)} failed — {e.Message}; its layers stay stand-ins");
+                continue;
+            }
+            if (bake is not null)
+            {
+                foreach (var r in bake.Renderers) _bakedRenderers.Add(r);
+                _bakes.Add((corn.Name, bake));
+                _impostors.Add(PopcornApproximation.SynthesizeImpostor(_mdx, corn, bake));
+                _log.Add($"'{corn.Name}': {bake.Layers.Count} layer(s) baked into one {bake.Columns}x{bake.Rows} {(bake.Additive ? "additive" : "blended")} impostor sheet "
+                         + $"({(bake.Static ? "static" : bake.Loops ? $"looping {bake.Duration:0.00} s" : $"{bake.Duration:0.00} s")}, {bake.Atlas.Width}²)");
+                foreach (string l in bake.Log) _log.Add($"    {l}");
+            }
+            else _log.Add($"'{corn.Name}': nothing of {Path.GetFileName(corn.EffectPath)} bakes into a sheet");
+            if (trail is not null)
+            {
+                foreach (var r in trail.Renderers) _bakedRenderers.Add(r);
+                _trails.Add((corn.Name, trail));
+                _impostors.Add(PopcornApproximation.SynthesizeTrail(_mdx, corn, trail, _opt.TrailRibbonSpeed, _opt.TrailWidthScale));
+                _log.Add($"'{corn.Name}': {trail.Layers.Count} trail layer(s) baked into one {(trail.Additive ? "additive" : "blended")} ribbon strip "
+                         + $"({trail.Length:0} x {trail.Width:0} units at {trail.Speed:0} units/s, {trail.Texture.Width}x{trail.Texture.Height})");
+                foreach (string l in trail.Log) _log.Add($"    {l}");
+            }
+            int kept = corn.Stats.Count(s => !_bakedRenderers.Contains(s.Renderer));
+            if (kept > 0) _log.Add($"'{corn.Name}': {kept} layer(s) kept as stand-ins (player colour, or no texture)");
+        }
     }
 
     /// <summary>
@@ -640,7 +852,7 @@ public sealed class M3Exporter
     /// </remarks>
     private static readonly RgbaImage BlackSprite = RgbaImage.Solid(8, 8, 0, 0, 0);
 
-    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image, TeamMask? teamMask)
+    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image, TeamMask? teamMask, bool ribbon = false)
     {
         var blend = e.Blend switch
         {
@@ -662,26 +874,66 @@ public sealed class M3Exporter
         // the art has moved into the mask, so it is a different texture under the same source file
         // name — and both AddTexture and the reuse scan below key on that name, so sharing the stem
         // would hand a plain emitter the blacked-out sprite of a team-coloured one.
-        string stem = TexStem((uint)e.TextureId < (uint)_mdx.Textures.Count
+        // A baked sheet is named for its emitter: the effect it stands for, never a source file.
+        bool baked = e.BakedSprite is not null;
+        string stem = baked ? TexStem(e.Name.Replace('/', '_'), _materials.Count)
+                    : TexStem((uint)e.TextureId < (uint)_mdx.Textures.Count
                               ? _mdx.Textures[e.TextureId].FileName : "", _materials.Count)
                     + (teamMask is not null ? "_tc" : "");
 
+        // An additive PopcornFX stand-in draws its light the way Blizzard's additive particles do:
+        // the sprite in emis1 over a black, untextured diffuse, with hdr_emis setting how bright.
+        // In the diffuse it could never pass 1.0, and every effect came out a fraction as bright
+        // as Warcraft III's HDR renderer draws it. Across 4,895 HotS particle materials, their add
+        // and alpha-add ones are mostly this exact layout. A team-coloured card already draws
+        // through an emissive slot, so it keeps its layout and takes only the multiplier.
+        bool glow = e.IsPopcorn && blend == CompositeBlend.Additive;
+        bool emissiveSprite = glow && teamMask is null;
+        // Quarter steps, so stand-ins of one effect whose peaks differ by a hair share a material.
+        // A baked sheet is already what the screen should show — tone-mapped, display-referred —
+        // so it takes no glow multiplier at all.
+        float hdr = glow && !baked ? MathF.Round(Math.Clamp(e.Intensity * _opt.ParticleGlow, 1f, MathF.Max(_opt.HdrEmisCap, 1f)) * 4f) / 4f : 1f;
+        string spritePath = stem + "_diff.dds";
+        int cells = ribbon ? 1 : Math.Max(e.Rows, 1) * Math.Max(e.Columns, 1);
+        // A PopcornFX ribbon lays its texture's U along the strip; a StarCraft II ribbon lays V
+        // along it, newest edge at V=0. Measured over the 585 ribbons on Blizzard's HotS missiles:
+        // the beam textures their layers use unturned (CleanBeam, LazerBolt, Smoke_Trail) fall off
+        // across U and are flat along V, the gradients used unturned are bright at V=0, the ones
+        // turned by pi are bright at V=1, and every gradient turned -pi/2 (grad2c1, grad2b_*,
+        // Grad_Slash_Alpha1, GradientLine_Orange, ColorGrad10 ...) is bright at U=0 fading right —
+        // the fireball's FlareShot_Trail2 exactly — under colour ramps that fade base to tip.
+        float uvTurn = ribbon ? -MathF.PI / 2 : 0f;
+
         for (int i = 0; i < _materials.Count; i++)
-            if (_materials[i].IsParticle && _materials[i].DiffusePath == stem + "_diff.dds"
-                && _materials[i].Blend == blend
-                && _materials[i].FlipbookCells == Math.Max(e.Rows, 1) * Math.Max(e.Columns, 1))
+        {
+            var m = _materials[i];
+            if (m.IsParticle && (emissiveSprite ? m.EmissivePath : m.DiffusePath) == spritePath
+                && (m.EmissivePath == spritePath) == emissiveSprite
+                && m.Blend == blend && m.FlipbookCells == cells && m.HdrEmis == hdr && m.UvTurn == uvTurn)
                 return i;
+        }
 
         var mat = new ExportMaterial
         {
-            Name = stem,
+            Name = (hdr == 1f ? stem : $"{stem}_x{hdr:0.##}") + (ribbon ? "_ribbon" : ""),
+            UvTurn = uvTurn,
             Blend = blend,
             TwoSided = true,          // a billboard is seen from either side
             Unshaded = true,
             IsParticle = true,
-            FlipbookCells = Math.Max(e.Rows, 1) * Math.Max(e.Columns, 1),
-            DiffusePath = AddTexture(stem + "_diff.dds", image),
+            FlipbookCells = cells,
+            HdrEmis = hdr,
         };
+        // A baked atlas keeps its size: the export's texture cap is for source art, and halving an
+        // 8x8 sheet halves every one of its 64 frames.
+        string sprite = AddTexture(spritePath, image, maxSize: baked ? 0 : null);
+        if (emissiveSprite)
+        {
+            mat.EmissivePath = sprite;
+            mat.AlphaPath = sprite;
+            mat.BlackDiffuse = true;
+        }
+        else mat.DiffusePath = sprite;
         if (teamMask is not null)
             mat.TeamPath = AddTexture(stem + "_team.dds", TeamMaskTexture(teamMask, null), alphaIsData: true);
         _materials.Add(mat);
@@ -708,25 +960,39 @@ public sealed class M3Exporter
     /// the node or travelling off its Z axis — a static child bone at the spawn point, turned so its
     /// local Z is the emission direction. SC2 emits along the bone's Z, as Warcraft III does along the node's.
     /// </summary>
+    /// <remarks>
+    /// A stand-in whose directions stay put in model space (<see cref="MdxParticleEmitter2.WorldDirections"/>)
+    /// on a node that turns or scales gets a root bone instead, whose location is baked from the
+    /// node every frame (<see cref="BakeTrackerTracks"/>) and whose rotation never changes. The item
+    /// rarity beams are why: tiers 0-3 hang their CORN node from <c>root_bind_jnt</c>, which bobs
+    /// and leans 12-17 degrees through Stand, and a beam fixed to that bone swung its 25-unit length
+    /// about with the item. Warcraft III keeps the beam upright, since its scripts only take the birth
+    /// position from the node; tier 4, whose node sits at the root with a bob and no turn, was
+    /// upright in StarCraft II all along.
+    /// </remarks>
     private int EmitterBone(MdxParticleEmitter2 e)
     {
         int parent = (uint)e.NodeIndex < (uint)_mdx.Nodes.Count ? e.NodeIndex : -1;
         var dir = e.FaceDirection is { } f && f.LengthSquared() > 1e-8f ? Vector3.Normalize(f)
                 : e.EmitDirection.LengthSquared() > 1e-8f ? Vector3.Normalize(e.EmitDirection) : Vector3.UnitZ;
-        if (e.OrbitAngularVelocity == 0 && e.SpawnOffset.LengthSquared() < 1e-4f && Vector3.Dot(dir, Vector3.UnitZ) > 0.9999f) return parent;
+        bool track = e.WorldDirections && parent >= 0 && NodeTurns(parent);
+        if (!track && e.OrbitAngularVelocity == 0 && e.SpawnOffset.LengthSquared() < 1e-4f && Vector3.Dot(dir, Vector3.UnitZ) > 0.9999f) return parent;
 
         // An orbit: a bone at the node that spins about Z in every sequence, with the emitter bone
         // hanging off it at the orbit radius. The spin keys are baked in BakeSpinnerTracks.
         if (e.OrbitAngularVelocity != 0)
         {
+            var pivot = track ? ToSc2(_mdx.Nodes[parent].Pivot) * _opt.Scale : Vector3.Zero;
             _bones.Add(new ExportBone
             {
                 Name = UniqueBoneName($"Spin_{e.Name.Replace('/', '_')}", _bones.Count),
-                Parent = parent,
-                RestLocation = Vector3.Zero,
-                PivotWorld = parent >= 0 ? _bones[parent].PivotWorld : Vector3.Zero,
+                Parent = track ? -1 : parent,
+                RestLocation = pivot,
+                PivotWorld = track ? pivot : parent >= 0 ? _bones[parent].PivotWorld : Vector3.Zero,
             });
+            if (track) _trackers.Add((_bones.Count - 1, parent, Vector3.Zero));
             parent = _bones.Count - 1;
+            track = false;                          // the emitter rides the spinner, which follows the node
             _spinners.Add((parent, e.OrbitAngularVelocity, Math.Max(1, e.OrbitSymmetry)));
         }
 
@@ -737,6 +1003,25 @@ public sealed class M3Exporter
         var rotation = e.FaceDirection is not null && MathF.Abs(sc2Dir.Z) < 0.999f
             ? Frame(sc2Dir)
             : FromTo(Vector3.UnitZ, sc2Dir);
+        if (track)
+        {
+            // Stand-ins of one effect often share a spawn point and direction (the item beam's
+            // four shafts); they share the bone too, and its baked keys with it.
+            foreach (var (tb, tn, to) in _trackers)
+                if (tn == parent && to == e.SpawnOffset && _bones[tb].RestRotation == rotation) return tb;
+            // At the spawn point in model space; BakeTrackerTracks moves it with the node.
+            var at = ToSc2(_mdx.Nodes[parent].Pivot + e.SpawnOffset) * _opt.Scale;
+            _bones.Add(new ExportBone
+            {
+                Name = UniqueBoneName($"Emit_{e.Name.Replace('/', '_')}", _bones.Count),
+                Parent = -1,
+                RestLocation = at,
+                PivotWorld = at,
+                RestRotation = rotation,
+            });
+            _trackers.Add((_bones.Count - 1, parent, e.SpawnOffset));
+            return _bones.Count - 1;
+        }
         _bones.Add(new ExportBone
         {
             Name = UniqueBoneName($"Emit_{e.Name.Replace('/', '_')}", _bones.Count),
@@ -775,11 +1060,35 @@ public sealed class M3Exporter
         public uint EmitRateAnimId;                 // PAR_.emit_rate; the KP2V gate rides this id
         public uint EmitCountAnimId;                // PAR_.emit_count; a stand-in's count burst rides this id
         public float RestEmissionRate;              // rate with no sequence driving it
+        public bool Ribbon;                         // written as RIB_, not PAR_
     }
 
     private readonly List<ExportEmitter> _emitters = [];
+    /// <summary>PopcornFX renderers an impostor sheet stands in for; their per-layer stand-ins are dropped.</summary>
+    private readonly HashSet<Formats.Popcorn.PkRendererDef> _bakedRenderers = new(ReferenceEqualityComparer.Instance);
+    private readonly List<(string Corn, Formats.Popcorn.PkImpostorBake Bake)> _bakes = [];
+    private readonly List<(string Corn, Formats.Popcorn.PkTrailBake Bake)> _trails = [];
+    /// <summary>The cards that play the sheets — export-only emitters, never added to the model.</summary>
+    private readonly List<MdxParticleEmitter2> _impostors = [];
     /// <summary>Synthesised bones that turn about Z at a constant rate (radians per second), for orbiting stand-ins.</summary>
     private readonly List<(int Bone, float Omega, int Symmetry)> _spinners = [];
+    /// <summary>
+    /// Synthesised root bones that follow a node's position but not its turn: the point
+    /// <c>pivot + Offset</c> carried by the node's world transform, for stand-ins with world directions.
+    /// </summary>
+    private readonly List<(int Bone, int Node, Vector3 Offset)> _trackers = [];
+
+    /// <summary>Whether a node or any of its ancestors rotates or scales in some sequence.</summary>
+    private bool NodeTurns(int node)
+    {
+        for (int n = node, guard = 0; (uint)n < (uint)_mdx.Nodes.Count && guard < 256; guard++)
+        {
+            var x = _mdx.Nodes[n];
+            if (x.Rotation is { Count: > 0 } || x.Scale is { Count: > 0 }) return true;
+            n = x.ParentId < 0 ? -1 : _mdx.Nodes.FindIndex(p => p.ObjectId == x.ParentId);
+        }
+        return false;
+    }
 
     /// <summary>
     /// Below this share of transparent texels under a geoset's own UVs, a "transparent" Reforged
@@ -942,11 +1251,15 @@ public sealed class M3Exporter
     /// The normal map (X in alpha) and the team texture (the mask in alpha): filtered plainly and
     /// always BC3. Every other map's alpha is coverage — see <see cref="DdsWriter.Write"/>.
     /// </param>
-    private string AddTexture(string fileName, RgbaImage image, bool alphaIsData = false)
+    private string AddTexture(string fileName, RgbaImage image, bool alphaIsData = false, int? maxSize = null)
     {
-        if (!_textures.Any(t => t.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase)))
-            _textures.Add(new ExportedTexture(fileName,
-                DdsWriter.Write(image, _opt.MaxTextureSize, alphaIsCoverage: !alphaIsData)));
+        if (_textures.Any(t => t.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase))) return fileName;
+        var data = DdsWriter.Write(image, maxSize ?? _opt.MaxTextureSize, alphaIsCoverage: !alphaIsData);
+        // The same bytes under another name are the same file: an angel wears twelve copies of one
+        // glow effect, and their twelve baked sheets are one sheet.
+        var same = _textures.FirstOrDefault(t => t.Data.Length == data.Length && t.Data.AsSpan().SequenceEqual(data));
+        if (same is not null) return same.FileName;
+        _textures.Add(new ExportedTexture(fileName, data));
         return fileName;
     }
 
@@ -981,6 +1294,7 @@ public sealed class M3Exporter
             m.SpecularPath = Map(m.SpecularPath);
             m.EmissivePath = Map(m.EmissivePath);
             m.TeamPath = Map(m.TeamPath);
+            m.AlphaPath = Map(m.AlphaPath);
         }
     }
 
@@ -1303,6 +1617,7 @@ public sealed class M3Exporter
 
             BakeBoneTracks(def, times, boneIds);
             BakeSpinnerTracks(def, times, boneIds);
+            BakeTrackerTracks(def, times, boneIds);
             BakeEmitterTracks(def, times);
             BakeBatchTracks(def, times);
             if (_opt.GeosetVisibility) BakeVisibilityTracks(def, times);
@@ -1579,6 +1894,33 @@ public sealed class M3Exporter
     }
 
     /// <summary>
+    /// Location keys for the tracker bones: where the node's world transform carries the emitter's
+    /// spawn point at each sample. No rotation keys, so the bone keeps its rest turn whatever the
+    /// node does, as the PopcornFX scripts keep the beam's axis.
+    /// </summary>
+    private void BakeTrackerTracks(SeqDef def, List<int> times, (uint Loc, uint Rot, uint Scl)[] boneIds)
+    {
+        if (_trackers.Count == 0) return;
+        var locs = _trackers.Select(_ => new Vector3[times.Count]).ToArray();
+        for (int ti = 0; ti < times.Count; ti++)
+        {
+            _animator.Evaluate(def.Source, times[ti], times[ti]);
+            for (int k = 0; k < _trackers.Count; k++)
+            {
+                var (_, node, offset) = _trackers[k];
+                locs[k][ti] = ToSc2(Vector3.Transform(_mdx.Nodes[node].Pivot + offset, _animator.World(node))) * _opt.Scale;
+            }
+        }
+        var frames = times.Select(t => t - def.Source.IntervalStart).ToArray();
+        for (int k = 0; k < _trackers.Count; k++)
+        {
+            var bone = _bones[_trackers[k].Bone];
+            if (NotAll(locs[k], v => (v - bone.RestLocation).Length() < 0.001f * Math.Max(_opt.Scale, 1)))
+                def.Vec3Tracks.Add((boneIds[_trackers[k].Bone].Loc, frames, locs[k]));
+        }
+    }
+
+    /// <summary>
     /// Emission rate per sequence, gated by the emitter's KP2V visibility track.
     /// </summary>
     /// <remarks>
@@ -1593,6 +1935,7 @@ public sealed class M3Exporter
     {
         foreach (var em in _emitters)
         {
+            if (em.Ribbon) continue;
             var src = em.Source;
             var rates = new float[times.Count];
             for (int ti = 0; ti < times.Count; ti++)
@@ -2279,15 +2622,19 @@ public sealed class M3Exporter
             // consumes its alpha (cutout or alpha-blend) gets the alpha1 mask layer.
             bool alphaUsed = m.Blend is CompositeBlend.AlphaTest or CompositeBlend.AlphaBlend
                                       or CompositeBlend.Additive;
-            matLayers[i][0] = WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: true,
-                                         defaultAlpha: m.DefaultAlpha,
-                                         flipbook: m.FlipbookCells > 1);                                       // diff
+            matLayers[i][0] = m.BlackDiffuse
+                ? WriteLayer(b, "", m.ColorAnimId, wrap: true, defaultAlpha: 0, rgb: 0)                         // diff
+                : WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: true, uvTurn: m.UvTurn,
+                             defaultAlpha: m.DefaultAlpha,
+                             flipbook: m.FlipbookCells > 1);                                                   // diff
             if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: true);
-            if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: true);
+            if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
+                                                                        flipbook: m.FlipbookCells > 1);
             // The alpha layer samples the same sheet, so it needs the same flipbook flag or it
             // reads the whole atlas while the diffuse reads one cell. Blizzard flags it more often
             // than any other slot: 83% of alpha1 layers behind a multi-cell emitter carry 0x100.
-            if (alphaUsed) matLayers[i][8] = WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, _nextAnimId(), wrap: true,
+            if (alphaUsed) matLayers[i][8] = WriteLayer(b, _opt.TexturePrefix + (m.AlphaPath.Length > 0 ? m.AlphaPath : m.DiffusePath),
+                                                        _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
                                                         colorChannels: ChannelsAlphaOnly,
                                                         flipbook: m.FlipbookCells > 1);                        // alpha1
             if (m.NormalPath.Length > 0) matLayers[i][10] = WriteLayer(b, _opt.TexturePrefix + m.NormalPath, _nextAnimId(), wrap: true);
@@ -2336,17 +2683,32 @@ public sealed class M3Exporter
         // not understand keeps the default StarCraft II already accepts. Emitters sit on the bone
         // built from their MDX node, which is why parsing them as nodes matters.
         M3Builder.Section? par = null;
-        if (_emitters.Count > 0)
+        var systems = _emitters.Where(em => !em.Ribbon).ToList();
+        if (systems.Count > 0)
         {
             par = b.Add("PAR_", M3ParticleWriter.Version, M3ParticleWriter.Size);
-            foreach (var em in _emitters)
+            foreach (var em in systems)
             {
                 int bone = (uint)em.Bone < (uint)boneMap.Length ? boneMap[em.Bone] : 0;
                 par.W.Write(M3ParticleWriter.Build(em.Source, bone, em.MaterialIndex,
                                                    _opt.Scale, _nextAnimId, em.EmitRateAnimId,
                                                    em.RestEmissionRate, em.EmitCountAnimId));
             }
-            par.Count = _emitters.Count;
+            par.Count = systems.Count;
+        }
+
+        // ---- RIB_ ribbons ----
+        M3Builder.Section? rib = null;
+        var trails = _emitters.Where(em => em.Ribbon).ToList();
+        if (trails.Count > 0)
+        {
+            rib = b.Add("RIB_", M3ParticleWriter.RibbonVersion, M3ParticleWriter.RibbonSize);
+            foreach (var em in trails)
+            {
+                int bone = (uint)em.Bone < (uint)boneMap.Length ? boneMap[em.Bone] : 0;
+                rib.W.Write(M3ParticleWriter.BuildRibbon(em.Source, bone, em.MaterialIndex, _opt.Scale, _nextAnimId));
+            }
+            rib.Count = trails.Count;
         }
 
         // ---- MODL V29 ----
@@ -2380,7 +2742,9 @@ public sealed class M3Exporter
             for (int i = 0; i < 10; i++) b.NullRef(modl);   // materials_displacement .. materials_lensflare
             // particle_systems is the first of the next 17 refs (through `turrets`).
             if (par is not null) b.Ref(modl, par); else b.NullRef(modl);
-            for (int i = 0; i < 16; i++) b.NullRef(modl);
+            b.NullRef(modl);                                    // particle_copies
+            if (rib is not null) b.Ref(modl, rib); else b.NullRef(modl);
+            for (int i = 0; i < 14; i++) b.NullRef(modl);
             b.Ref(modl, iref);
             w.Write(new byte[108]);
             for (int i = 0; i < 4; i++) b.NullRef(modl);        // hittests, attachment volumes + addons
@@ -2502,7 +2866,17 @@ public sealed class M3Exporter
 
             var w = mats.W;
             b.Ref(mats, matNames[i]);
-            w.Write(0u);                                        // additional_flags
+            // A material drawn by a PAR_ or RIB_ must declare that its colour and alpha come in
+            // per vertex, which is how those systems deliver their own ramps. m3studio's
+            // structures say vertex_color "is always set if the material is used by a particle
+            // system", and Blizzard agree: over 2,171 particle and ribbon materials on their HotS
+            // missiles, *every one* sets these bits (ribbons 0xC on 65%, particles 0xD on 82%,
+            // where the extra 0x1 is depth_blend_falloff, which only applies when that value is
+            // non-zero — ours is 0). We wrote 0 on every material, and the baked trail ribbon
+            // (blend 1, alpha straight off the vertex) drew nothing at all in SC2 (VfxFireballM),
+            // while additive particles over a black diffuse happened to survive it.
+            uint additional = m.IsParticle ? 0x4u | 0x8u : 0u;  // vertex_color | vertex_alpha
+            w.Write(additional);                                // additional_flags
             // Do NOT add 0x4 (unfogged) here. It is set on 31 of 31 sampled Blizzard unit
             // materials, but those set it *instead of* geometry_visible, never alongside it —
             // and 0x80000000 | 0x4 is what crashed the SC2 editor on every model we exported.
@@ -2516,7 +2890,15 @@ public sealed class M3Exporter
             bool cutout = m.Blend == CompositeBlend.AlphaTest;
             bool translucent = m.Blend is CompositeBlend.AlphaBlend or CompositeBlend.Additive;
             if (cutout || translucent) flags |= 0x4000;         // transparent_shadows
-            if (translucent) flags |= 0x10000;                  // transparent_depth_effects
+            // transparent_depth_effects, but never on a material a PAR_ or RIB_ draws: across 900
+            // Blizzard models it is set on 0 of 2,283 particle and 0 of 569 ribbon materials — not
+            // rare, never — while 91% of them set transparent_shadows and 72% unshaded, so those
+            // materials are otherwise the same shape as ours. It is a depth-effect bit for
+            // transparent *geometry*; particles inherited it here only because they are translucent.
+            // MAT_ flags have cost this exporter a whole-file crash once already (see the
+            // geometry_visible | unfogged note above), so ours follow the corpus where it is this
+            // one-sided. Found by `m3audit.py`, which ranked it NEVER against the corpus.
+            if (translucent && !m.IsParticle) flags |= 0x10000;
             // A glow, a smoke card or a team-colour ground disc has no business casting a shadow.
             // Warcraft III hero models put a large additive quad flat on the ground for the team
             // glow; exported without these bits SC2 shadows the quad, and the unit stands in a
@@ -2565,7 +2947,7 @@ public sealed class M3Exporter
             // forms, decay) needs *some* test or it could never hide, but stays low enough to cut
             // nothing while visible.
             w.Write(cutout ? 32u : visibilityDriven ? 8u : 0u);
-            w.Write(1f); w.Write(1f); w.Write(1f); w.Write(0f); w.Write(0f);
+            w.Write(1f); w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_spec, hdr_emis, hdr_envi_*
             for (int L = 0; L < 18; L++)
             {
                 var layer = matLayers[i][L];
@@ -2649,7 +3031,7 @@ public sealed class M3Exporter
     /// <param name="colorChannels">Which texture channels the engine samples — see the constants above.</param>
     private M3Builder.Section WriteLayer(M3Builder b, string bitmapPath, uint colorAnimId, bool wrap,
                                          byte defaultAlpha = 255, uint colorChannels = ChannelsRgb,
-                                         bool flipbook = false)
+                                         bool flipbook = false, uint rgb = 0x00FFFFFF, float uvTurn = 0f)
     {
         var layer = b.Add("LAYR", 26, 464);
         var w = layer.W;
@@ -2658,7 +3040,7 @@ public sealed class M3Exporter
         w.Write(0u);
         if (pathSec is not null) b.Ref(layer, pathSec); else b.NullRef(layer);
         WriteAnimHeader(w, 1, 6, colorAnimId);                  // color_value — GEOA rides this id
-        w.Write(0x00FFFFFFu | ((uint)defaultAlpha << 24)); w.Write(0u); w.Write(-1);
+        w.Write((rgb & 0x00FFFFFFu) | ((uint)defaultAlpha << 24)); w.Write(0u); w.Write(-1);
         // 0x100 particle_uv_flipbook makes a particle sample ONE cell of a sprite sheet. Without
         // it SC2 maps the whole sheet onto every quad, so Warcraft III's 8x8 cloud atlas draws as a
         // grid of 64 little puffs on each particle. Blizzard sets it on 82% of the materials behind
@@ -2684,7 +3066,7 @@ public sealed class M3Exporter
         WriteAnimHeader(w, 1, 6, _nextAnimId());
         w.Write(0f); w.Write(0f); w.Write(0f); w.Write(0f); w.Write(-1);
         WriteAnimHeader(w, 1, 6, _nextAnimId());
-        WriteVec3(w, Vector3.Zero); WriteVec3(w, Vector3.Zero); w.Write(-1);
+        WriteVec3(w, new Vector3(0, 0, uvTurn)); WriteVec3(w, Vector3.Zero); w.Write(-1);   // uv_angle
         WriteAnimHeader(w, 1, 6, _nextAnimId());
         w.Write(1f); w.Write(1f); w.Write(1f); w.Write(1f); w.Write(-1);
         WriteAnimHeader(w, 1, 0, _nextAnimId());
