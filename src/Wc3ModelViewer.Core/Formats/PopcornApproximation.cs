@@ -58,6 +58,13 @@ public static class PopcornApproximation
     public const float CountBurstMaxSeconds = 0.1f;
 
     /// <summary>Whether measured emitters keep their spawn offset and direction (true) or all emit at the node. Also a check switch.</summary>
+
+    /// <summary>
+    /// Lifespan, seconds, of each StarCraft II card standing in for a particle that never dies. Any
+    /// length renews seamlessly (see <c>SynthesizeMeasured</c>); a short one also lets the effect
+    /// fade out soon after its sequence switches it off — a dead hero's glow is gone within this.
+    /// </summary>
+    public const float ImmortalCardLife = 4f;
     public static bool PlaceEmitters { get; set; } = true;
 
     /// <summary>HD-class archive prefixes a bake might sit under, tried in order after the model's own.</summary>
@@ -227,6 +234,7 @@ public static class PopcornApproximation
             Name = $"{corn.Name}/{layer.Name}",
             NodeIndex = corn.NodeIndex,
             PopcornSource = $"{Path.GetFileNameWithoutExtension(corn.EffectPath)}:{layer.Name}",
+            PopcornEmitter = corn,
             Orientation = orientation,
             BeamLength = beam * m,
             SpawnImmediately = endless,
@@ -322,6 +330,18 @@ public static class PopcornApproximation
         // The CORN multiplier went into the measurement as the scripts' __a_Game.ColorMultiplier,
         // so it is not applied again here: the hero glow's is (1,1,1,0), which its script ignores.
         var (c0, c1, c2, cMid) = s.Colour;
+        var sizes = s.Size;
+        // A particle that never dies is born once in Warcraft III and plays its opening ramp once.
+        // StarCraft II has no immortal particle, so its card is renewed every lifetime, and a card
+        // that replays the opening fade-in dims and recovers at every renewal: the hero glow sank to
+        // a quarter of its brightness every ten seconds (alpha 32 against a settled 126). So the card
+        // holds the look the effect settles into, averaged over the back half of the measuring run.
+        if (s.Immortal)
+        {
+            var (settled, radius) = s.Settled;
+            (c0, c1, c2, cMid) = (settled, settled, settled, 0.5f);
+            sizes = (radius, radius, radius, 0.5f);
+        }
         // A team-coloured layer's hue is the player's, and StarCraft II supplies it live, so only
         // its brightness belongs in the ramp. The measuring run has no player and passes white,
         // which the item rarity beams turn into pure red (they saturate the player colour, and
@@ -367,13 +387,26 @@ public static class PopcornApproximation
         var (sc1, a1) = SplitColour(c1, Vector4.One);
         var (sc2, a2) = SplitColour(c2, Vector4.One);
 
+        // How an immortal layer's card hands over to the next. Drawn additively, two cards born half
+        // a life apart, each ramping 0 -> settled -> 0, add up to the settled alpha at every moment,
+        // so the renewal cannot show however the game's frames fall. Alpha-blended cards do not add
+        // that way — two cards of coverage a/2 cover a - a²/4, not a — so those hold the settled
+        // alpha and hand over whole. Player-coloured cards cross-fade either way. The only blended
+        // ones are the HD hero glow's (M3ExportOptions.HeroGlowCoverage): at the core each layer's
+        // 0.6 dips to 0.51 at a crossing, and the three layers, renewing in step, go from 0.94 to
+        // 0.88 together — about 6% every two seconds, less than the glow's own breathing in
+        // Warcraft III (its alpha swings 0.45-0.5 and its size 0.9-1.0).
+        bool crossFade = s.Immortal && (additive || s.TeamColoured);
+        if (crossFade) (a0, a2) = (0, 0);
+        float life = s.Immortal ? ImmortalCardLife : s.Life;
+
         // Emission: a steady emitter at its measured rate; a burst at the rate that fits its births
         // into the window they happened in, switched off either side of it.
         // The window is never shorter than MinBurstSeconds: a rate is integrated frame by frame, and
         // Holy Light's rune — one particle in one 34 ms frame — accrues barely one particle's worth.
         float window = MathF.Max(MathF.Max(s.LastBirth - s.FirstBirth, 0) + 1f / 30f, MinBurstSeconds);
         // Half a particle of headroom, so a one-particle burst is not lost to rounding at the window's end.
-        float rate = s.Immortal ? 1f / s.Life : s.Continuous ? s.Births / MathF.Max(s.LastBirth - s.FirstBirth, 0.2f) : (s.Births + 0.5f) / window;
+        float rate = s.Immortal ? (crossFade ? 2f : 1f) / life : s.Continuous ? s.Births / MathF.Max(s.LastBirth - s.FirstBirth, 0.2f) : (s.Births + 0.5f) / window;
         var vis = corn.VisibilityTrack ?? GateTrack(model, corn.PopcornFlags);
         // A distance-driven trail barely emits standing still; in flight it is a steady stream.
         if (s.TrailRate > 0) rate = s.TrailRate;
@@ -400,6 +433,7 @@ public static class PopcornApproximation
             Name = $"{corn.Name}/{s.LayerName}",
             NodeIndex = corn.NodeIndex,
             PopcornSource = $"{Path.GetFileNameWithoutExtension(corn.EffectPath)}:{s.LayerName} (measured)",
+            PopcornEmitter = corn,
             Orientation = orientation,
             BeamLength = beam * m,
             SpawnImmediately = s.Immortal,
@@ -407,14 +441,14 @@ public static class PopcornApproximation
             SpawnHalfExtents = orientation == MdxParticleOrientation.Ray && !streaks ? Vector3.Zero : s.SpawnHalfExtents * m,
             EmitDirection = PlaceEmitters ? direction : Vector3.UnitZ,
             Speed = speed * m, Variation = s.SpeedVariation, Latitude = spread,
-            Gravity = 0, Life = s.Life, EmissionRate = rate,
+            Gravity = 0, Life = life, EmissionRate = rate,
             Length = 0, Width = 0,
             Blend = blend, Rows = Math.Max(1, r.AtlasRows), Columns = Math.Max(1, r.AtlasColumns),
             ParticleType = MdxParticleType.Head, TailLength = 0, MiddleTime = Math.Clamp(cMid, 0.05f, 0.95f),
-            SizeMiddleTime = Math.Clamp(s.Size.MiddleTime, 0.05f, 0.95f),
+            SizeMiddleTime = Math.Clamp(sizes.MiddleTime, 0.05f, 0.95f),
             StartColor = sc0, MiddleColor = sc1, EndColor = sc2,
             StartAlpha = a0, MiddleAlpha = a1, EndAlpha = a2,
-            StartScale = s.Size.Start * m, MiddleScale = s.Size.Middle * m, EndScale = s.Size.End * m,
+            StartScale = sizes.Start * m, MiddleScale = sizes.Middle * m, EndScale = sizes.End * m,
             TextureId = TextureIndex(model, r.Texture), PriorityPlane = 0, ReplaceableId = 0,
             TeamColoured = s.TeamColoured,
             Intensity = intensity,
@@ -425,13 +459,17 @@ public static class PopcornApproximation
             // world space, so the bone carries it round.
             // A particle that travels with its effect (a missile's head) is simulated in the
             // emitter's space, so a flying missile carries it; the rest stay in the world.
-            Unshaded = true, Unfogged = false, ModelSpace = s.OrbitAngularVelocity != 0 || s.FollowsEmitter, LineEmitter = false,
+            // The hero glow is always hosted: left in the world (every export up to v1.7.0) it
+            // stayed on the ground where the hero had stood, like a stain, until the card renewed
+            // at the hero's new spot. The follow test measures it hosted on every HD and DE hero;
+            // this keeps it so whatever becomes of that test.
+            Unshaded = true, Unfogged = false, ModelSpace = s.OrbitAngularVelocity != 0 || s.FollowsEmitter || corn.IsHeroGlow, LineEmitter = false,
             OrbitAngularVelocity = s.OrbitAngularVelocity, OrbitSymmetry = Math.Max(1, orbitSymmetry),
             FaceDirection = face,
             WorldDirections = s.WorldDirections,
             EmissionRateTrack = rateTrack,
             EmitCountTrack = countTrack,
-            LifeTrack = ScaledTrack(corn.LifespanTrack, s.Life),
+            LifeTrack = ScaledTrack(corn.LifespanTrack, life),
             SpeedTrack = ScaledTrack(corn.SpeedTrack, speed * m),
             VisibilityTrack = vis,
         };
@@ -543,6 +581,7 @@ public static class PopcornApproximation
             Name = $"{corn.Name}/impostor",
             NodeIndex = corn.NodeIndex,
             PopcornSource = $"{Path.GetFileNameWithoutExtension(corn.EffectPath)}:impostor (baked {bake.Layers.Count} layers)",
+            PopcornEmitter = corn,
             Orientation = MdxParticleOrientation.CameraFacing,
             BeamLength = 0,
             SpawnImmediately = bake.Loops,
@@ -600,6 +639,7 @@ public static class PopcornApproximation
             Name = $"{corn.Name}/trail",
             NodeIndex = corn.NodeIndex,
             PopcornSource = $"{Path.GetFileNameWithoutExtension(corn.EffectPath)}:trail (baked {trail.Layers.Count} layers)",
+            PopcornEmitter = corn,
             Orientation = MdxParticleOrientation.CameraFacing,
             BeamLength = 0,
             SpawnImmediately = false,

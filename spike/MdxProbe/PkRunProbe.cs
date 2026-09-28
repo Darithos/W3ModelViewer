@@ -154,6 +154,7 @@ public static class PkRunProbe
         int ok = 0, failed = 0, empty = 0;
         int teamLayers = 0, drawLayers = 0, teamBakes = 0;
         var teamSprites = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var teamBlends = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var unsupported = new Dictionary<string, int>();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         long totalParticles = 0;
@@ -194,7 +195,13 @@ public static class PkRunProbe
                     foreach (var s in fx.Slots)
                         if (s is { ReadsTeamColor: true })
                             foreach (var r in s.Def.Renderers)
+                            {
                                 if (r.Texture.Length > 0) teamSprites.Add(Path.GetFileName(r.Texture));
+                                // Additive and alpha-blended player-colour layers need different
+                                // StarCraft II materials, so count which the effects use.
+                                string key = $"{r.Blend} {Path.GetFileNameWithoutExtension(f).Split('~')[^1]}";
+                                teamBlends[key] = teamBlends.GetValueOrDefault(key) + 1;
+                            }
                     if (teamBakes <= 12)
                         Console.WriteLine($"  team-coloured: {Path.GetFileName(f),-44} {teamed}/{drawing} drawing layer(s)");
                 }
@@ -210,6 +217,7 @@ public static class PkRunProbe
         Console.WriteLine($"\n{files.Count} bakes in {sw.Elapsed.TotalSeconds:0.0}s: {ok} ran, {failed} failed, {empty} drew nothing in 3 s; mean peak {totalParticles / Math.Max(ok, 1)} particles");
         Console.WriteLine($"  player-colour: {teamLayers:N0} of {drawLayers:N0} drawing layers, across {teamBakes:N0} bakes");
         Console.WriteLine($"  sprites on those layers ({teamSprites.Count}): {string.Join(", ", teamSprites)}");
+        foreach (var kv in teamBlends) Console.WriteLine($"  team renderer {kv.Key}: {kv.Value}");
         foreach (var kv in unsupported.OrderByDescending(k => k.Value).Take(30)) Console.WriteLine($"  {kv.Value,5}  {kv.Key}");
         return failed == 0 ? 0 : 1;
     }

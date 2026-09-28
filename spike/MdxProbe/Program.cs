@@ -189,6 +189,28 @@ if (args.Contains("--cloud"))
     return 0;
 }
 
+// --immortal [--sd|--hd|--de] [pathFilter] [limit] lists every PopcornFX stand-in whose particles never
+// die, which an export renews once per lifetime, with the blend and ramps that renewal shows.
+if (args.Contains("--immortal"))
+{
+    int ii = Array.IndexOf(args, "--immortal");
+    var rest = args.Skip(ii + 1).Where(a => !a.StartsWith("--")).ToArray();
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive;
+    return MdxProbe.ImmortalProbe.Run(install, art, rest.Length > 0 && rest[0] != "*" ? rest[0] : null, rest.Length > 1 ? int.Parse(rest[1]) : int.MaxValue);
+}
+
+// --heroglow [--sd|--hd|--de] [--follow] [filter] [limit] censuses how hero models draw the team glow: PRE2
+// emitters on replaceable 2, PopcornFX glow effects and team-glow geosets, with the fields that
+// decide whether an exported particle system stays with the unit.
+if (args.Contains("--heroglow"))
+{
+    int hi = Array.IndexOf(args, "--heroglow");
+    var rest = args.Skip(hi + 1).Where(a => !a.StartsWith("--")).ToArray();
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive;
+    return MdxProbe.HeroGlowProbe.Run(install, art, rest.Length > 0 ? rest[0] : null, rest.Length > 1 ? int.Parse(rest[1]) : int.MaxValue,
+                                      follow: args.Contains("--follow"));
+}
+
 // --emitters <file.mdx> dumps the PRE2 emitters that drive the SC2 particle conversion.
 if (args.Contains("--emitters"))
 {
@@ -1104,6 +1126,20 @@ if (args.Contains("--export1"))
         Lod = mdl.LodLevels.FirstOrDefault(),
         ModelName = Array.IndexOf(args, "--name") is int ni && ni >= 0 ? args[ni + 1] : Path.GetFileNameWithoutExtension(args[pi + 1]),
         BakeEffects = !args.Contains("--nobake"),
+        // --noheroglow leaves the hero glow out, as the dialog's "Hero glow" box unticked does.
+        ExportHeroGlow = !args.Contains("--noheroglow"),
+        // --teamemis puts Reforged player colour back on the unlit emissive layer (before v1.10).
+        LitTeamColour = !args.Contains("--teamemis"),
+        // --specgain N sets MAT_.hdr_spec on standard materials (default 1).
+        SpecularGain = Array.IndexOf(args, "--specgain") is int sg && sg >= 0
+            ? float.Parse(args[sg + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
+        // --teamgain N multiplies player-coloured cards' hdr_emis (SC2's player colours are darker
+        // than WC3's); --heroglowcover N sets the hero glow's coverage boost (default 4).
+        PlayerColourGain = Array.IndexOf(args, "--teamgain") is int tg && tg >= 0
+            ? float.Parse(args[tg + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
+        HeroGlowCoverage = Array.IndexOf(args, "--heroglowcover") is int hgc && hgc >= 0
+            ? float.Parse(args[hgc + 1], System.Globalization.CultureInfo.InvariantCulture)
+            : new Wc3ModelViewer.Core.Convert.M3ExportOptions().HeroGlowCoverage,
         // The trail is per-layer camera-facing particles by default; --trailbake puts it back on
         // one baked RIB_ strip, which measurably does not face the camera.
         BakeTrails = args.Contains("--trailbake"),
@@ -1339,6 +1375,18 @@ if (args.Contains("--pksweep"))
     int pi = Array.IndexOf(args, "--pksweep");
     int n = pi + 2 < args.Length && int.TryParse(args[pi + 2], out int pn) ? pn : int.MaxValue;
     return MdxProbe.PkRunProbe.Sweep(args[pi + 1], n);
+}
+
+// --rawfile <cascName> <out> writes one archive file to disk byte for byte, no decoding.
+if (args.Contains("--rawfile"))
+{
+    int ri = Array.IndexOf(args, "--rawfile");
+    using var rs = new Wc3Storage(install);
+    var raw = rs.TryReadFile(args[ri + 1]);
+    if (raw is null) { Console.WriteLine("not found: " + args[ri + 1]); return 1; }
+    File.WriteAllBytes(args[ri + 2], raw);
+    Console.WriteLine($"{raw.Length} bytes -> {args[ri + 2]}");
+    return 0;
 }
 
 // --dumpbakes <outDir> writes every .pkb bake in the archive to disk, named after its archive path,

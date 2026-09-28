@@ -102,11 +102,68 @@ public sealed class M3ExportOptions
     public bool ConvertPbr { get; init; } = true;
 
     /// <summary>
+    /// Reforged player colour as a lit tint: the diffuse keeps the painted albedo and carries
+    /// <c>1 - mask</c> in its alpha, sampled ARGB, which StarCraft II multiplies by the player colour
+    /// before lighting — Reforged's own <c>albedo x lerp(1, team, mask)</c>, and the marine's recipe.
+    /// False falls back to the diffuse cut to black under the mask plus an unlit Team Color
+    /// Emissive Add layer, which stays full-bright in shadow and loses the normal map there.
+    /// Classic art always uses the emissive layer.
+    /// </summary>
+    public bool LitTeamColour { get; init; } = true;
+
+    /// <summary>
+    /// MAT_.hdr_spec on standard materials: how bright the specular map's highlights may get.
+    /// Reforged lights metal with GGX, whose peak on a smooth surface is several times the albedo,
+    /// while SC2's highlight tops out at <c>spec x hdr_spec</c>.
+    /// </summary>
+    public float SpecularGain { get; init; } = 1f;
+
+    /// <summary>
     /// Export particle emitters as StarCraft II particle systems: PRE2 emitters as read, and
     /// Reforged's PopcornFX (CORN) emitters as the stand-ins <c>PopcornApproximation.Attach</c>
     /// synthesised from their bakes. Models with no emitters are unaffected either way.
     /// </summary>
     public bool ExportEffects { get; init; } = true;
+
+    /// <summary>
+    /// Export the hero glow: the player-coloured disc every Reforged hero stands in
+    /// (<see cref="MdxPopcornEmitter.IsHeroGlow"/>). Off leaves it out and changes nothing else, for
+    /// a map that marks its heroes some other way. Asked for by modders who were deleting its
+    /// particle systems by hand in Blender after every export.
+    /// </summary>
+    public bool ExportHeroGlow { get; init; } = true;
+
+    /// <summary>
+    /// Extra <c>hdr_emis</c> on player-coloured PopcornFX cards, on top of <see cref="ParticleGlow"/>.
+    /// StarCraft II's player colours are its own palette, not Warcraft III's, and its red is well
+    /// short of Warcraft III's 255,3,3, so the same card reads dimmer in StarCraft II's red.
+    /// </summary>
+    public float PlayerColourGain { get; init; } = 1f;
+
+    /// <summary>
+    /// How many times more ground the HD hero glow's cards cover than its PopcornFX numbers say.
+    /// Goes on the sprite's alpha first, until its brightest texel reaches 255, and the rest on the
+    /// card's own alpha, up to 1; past both it has no further effect.
+    /// </summary>
+    /// <remarks>
+    /// The HD glow is three alpha-blended layers, and they export alpha-blended: black diffuse, the
+    /// sprite's alpha as coverage, the player's colour through the team channel. Drawn additively,
+    /// as up to v1.9.0, it only washed a little light over the ground, and the user found every
+    /// exported hero glow dull beside Warcraft III's (2026-09-28).
+    /// <para>
+    /// Blending alone was not enough. Warcraft III draws the glow far stronger than its layers'
+    /// alpha implies: in the user's World Editor screenshot (blue Paladin on grass) the channel the
+    /// player's colour lacks falls from 56 to about 5 at the glow's heart, about 90% coverage,
+    /// where alpha 0.48 on a sprite peaking at 0.31, three layers deep, gives 38%. StarCraft II
+    /// blends in linear light and showed about 15% for those numbers. Of x2, x4 and the maximum,
+    /// tried side by side in the SC2 editor, **x4 matched**: the heart's blue reached 150 against
+    /// Warcraft III's 152 (the user picked the same one by eye).
+    /// </para>
+    /// Scoped to the hero glow because that is what was calibrated. Other alpha-blended
+    /// player-colour layers (one on each item-rarity beam, the orb, wisps) stay additive, the look
+    /// the user checked in game for the item beams.
+    /// </remarks>
+    public float HeroGlowCoverage { get; init; } = 4f;
 
     /// <summary>
     /// Emissive HDR multiplier for additive PopcornFX stand-ins, on top of the HDR their own colour
@@ -362,6 +419,7 @@ public sealed class M3Exporter
         public string EmissivePath = "";
         public string TeamPath = "";                // bitmap whose alpha scales the live player colour
         public string AlphaPath = "";               // alpha1 bitmap when it is not the diffuse's
+        public bool TeamInDiffuse;                  // diffuse sampled ARGB: its alpha is 1 - team mask
         public float HdrEmis = 1f;                  // MAT_.hdr_emis: scales emis1/emis2, player colour included
         public bool BlackDiffuse;                   // untextured diffuse, colour 0,0,0,0 — Blizzard's emissive-particle value
         public float UvTurn;                        // LAYR.uv_angle about Z on every textured layer (a ribbon's U runs across it)
@@ -511,6 +569,10 @@ public sealed class M3Exporter
         if (teamed > 0)
             _log.Add($"{teamed} material(s) take their player colour live from StarCraft II "
                      + "(Team Color Emissive Add) instead of having it painted in");
+        int tinted = _materials.Count(m => m.TeamInDiffuse);
+        if (tinted > 0)
+            _log.Add($"{tinted} material(s) take their player colour live from StarCraft II as a lit tint "
+                     + "(team mask in the diffuse alpha)");
 
         // A name-only match found real pixels but may have found the wrong file — texture names are
         // not unique across the archive. Name them so a wrong guess is checkable rather than silent,
@@ -636,7 +698,7 @@ public sealed class M3Exporter
 
             var mdxMat = _mdx.Materials[g.MaterialId];
             var composite = MaterialCompositor.Compose(_mdx, mdxMat, textures, modelCascName, _opt.TeamColor,
-                                                       bakeTeam: false);
+                                                       bakeTeam: false, tintHdTeam: !LitTeam);
 
             // Reforged marks every HD layer FilterMode.Transparent and shares one atlas between
             // solid body parts and cut-out cards, so the material alone cannot say whether *this*
@@ -710,9 +772,16 @@ public sealed class M3Exporter
 
         if (_opt.BakeEffects) BakeImpostors(textures, modelCascName);
 
+        if (!_opt.ExportHeroGlow)
+        {
+            int glowLayers = _mdx.ParticleEmitters.Count(e => e.PopcornEmitter is { IsHeroGlow: true });
+            if (glowLayers > 0) _log.Add($"hero glow left out ({glowLayers} particle system(s) not exported)");
+        }
+
         int skipped = 0;
         foreach (var e in _mdx.ParticleEmitters.Concat(_impostors))
         {
+            if (!_opt.ExportHeroGlow && e.PopcornEmitter is { IsHeroGlow: true }) continue;
             // A sheet the exporter rendered itself (an impostor bake, a calibration card) needs no
             // texture lookup and no mask: it is written as it is.
             if (e.BakedSprite is not null)
@@ -759,8 +828,16 @@ public sealed class M3Exporter
             // owner in Warcraft III, and used to export as a fixed white beam because the headless
             // measuring run had no player to ask. Its own sprite becomes the mask, so StarCraft II
             // multiplies the live colour by the beam's shape exactly as the bake does.
-            if (glowMask is null && e.TeamColoured && MaterialCompositor.SpriteMask(image) is { } spriteMask)
-                glowMask = spriteMask;
+            // The hero glow's layers, which Warcraft III alpha-blends, stay alpha-blended: the
+            // sprite's alpha is the card's coverage, so the mask is the sprite's brightness alone
+            // (see M3ExportOptions.HeroGlowCoverage).
+            bool teamBlend = false;
+            if (glowMask is null && e.TeamColoured)
+            {
+                teamBlend = e.Blend == MdxParticleBlend.Blend && e.PopcornEmitter is { IsHeroGlow: true };
+                glowMask = MaterialCompositor.SpriteMask(image, foldAlpha: !teamBlend);
+                teamBlend &= glowMask is not null;
+            }
 
             // A PopcornFX ribbon becomes a StarCraft II ribbon when it runs steadily in the world:
             // a trail drawn behind whatever carries the model. A ribbon has no emission rate to
@@ -768,14 +845,17 @@ public sealed class M3Exporter
             float restRate = RestEmissionRateOf(e);
             bool ribbon = e.Ribbon && !e.ModelSpace && glowMask is null && restRate > 0
                           && e.EmissionRateTrack is null && e.EmitCountTrack is null;
+            float alphaScale = 1f;
+            if (teamBlend) (image, alphaScale) = BoostCoverage(e, image);
             _emitters.Add(new ExportEmitter
             {
                 Source = e,
-                MaterialIndex = AddParticleMaterial(e, glowMask is null ? image : BlackSprite, glowMask, ribbon),
+                MaterialIndex = AddParticleMaterial(e, glowMask is null || teamBlend ? image : BlackSprite, glowMask, ribbon, teamBlend),
                 NodeIndex = e.NodeIndex,
                 Bone = EmitterBone(e),
                 RestEmissionRate = restRate,
                 Ribbon = ribbon,
+                AlphaScale = alphaScale,
             });
         }
 
@@ -811,6 +891,7 @@ public sealed class M3Exporter
         foreach (var corn in _mdx.PopcornEmitters)
         {
             if (corn.Runtime is null || corn.Stats.Count == 0) continue;
+            if (!_opt.ExportHeroGlow && corn.IsHeroGlow) continue;
             RgbaImage? Load(string path) => textures.Load(modelCascName, new MdxTexture { ReplaceableId = 0, FileName = PopcornApproximation.TextureRelPath(path), Flags = 0 });
             Formats.Popcorn.PkImpostorBake? bake;
             Formats.Popcorn.PkTrailBake? trail;
@@ -866,7 +947,33 @@ public sealed class M3Exporter
     /// </remarks>
     private static readonly RgbaImage BlackSprite = RgbaImage.Solid(8, 8, 0, 0, 0);
 
-    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image, TeamMask? teamMask, bool ribbon = false)
+    /// <summary>
+    /// Splits <see cref="M3ExportOptions.HeroGlowCoverage"/> between a hero glow card's sprite
+    /// and its alpha ramp: the sprite's alpha takes it first, until its brightest
+    /// texel reaches 255, and the ramp the rest, up to 255. Sprite first, because the sprite's
+    /// share then depends on the sprite alone, so every layer drawing it gets the same texture —
+    /// the texture and material reuse keys on the sprite's name.
+    /// </summary>
+    private (RgbaImage Sprite, float AlphaScale) BoostCoverage(MdxParticleEmitter2 e, RgbaImage sprite)
+    {
+        float k = _opt.HeroGlowCoverage;
+        if (k <= 1f) return (sprite, 1f);
+        int spritePeak = 0;
+        for (int i = 3; i < sprite.Pixels.Length; i += 4) spritePeak = Math.Max(spritePeak, sprite.Pixels[i]);
+        float onSprite = spritePeak > 0 ? MathF.Min(k, 255f / spritePeak) : 1f;
+        int rampPeak = Math.Max(e.StartAlpha, Math.Max(e.MiddleAlpha, e.EndAlpha));
+        float onRamp = rampPeak > 0 ? Math.Clamp(k / onSprite, 1f, 255f / rampPeak) : 1f;
+        if (onSprite <= 1f) return (sprite, onRamp);
+        var px = (byte[])sprite.Pixels.Clone();
+        for (int i = 3; i < px.Length; i += 4) px[i] = (byte)Math.Min(255, (int)MathF.Round(px[i] * onSprite));
+        return (new RgbaImage { Width = sprite.Width, Height = sprite.Height, Pixels = px }, onRamp);
+    }
+
+    /// <param name="teamBlend">
+    /// The player-colour card of a layer Warcraft III alpha-blends: <paramref name="image"/> is its
+    /// own sprite, whose alpha becomes the coverage, and <paramref name="teamMask"/> its brightness.
+    /// </param>
+    private int AddParticleMaterial(MdxParticleEmitter2 e, RgbaImage image, TeamMask? teamMask, bool ribbon = false, bool teamBlend = false)
     {
         var blend = e.Blend switch
         {
@@ -883,17 +990,21 @@ public sealed class M3Exporter
         // opaque black, which an additive pass ignores and an alpha-blended pass draws as a solid
         // black quad — the box that appeared around the item beam, while the sibling sprites of the
         // same effect that happened to be additive looked right.
-        if (teamMask is not null) blend = CompositeBlend.Additive;
+        // The exception is the hero glow, whose layers Warcraft III alpha-blends and whose cards
+        // keep the blend, so need no black quad: the diffuse is untextured and the coverage is the
+        // sprite's alpha, which is Blizzard's emissive-particle layout under blend mode 1.
+        if (teamMask is not null && !teamBlend) blend = CompositeBlend.Additive;
         // The player-colour spelling of a sprite gets a stem of its own. Its diffuse is black and
         // the art has moved into the mask, so it is a different texture under the same source file
         // name — and both AddTexture and the reuse scan below key on that name, so sharing the stem
-        // would hand a plain emitter the blacked-out sprite of a team-coloured one.
+        // would hand a plain emitter the blacked-out sprite of a team-coloured one. The blended
+        // spelling needs another again: its mask leaves the alpha out, the additive one folds it in.
         // A baked sheet is named for its emitter: the effect it stands for, never a source file.
         bool baked = e.BakedSprite is not null;
         string stem = baked ? TexStem(e.Name.Replace('/', '_'), _materials.Count)
                     : TexStem((uint)e.TextureId < (uint)_mdx.Textures.Count
                               ? _mdx.Textures[e.TextureId].FileName : "", _materials.Count)
-                    + (teamMask is not null ? "_tc" : "");
+                    + (teamMask is null ? "" : teamBlend ? "_tcb" : "_tc");
 
         // An additive PopcornFX stand-in draws its light the way Blizzard's additive particles do:
         // the sprite in emis1 over a black, untextured diffuse, with hdr_emis setting how bright.
@@ -903,10 +1014,14 @@ public sealed class M3Exporter
         // through an emissive slot, so it keeps its layout and takes only the multiplier.
         bool glow = e.IsPopcorn && blend == CompositeBlend.Additive;
         bool emissiveSprite = glow && teamMask is null;
+        // hdr_emis scales whatever the emissive slots draw: the sprite of an additive stand-in, or
+        // the player's colour on a team-coloured one, blended or not.
+        bool emissiveLit = glow || (e.IsPopcorn && teamMask is not null);
+        float gain = teamMask is not null ? _opt.ParticleGlow * _opt.PlayerColourGain : _opt.ParticleGlow;
         // Quarter steps, so stand-ins of one effect whose peaks differ by a hair share a material.
         // A baked sheet is already what the screen should show — tone-mapped, display-referred —
         // so it takes no glow multiplier at all.
-        float hdr = glow && !baked ? MathF.Round(Math.Clamp(e.Intensity * _opt.ParticleGlow, 1f, MathF.Max(_opt.HdrEmisCap, 1f)) * 4f) / 4f : 1f;
+        float hdr = emissiveLit && !baked ? MathF.Round(Math.Clamp(e.Intensity * gain, 1f, MathF.Max(_opt.HdrEmisCap, 1f)) * 4f) / 4f : 1f;
         string spritePath = stem + "_diff.dds";
         int cells = ribbon ? 1 : Math.Max(e.Rows, 1) * Math.Max(e.Columns, 1);
         // A PopcornFX ribbon lays its texture's U along the strip; a StarCraft II ribbon lays V
@@ -921,8 +1036,8 @@ public sealed class M3Exporter
         for (int i = 0; i < _materials.Count; i++)
         {
             var m = _materials[i];
-            if (m.IsParticle && (emissiveSprite ? m.EmissivePath : m.DiffusePath) == spritePath
-                && (m.EmissivePath == spritePath) == emissiveSprite
+            if (m.IsParticle && (emissiveSprite ? m.EmissivePath : teamBlend ? m.AlphaPath : m.DiffusePath) == spritePath
+                && (m.EmissivePath == spritePath) == emissiveSprite && m.BlackDiffuse == (emissiveSprite || teamBlend)
                 && m.Blend == blend && m.FlipbookCells == cells && m.HdrEmis == hdr && m.UvTurn == uvTurn)
                 return i;
         }
@@ -944,6 +1059,12 @@ public sealed class M3Exporter
         if (emissiveSprite)
         {
             mat.EmissivePath = sprite;
+            mat.AlphaPath = sprite;
+            mat.BlackDiffuse = true;
+        }
+        else if (teamBlend)
+        {
+            // The sprite is only the coverage; everything the card shows is the team channel's.
             mat.AlphaPath = sprite;
             mat.BlackDiffuse = true;
         }
@@ -1075,6 +1196,7 @@ public sealed class M3Exporter
         public uint EmitCountAnimId;                // PAR_.emit_count; a stand-in's count burst rides this id
         public float RestEmissionRate;              // rate with no sequence driving it
         public bool Ribbon;                         // written as RIB_, not PAR_
+        public float AlphaScale = 1f;               // on the alpha ramp: the hero glow's coverage boost
     }
 
     private readonly List<ExportEmitter> _emitters = [];
@@ -1132,7 +1254,8 @@ public sealed class M3Exporter
         if (!animated)
         {
             for (int i = 0; i < _materials.Count; i++)
-                if (_materials[i].VisibilityAnim is null && _materials[i].DiffusePath == stem + "_diff.dds"
+                if (_materials[i].VisibilityAnim is null
+                    && (_materials[i].DiffusePath == stem + "_diff.dds" || _materials[i].DiffusePath == stem + "_diffteam.dds")
                     && _materials[i].Blend == composite.Blend && _materials[i].TwoSided == composite.TwoSided)
                     return i;
         }
@@ -1190,7 +1313,21 @@ public sealed class M3Exporter
                     composite.Blend == CompositeBlend.Opaque || teamMask is not null ? composite.Texture : diffuse,
                     normal, orm, emissive);
 
-                mat.DiffusePath = AddTexture(stem + "_diff.dds", set.Diffuse);
+                if (LitTeam && teamMask is not null)
+                {
+                    // The player colour rides the diffuse alpha, which StarCraft II reads as a team
+                    // mask when the layer samples ARGB and multiplies in before lighting, so the
+                    // tabard keeps its folds, its shading and its highlights. That alpha is no
+                    // longer free for coverage, so a cutout's alpha1 gets the coverage on its own.
+                    // The name differs from a plain diffuse of the same stem so the two can never
+                    // alias: AddTexture hands back an existing file by name.
+                    mat.TeamInDiffuse = true;
+                    mat.DiffusePath = AddTexture(stem + "_diffteam.dds", WithTeamAlpha(set.Diffuse, teamMask), alphaIsData: true);
+                    if (mat.Blend != CompositeBlend.Opaque)
+                        mat.AlphaPath = AddTexture(stem + "_alpha.dds", set.Diffuse);
+                }
+                else
+                    mat.DiffusePath = AddTexture(stem + "_diff.dds", set.Diffuse);
                 mat.SpecularPath = AddTexture(stem + "_spec.dds", set.Specular);
                 if (set.Normal is not null) mat.NormalPath = AddTexture(stem + "_norm.dds", set.Normal, alphaIsData: true);
                 if (set.Emissive is not null) mat.EmissivePath = AddTexture(stem + "_emis.dds", set.Emissive);
@@ -1204,7 +1341,7 @@ public sealed class M3Exporter
         // and three of them are cutouts whose alpha1 layer reads that same alpha as coverage. One
         // channel cannot be both a cutout and a team mask, and whichever material was written first
         // would have silently decided which.
-        if (teamMask is not null)
+        if (teamMask is not null && !mat.TeamInDiffuse)
         {
             var hdDiffuse = _opt.ConvertPbr && hdLayer is not null
                 ? LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Diffuse) : null;
@@ -1217,6 +1354,20 @@ public sealed class M3Exporter
 
     /// <summary>A mask below this share of the texture is noise, not art, and buys only a texture.</summary>
     private const float TeamCoverageMin = 0.0005f;
+
+    /// <summary>Reforged player colour goes through the diffuse alpha — see <see cref="M3ExportOptions.LitTeamColour"/>.</summary>
+    private bool LitTeam => _opt.LitTeamColour && _opt.ConvertPbr;
+
+    /// <summary>The diffuse with <c>1 - mask</c> in its alpha: StarCraft II's team mask, 0 = all player colour.</summary>
+    private static RgbaImage WithTeamAlpha(RgbaImage diffuse, TeamMask mask)
+    {
+        int w = diffuse.Width, h = diffuse.Height;
+        var px = (byte[])diffuse.Pixels.Clone();
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                px[(y * w + x) * 4 + 3] = (byte)(255 - mask.At(x, y, w, h));
+        return new RgbaImage { Width = w, Height = h, Pixels = px };
+    }
 
     /// <summary>
     /// The mask as a bitmap StarCraft II can sample: black, with the scalar in the alpha channel.
@@ -2206,7 +2357,13 @@ public sealed class M3Exporter
             var nrm = ToSc2(g.Normals.Length > v ? g.Normals[v] : Vector3.UnitZ);
             if (nrm.LengthSquared() > 1e-10f) nrm = Vector3.Normalize(nrm);
             bytes[o + 20] = PackUnit(nrm.X); bytes[o + 21] = PackUnit(nrm.Y); bytes[o + 22] = PackUnit(nrm.Z);
-            bytes[o + 23] = 255;
+            // The fourth byte is the bitangent's sign: SC2 rebuilds it as sign * cross(N, T), and
+            // Blizzard's own models flip it per triangle so it always runs down the texture (+v).
+            // The MDX tangent's W carries the same fact with the opposite sign (measured: taking W
+            // as-is points 99.6% of the HD knight up the texture). A constant 255 was right only
+            // where the UVs are not mirrored, 38% of the knight. The normal map's green is flipped
+            // to match, in PbrConverter.RepackNormal.
+            bytes[o + 23] = g.Tangents.Length > v && g.Tangents[v].W > 0 ? (byte)0 : (byte)255;
 
             // MDX V is top-down already — the m3 stored value IS v * 2048, no flip.
             float u = hasUvs ? uvs[v].X : 0;
@@ -2624,14 +2781,17 @@ public sealed class M3Exporter
             // alpha_test, cut out fine) is a false friend — the semantics changed after Liberty.
             // The V20 recipe, from smx2_aiur02_foliage grass / smx2_stasiscore (the latter shares
             // our exact material flags 0x80004008): diffuse RGB, alpha1 = the same bitmap with
-            // A-only channels, same wrap. So the diffuse stays RGB always, and any material that
-            // consumes its alpha (cutout or alpha-blend) gets the alpha1 mask layer.
+            // A-only channels, same wrap. So the diffuse stays RGB, and any material that consumes
+            // its alpha (cutout or alpha-blend) gets the alpha1 mask layer — except a Reforged
+            // team-coloured one, which samples ARGB on purpose (TeamInDiffuse) and keeps its
+            // coverage in a separate AlphaPath.
             bool alphaUsed = m.Blend is CompositeBlend.AlphaTest or CompositeBlend.AlphaBlend
                                       or CompositeBlend.Additive;
             matLayers[i][0] = m.BlackDiffuse
                 ? WriteLayer(b, "", m.ColorAnimId, wrap: true, defaultAlpha: 0, rgb: 0)                         // diff
                 : WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: true, uvTurn: m.UvTurn,
                              defaultAlpha: m.DefaultAlpha,
+                             colorChannels: m.TeamInDiffuse ? ChannelsArgb : ChannelsRgb,
                              flipbook: m.FlipbookCells > 1);                                                   // diff
             if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: true);
             if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
@@ -2698,7 +2858,7 @@ public sealed class M3Exporter
                 int bone = (uint)em.Bone < (uint)boneMap.Length ? boneMap[em.Bone] : 0;
                 par.W.Write(M3ParticleWriter.Build(em.Source, bone, em.MaterialIndex,
                                                    _opt.Scale, _nextAnimId, em.EmitRateAnimId,
-                                                   em.RestEmissionRate, em.EmitCountAnimId));
+                                                   em.RestEmissionRate, em.EmitCountAnimId, em.AlphaScale));
             }
             par.Count = systems.Count;
         }
@@ -2953,7 +3113,7 @@ public sealed class M3Exporter
             // forms, decay) needs *some* test or it could never hide, but stays low enough to cut
             // nothing while visible.
             w.Write(cutout ? 32u : visibilityDriven ? 8u : 0u);
-            w.Write(1f); w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_spec, hdr_emis, hdr_envi_*
+            w.Write(_opt.SpecularGain); w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_spec, hdr_emis, hdr_envi_*
             for (int L = 0; L < 18; L++)
             {
                 var layer = matLayers[i][L];

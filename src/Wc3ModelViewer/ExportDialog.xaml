@@ -1,7 +1,7 @@
 <Window x:Class="Wc3ModelViewer.ExportDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Export Model" Height="880" Width="560"
+        Title="Export Model" Height="904" Width="560"
         WindowStartupLocation="CenterOwner" Background="#1E2024"
         ResizeMode="CanResize" ShowInTaskbar="False">
     <DockPanel Margin="10">
@@ -115,6 +115,8 @@
                     <ComboBoxItem Content="2048"/>
                 </ComboBox>
             </StackPanel>
+            <CheckBox x:Name="HeroGlowCheck" Content="Hero glow" IsChecked="True" Foreground="#CCC" Margin="0,6,0,2"
+                      ToolTip="The player-coloured glow at a Reforged hero's feet. Untick to leave it out of the .m3 — for maps that mark heroes their own way. Nothing else about the model changes; classic (SD) heroes carry no glow in the model."/>
 
             <TextBlock Text="Export scale" Foreground="#DDD" FontWeight="Bold" Margin="0,10,0,4"
                        ToolTip="Multiplies all geometry, bone and animation positions"/>

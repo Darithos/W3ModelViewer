@@ -117,6 +117,7 @@ public partial class ExportDialog : Window
         TeamColorCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.teamcolor", 0), TeamColorCombo.Items.Count);
         TexSizeCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.texsize", 2), TexSizeCombo.Items.Count);
         BakeFxCheck.IsChecked = UserSettings.GetBool("export.bakefx", true);
+        HeroGlowCheck.IsChecked = UserSettings.GetBool("export.heroglow", true);
         FxAtlasCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.fxatlas", 0), FxAtlasCombo.Items.Count);
         LayoutCombo.SelectedIndex = Clamp(UserSettings.GetInt("export.layout", 0), LayoutCombo.Items.Count);
         UpdateLayoutHint();
@@ -212,6 +213,7 @@ public partial class ExportDialog : Window
         bool reduceKeys = ReduceKeysCheck.IsChecked == true;
         int maxTex = TexSizeCombo.SelectedIndex switch { 1 => 2048, 2 => 1024, 3 => 512, _ => 0 };
         bool bakeFx = BakeFxCheck.IsChecked == true;
+        bool heroGlow = HeroGlowCheck.IsChecked == true;
         int fxAtlas = FxAtlasCombo.SelectedIndex switch { 1 => 1024, 2 => 2048, _ => 0 };
         OptionsFor = name => new M3ExportOptions
         {
@@ -226,6 +228,7 @@ public partial class ExportDialog : Window
             ReduceKeys = reduceKeys,
             MaxTextureSize = maxTex,
             BakeEffects = bakeFx,
+            ExportHeroGlow = heroGlow,
             ImpostorAtlasSize = fxAtlas,
             ModelName = name,
         };
@@ -250,6 +253,7 @@ public partial class ExportDialog : Window
             ("export.teamcolor", TeamColorCombo.SelectedIndex.ToString()),
             ("export.texsize", TexSizeCombo.SelectedIndex.ToString()),
             ("export.bakefx", BakeFxCheck.IsChecked == true ? "1" : "0"),
+            ("export.heroglow", heroGlow ? "1" : "0"),
             ("export.fxatlas", FxAtlasCombo.SelectedIndex.ToString()));
         // Each only means something in the mode that shows it.
         if (_batch is null) UserSettings.Set("export.visibleonly", VisibleOnlyCheck.IsChecked == true);
