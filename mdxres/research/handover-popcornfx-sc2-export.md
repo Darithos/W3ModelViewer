@@ -8,6 +8,138 @@ The viewer already runs the scripts correctly. The export is what is still wrong
 The user tests by importing into the SC2 Cutscene editor (`C:\Games\StarCraft II\Maps\Test\modeltest.SC2Map`)
 and playing **Stand** (a copy of Birth). Test exports live in `sc2test\`.
 
+## Session 7 (2026-09-27): the hero glow's stain, and an option to leave it out
+
+Reported on Discord: the hero glow "sticks like a map stain and then after 4-5 seconds goes to where
+the hero is currently", plus a request to export without it (modders were deleting its particle
+systems in Blender after every export).
+
+**What the hero glow is.** Only the PopcornFX effect `SharedFX/Hero_Glow/Hero_Glow.pkfx`: 40 of 57 HD
+hero models and 60 of 86 DE ones carry it (`MdxProbe --heroglow --hd|--de`). Recognise it by the
+effect, not the emitter: 97 call it `Hero_Glow`, the rest `HeroGlow`, `PKFX 1`, `PKFX 2`, while
+`Hero_WeaponGlow` emitters play the unrelated `Weapon_Glow_*.pkfx`. Classic (SD) heroes carry no glow
+in the model at all (`--heroglow --sd`: none of 48). It is player-coloured, so it never bakes into an
+impostor sheet: three stand-ins in HD (a camera-facing card, two ground discs), two in DE.
+
+**Cause of the stain.** Up to v1.7.0 every measured stand-in was written `world_space`
+(`PAR_.additional_flags` 0x8), so each 10 s card stayed where the hero had stood, and the next one
+faded in at the hero's new spot. Seen in the v1.7.0 bytes. v1.8.0 hosted it by accident, through the
+missile follow test (`MarkFollowsEmitter`), which reads the glow as following on all 240 layers
+(`--heroglow --follow`). It is now hosted explicitly (`corn.IsHeroGlow`).
+
+**A second defect in the same glow.** A never-dying PopcornFX particle has no SC2 counterpart, so
+the stand-in renews its card every `Life` (10 s), and each new card replayed the effect's opening
+fade-in: alpha 32 against a settled 126 (HD), 46 against 185 (DE). So even hosted, the glow sank to
+a quarter every ten seconds. It applies to every immortal layer: 2,100+ in the DE tree
+(`MdxProbe --immortal --de`), 1,247 of which open with a fade-in. Fix, in `SynthesizeMeasured`:
+
+- an immortal layer holds `PkRendererStats.Settled`: colour and radius averaged over the back half
+  of the run, so a pulse averages out (item beam TG4: 128/227/137 becomes a steady 181);
+- additive or player-coloured cards renew by cross-fade: life `ImmortalCardLife` = 4 s, two cards
+  per life, alpha 0 → settled → 0 at mid 0.5. Two such triangles half a life apart add up to the
+  settled alpha at every moment, so the renewal cannot show whatever the frame timing;
+- alpha-blended cards (about 10%) hold flat and hand over whole, since half-alpha cards do not add up.
+
+Blast radius, byte-compared against HEAD: default exports change only where a player-coloured
+immortal layer exists (hero glows, item rarity beams, Boneyard/Ziggurat glows). Holy Light (SD+DE),
+Thunder Clap, the fireball, the footman and Unholy Aura are byte-identical. Those layers bake into
+the sheet. With `--nobake` the fireball and Unholy Aura change too.
+
+**Leaving it out.** `M3ExportOptions.ExportHeroGlow` (the dialog's "Hero glow" box, remembered as
+`export.heroglow`; probe `--noheroglow`) drops the glow's stand-ins and skips baking it.
+
+**Test units** in `modeltest.SC2Map` (placeable, can move), all the HD Paladin at scale 0.025:
+
+| Unit | Built by | Expect when ordered to walk |
+|---|---|---|
+| `mtHeroGlowA` | v1.7.0 | glow left behind; the next one fades in under the hero up to 10 s later (the report) |
+| `mtHeroGlowB` | v1.9.0 | glow follows, but dims to a quarter and recovers every 10 s |
+| `mtHeroGlowC` | this fix | glow follows and holds steady |
+| `mtHeroGlowD` | this fix, box unticked | no glow |
+
+**Archive Browser preview (user, 2026-09-27)**, standing still: A shows only a faint glow and B
+"becomes visible after a few moments" (the old 32 -> 126 opening ramp, which also replayed every
+10 s), C is visible at once, D has no glow. That confirms the steady glow and the option.
+
+**Walking test (user, 2026-09-28, Test Document, `Screen Recording 2026-09-28 151507.mp4`).** Stain
+confirmed on A and absent on C. Measured as added red, frame minus a plate from when the spot was
+empty; the camera holds still for the first 22.9 s:
+
+- **A (v1.7.0):** its card renewed at about 11.0 s while A stood still. A walked off at 13.3 s and
+  the glow stayed on the ground where A had stood, then vanished at 21.0 s, the end of its 10 s
+  life. That is the report. The stain also brightens from 13.3 s to 15.5 s (added red 4 -> 15),
+  the replayed opening fade-in, visible in game as well.
+- **C (fix):** its starting spot stays clean the whole time C is away (2-10 s): added red at most
+  1.5, against 17 for A's stain; the one 5 was the mouse cursor. While walking, C carries added red
+  inside its selection ring (90th percentile 2.5-4) and A carries none (0-0.5). Standing still from
+  12.5 s to 19.5 s, C's glow holds 6.2-8.8 with no swing at the 2 s cross-fade period.
+- Not settled: C's absolute brightness against A's. From this camera the Paladin covers the middle
+  of its own glow, and only the edge can be measured; that edge matches the edge of A's stain.
+
+**"Hero glows in general are dull compared to Warcraft III" (user, 2026-09-28).** The HD glow is
+three **alpha-blended** layers (`--popcorn` on `_hd.w3mod:SharedFX\Hero_Glow\Hero_Glow.pkb`); the
+script's colour is `hsv2rgb(rgb2hsv(curves x TeamColor) + (0,0,0.5)) x 0.5`, so it settles at
+0.75 x the player's colour with alpha 0.48, on `Textures\FX\Flare\HeroGlow_BW.tif` (white RGB,
+alpha peaking at 80/255). Each layer covers the ground by up to 0.48 x 0.31 = 0.15, and stacked the
+centre keeps 61% of the ground and takes 29% of the player's colour. Over the test map's ground that
+is red +40 and green/blue -32..36, a saturated disc. The export drew every player-coloured card
+additively, so nothing darkened: the recording shows +17 red and no darkening. The DE glow is two
+**additive** layers (0.7 alpha, 1.05 x colour) and is unaffected.
+
+Change: `M3ExportOptions.PlayerColourAlphaBlend` (default on; probe `--teamadd` turns it off).
+A player-coloured layer that Warcraft III alpha-blends now exports as blend mode 1: untextured
+black diffuse, alpha1 = the sprite, emis1 = the sprite's brightness at TEAMEMIS
+(`MaterialCompositor.SpriteMask(foldAlpha: false)`), stem `_tcb`. `PlayerColourGain` (probe
+`--teamgain`) multiplies such cards' hdr_emis, because StarCraft II's red is darker than Warcraft
+III's. This affects about 25 layers in the archive: the HD hero glow's 3, one per item-rarity beam,
+orb, wisp, Spirit of Vengeance and the Dark Ranger's smoke. DE hero exports are byte-identical
+(checked on the DE Paladin).
+
+| Unit | Built by | Expect |
+|---|---|---|
+| `mtHeroGlowC` | before this change | additive: faint red wash, ground not darkened |
+| `mtHeroGlowE` | blended, gain 1 | ground pulled toward red, darker and more saturated |
+| `mtHeroGlowF` | blended, `--teamgain 1.5` | as E with brighter red |
+
+**Result (user's editor screenshot, C/E/F):** none is the fix. Radial medians of ground pixels,
+centre against 240 px out: C red +28, green +5; E red +15, green -4; F red +26, green -3. E's
+numbers fit about 15% coverage blended in **linear** light, not the 33% expected.
+
+**Warcraft III reference (user's World Editor screenshot, blue Paladin on grass):** far stronger
+than the script's numbers allow. Grass outside the disc is RGB 56,131,71; at the glow's heart the
+channel the player colour lacks (red) falls to about 5, so about 90% coverage, against 38% from
+alpha 0.48 x sprite 0.31 x three layers. It is one particle per layer (`--pkrun` for 12 s shows no
+build-up), and `Transparent.Type` is 2 (AlphaBlend), so the extra strength is in Warcraft III's
+renderer, not the effect. The upright card is drawn over the Paladin's lower legs (they read as
+behind a blue veil), and the foreground grass blades over the glow.
+
+`PlayerColourCoverage` (probe `--teamcover`) multiplies a blended player-colour card's coverage:
+the sprite's alpha first (up to its peak reaching 255), then the card's alpha ramp
+(`ExportEmitter.AlphaScale`, up to 255). The three layers renew in step, so the cross-fade dip at
+the core, up to 25% per layer at full coverage, mostly cancels across them.
+
+| Unit | Built by | Coverage at the sprite's centre, per layer |
+|---|---|---|
+| `mtHeroGlowG` | `--teamcover 2` | 0.30 (sprite x2) |
+| `mtHeroGlowH` | `--teamcover 4` | 0.60 (sprite x3.19, ramp 153) |
+| `mtHeroGlowI` | `--teamcover 7` | 1.0 (sprite and ramp at 255) |
+
+Row at y=18.307, all player 2 (blue, to match the Warcraft III shot): C x7, G x11, H x15, I x19.
+The red C/E/F moved to y=31 (outside the camera bounds, parked).
+
+**Result: H (user's pick, and the measurement agrees).** The heart's colour, radial medians of
+ground pixels: G 52,62,119; **H 45,66,150**; I 43,69,168 and wider. Warcraft III's heart is
+6,120,152 (on green grass). H's blue matches, and its reach suits the Paladin's size. No variant
+suppresses the ground's red the way Warcraft III does (StarCraft II keeps about 80%): that is how
+StarCraft II blends, not a coverage setting.
+
+Now the default, **scoped to the hero glow**: `M3ExportOptions.HeroGlowCoverage` = 4 (probe
+`--heroglowcover`), and only `IsHeroGlow` layers take the blended path. A default export is
+byte-identical to HeroGlowH. The other alpha-blended player-colour layers (item-rarity beams, orb,
+wisps) stay additive, the look the user checked for the item beams (all `_tc`, blend 3 on
+`itemboots4`). `PlayerColourGain` (`--teamgain`) stays at 1; F's x1.5 did not help red.
+Untested: the red player at H (SC2's red is darker than its blue).
+
 ## Session 6 (2026-09-25, overnight): why no trail appeared, tested in the SC2 editor
 
 The user authorised driving the editor directly, so this round was verified rather than argued.

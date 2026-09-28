@@ -26,8 +26,8 @@ public sealed class SpecularSet
 /// people compare it against.</item>
 /// <item><b>Specular</b>: <c>lerp(0.04, albedo, metallic)</c> dimmed by roughness, since the m3
 /// standard material has a single specular intensity rather than a gloss map.</item>
-/// <item><b>Normal</b>: repacked to SC2's two-channel convention — X in alpha, Y in green — which
-/// the engine reads regardless of container compression.</item>
+/// <item><b>Normal</b>: repacked to SC2's two-channel convention — X in alpha, Y in green, with Y
+/// the other way up from Reforged — which the engine reads regardless of container compression.</item>
 /// </list>
 /// The diffuse <b>alpha channel passes through untouched</b>: on an opaque Reforged material it is
 /// the team-colour mask, on a blend material it is coverage, and both meanings must survive into
@@ -106,7 +106,12 @@ public static class PbrConverter
                 new RgbaImage { Width = w, Height = h, Pixels = specPx });
     }
 
-    /// <summary>SC2 samples normals from (alpha, green); X goes to A, Y to G, R/B zeroed.</summary>
+    /// <summary>
+    /// SC2 samples normals from (alpha, green); X goes to A, Y to G, R/B zeroed. Y is also negated:
+    /// StarCraft II's own normal maps store it the other way up from Reforged's (a curl test on the
+    /// maps reads Reforged's sources 1.3–2.1 and 29 of 30 HotS and 5 of 6 Liberty maps 0.3–0.8), and
+    /// the exporter now writes the vertex bitangent sign the way Blizzard's models do to match.
+    /// </summary>
     private static RgbaImage RepackNormal(RgbaImage normal)
     {
         var px = new byte[normal.Pixels.Length];
@@ -114,7 +119,7 @@ public static class PbrConverter
         for (int i = 0; i < px.Length; i += 4)
         {
             px[i] = 0;                 // B unused
-            px[i + 1] = s[i + 1];      // G = Y (already G after BC5 decode)
+            px[i + 1] = (byte)(255 - s[i + 1]);   // G = -Y (Y is G after BC5 decode)
             px[i + 2] = 0;             // R unused
             px[i + 3] = s[i + 2];      // A = X (R after BC5 decode)
         }

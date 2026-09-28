@@ -112,9 +112,10 @@ internal static class M3ParticleWriter
     /// The id reserved for <c>emit_count</c> when the emitter carries a count burst
     /// (<see cref="MdxParticleEmitter2.EmitCountTrack"/>), else 0 and the field stays static.
     /// </param>
+    /// <param name="alphaScale">Multiplies the alpha ramp, clamped at 255 (a player-colour card's coverage boost).</param>
     public static byte[] Build(MdxParticleEmitter2 e, int boneIndex, int materialIndex,
                                float scale, Func<uint> nextAnimId, uint emitRateAnimId,
-                               float restEmitRate, uint emitCountAnimId = 0)
+                               float restEmitRate, uint emitCountAnimId = 0, float alphaScale = 1f)
     {
         var b = new byte[Size];
         foreach (var (offset, raw) in Defaults) WriteU32(b, offset, raw);
@@ -186,9 +187,10 @@ internal static class M3ParticleWriter
         WriteF32(b, OffColorAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
         WriteF32(b, OffAlphaAnimMid, Math.Clamp(e.MiddleTime, 0f, 1f));
 
-        ColorAnim(b, OffColorInit, e.StartColor, e.StartAlpha, nextAnimId());
-        ColorAnim(b, OffColorMid, e.MiddleColor, e.MiddleAlpha, nextAnimId());
-        ColorAnim(b, OffColorEnd, e.EndColor, e.EndAlpha, nextAnimId());
+        byte Alpha(byte a) => (byte)Math.Clamp(MathF.Round(a * alphaScale), 0, 255);
+        ColorAnim(b, OffColorInit, e.StartColor, Alpha(e.StartAlpha), nextAnimId());
+        ColorAnim(b, OffColorMid, e.MiddleColor, Alpha(e.MiddleAlpha), nextAnimId());
+        ColorAnim(b, OffColorEnd, e.EndColor, Alpha(e.EndAlpha), nextAnimId());
 
         int cols = Math.Clamp(e.Columns, 1, short.MaxValue), rows = Math.Clamp(e.Rows, 1, short.MaxValue);
         WriteI16(b, OffFlipbookCols, (short)cols);

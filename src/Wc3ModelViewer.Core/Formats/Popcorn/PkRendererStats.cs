@@ -43,6 +43,15 @@ public sealed class PkRendererStats
     /// <summary>Colour (HDR RGB, alpha in W) over life at start, middle and end.</summary>
     public (Vector4 Start, Vector4 Middle, Vector4 End, float MiddleTime) Colour { get; set; }
 
+    /// <summary>
+    /// For an <see cref="Immortal"/> layer, what it looks like once its opening has played: colour
+    /// and radius averaged over the second half of each particle's run. The ramp above starts at the
+    /// effect's first frame (the hero glow's 32 against a settled 126); this does not, and a pulse
+    /// averages to its mean brightness rather than wherever the run happened to stop (an item
+    /// beam's 115 -> 215 -> 85). The ramp's end for a layer that dies.
+    /// </summary>
+    public (Vector4 Colour, float Size) Settled { get; set; }
+
     /// <summary>Axis-aligned renderers: mean axis length and direction.</summary>
     public float AxisLength { get; set; }
     public Vector3 AxisDirection { get; set; } = Vector3.UnitZ;
@@ -454,7 +463,20 @@ public sealed class PkRendererStats
             LiesFlat = normalTracks.Count == 0 || normalTracks.Average(k => k.NormalZ / k.NormalCount) > 0.7f,
             OrbitAngularVelocity = orbitOmega, OrbitRadius = orbitRadius,
             CardNormal = SafeNormal(normalMean), CardNormalRadial = SafeNormal(normalLocal),
+            Settled = immortal ? SettledState(tracks) : (ColAt(last), SizeAt(last)),
         };
+    }
+
+    /// <summary>Mean colour and radius over the second half of each track's samples.</summary>
+    private static (Vector4 Colour, float Size) SettledState(List<Track> tracks)
+    {
+        var colour = Vector4.Zero; float size = 0; int n = 0;
+        foreach (var k in tracks)
+            for (int i = k.Samples.Count / 2; i < k.Samples.Count; i++)
+            {
+                colour += k.Samples[i].Colour; size += k.Samples[i].Radius; n++;
+            }
+        return n > 0 ? (colour / n, size / n) : (Vector4.One, 0);
     }
 
     private static Vector3 SafeNormal(Vector3 v) => v.LengthSquared() > 1e-10f ? Vector3.Normalize(v) : Vector3.UnitZ;

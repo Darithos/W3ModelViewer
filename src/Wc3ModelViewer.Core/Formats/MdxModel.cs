@@ -575,6 +575,9 @@ public sealed class MdxParticleEmitter2 : MdxNodeAttachedObject
     public string? PopcornSource { get; init; }
     public bool IsPopcorn => PopcornSource is not null;
 
+    /// <summary>The CORN emitter a PopcornFX stand-in was synthesised from; null for a PRE2 emitter.</summary>
+    public MdxPopcornEmitter? PopcornEmitter { get; init; }
+
     public override string ToString() => $"{(IsPopcorn ? "CORN" : "PRE2")} '{Name}' ({Blend}, {EmissionRate:0.#}/s, life {Life:0.##}s)";
 }
 
@@ -627,6 +630,16 @@ public sealed class MdxPopcornEmitter : MdxNodeAttachedObject
 
     /// <summary>Archive name the bake was read from, for diagnostics.</summary>
     public string BakeName { get; set; } = "";
+
+    /// <summary>
+    /// The player-coloured glow every Reforged hero stands in. Recognised by its effect,
+    /// <c>SharedFX/Hero_Glow/Hero_Glow.pkfx</c>, because the emitter's own name varies: 97 of the 99
+    /// HD and DE heroes that carry it call it <c>Hero_Glow</c>, others <c>HeroGlow</c> or
+    /// <c>PKFX 1</c>. The weapon glows (<c>Weapon_Glow_*.pkfx</c>, some named <c>Hero_WeaponGlow</c>)
+    /// are separate effects and are not this. Classic heroes carry no glow in the model at all.
+    /// </summary>
+    public bool IsHeroGlow =>
+        Path.GetFileNameWithoutExtension(EffectPath.Replace('\\', '/')).Equals("Hero_Glow", StringComparison.OrdinalIgnoreCase);
 
     public override string ToString() => $"CORN '{Name}' -> {EffectPath} [{PopcornFlags}]";
 }

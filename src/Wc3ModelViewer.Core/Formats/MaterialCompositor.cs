@@ -136,9 +136,14 @@ public static class MaterialCompositor
     /// player-coloured — what an exporter must hand StarCraft II alongside
     /// <see cref="TeamMaskOf"/>, so the engine can add the live player colour back itself.
     /// </param>
+    /// <param name="tintHdTeam">
+    /// False leaves a Reforged layer's masked region exactly as painted, neither tinted nor cut —
+    /// for an exporter that hands StarCraft II the mask in the diffuse alpha, where the engine
+    /// applies the same tint Reforged does. Classic team layers are unaffected.
+    /// </param>
     public static CompositeMaterial Compose(MdxModel model, MdxMaterial material,
                                             Wc3TextureCache textures, string modelCascName, int teamColor = 0,
-                                            bool bakeTeam = true)
+                                            bool bakeTeam = true, bool tintHdTeam = true)
     {
         // Layers whose textures we can resolve, with their images.
         var loaded = new List<(MdxLayer Layer, RgbaImage Image)>();
@@ -214,7 +219,7 @@ public static class MaterialCompositor
             // Reforged HD keeps the mask out of the diffuse entirely — it is the ORM's alpha, and
             // the shader tints (multiplies) the diffuse there rather than replacing it, which is
             // why the footman's tabard keeps its folds and wear in every player colour.
-            if (layer.IsPbr && TeamMaskOf(model, material, textures, modelCascName) is { } hdMask)
+            if (layer.IsPbr && tintHdTeam && TeamMaskOf(model, material, textures, modelCascName) is { } hdMask)
                 result = TintTeamColor(result, hdMask,
                                        TeamRgb(textures, modelCascName, model, layer, teamColor, bakeTeam));
 
@@ -265,7 +270,7 @@ public static class MaterialCompositor
         // An HD layer inside a stack keeps its ORM mask; the exporter reads the mask either way, so
         // this path has to remove the player's contribution here too or the two disagree.
         var pbr = loaded.FirstOrDefault(l => l.Layer.IsPbr).Layer;
-        if (pbr is not null && TeamMaskOf(model, material, textures, modelCascName) is { } stackMask)
+        if (pbr is not null && tintHdTeam && TeamMaskOf(model, material, textures, modelCascName) is { } stackMask)
             stacked = TintTeamColor(stacked, stackMask,
                                     TeamRgb(textures, modelCascName, model, pbr, teamColor, bakeTeam));
 
@@ -525,8 +530,13 @@ public static class MaterialCompositor
     /// (<c>FlareSimple_BW</c>, <c>HeroGlow_BW</c>). A sprite with its own hue would come out
     /// stripped of it, so it keeps its colours and forgoes the live channel.
     /// </para>
+    /// <para>
+    /// <paramref name="foldAlpha"/> false leaves the alpha out, for a card drawn alpha-blended in
+    /// StarCraft II too: there the sprite's alpha is the card's coverage, applied by the blend
+    /// itself, and folding it into the mask as well would apply it twice.
+    /// </para>
     /// </remarks>
-    public static TeamMask? SpriteMask(RgbaImage sprite)
+    public static TeamMask? SpriteMask(RgbaImage sprite, bool foldAlpha = true)
     {
         int n = sprite.Pixels.Length / 4;
         if (n == 0) return null;
@@ -539,7 +549,7 @@ public static class MaterialCompositor
             int b = sprite.Pixels[o], g = sprite.Pixels[o + 1], r = sprite.Pixels[o + 2];
             int lum = Math.Max(b, Math.Max(g, r));
             byte v = (byte)(lum * sprite.Pixels[o + 3] / 255);
-            values[i] = v;
+            values[i] = foldAlpha ? v : (byte)lum;
             if (v > 8) any++;
             // Saturation weighted by how much the texel contributes: the transparent margin of a
             // card is arbitrary and must not decide whether its art is coloured.

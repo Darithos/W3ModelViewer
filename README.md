@@ -45,7 +45,9 @@ Working end to end:
   speed and vanishing when it stands still. Player-coloured layers keep a per-layer stand-in so
   SC2's live player colour still applies. An effect-only model gets one
   invisible carrier triangle, as Blizzard's own effect `.m3` files have. The dialog's "Bake
-  PopcornFX effects" checkbox turns the bake off, leaving every layer a stand-in.
+  PopcornFX effects" checkbox turns the bake off, leaving every layer a stand-in. The **Hero glow**
+  checkbox leaves out the player-coloured glow every Reforged hero stands in; exported, the glow
+  travels with the hero and holds steady.
 - **Animated texture flipbooks** — HD water, fountains and coral animate their diffuse through a
   `KMTF` texture-id track of up to 50 frames. The viewer plays these on the track's own timeline;
   export resolves the flipbook's first frame instead of falling back to texture 0.
@@ -58,7 +60,12 @@ Working end to end:
   taking the metallic part out honestly left the knight's pauldron at 21% of its Warcraft III
   brightness and his sword at 19% — the whole metal half of every Reforged unit. Metal now keeps
   three quarters of its albedo and the specular floor carries the sheen; `MdxProbe --pbr` prints
-  the per-texture ratio.
+  the per-texture ratio. Normal maps follow StarCraft II's own convention, measured rather than
+  assumed: its maps store green the other way up from Reforged's (a curl test reads 29 of 30 HotS
+  and 5 of 6 Liberty maps one way, every Reforged source the other), and each triangle's bitangent
+  sign — the fourth byte of the packed normal — comes from the MDX tangent's W, so mirrored UVs
+  light the right way up. Blizzard's models run their bitangent down the texture on 90–100% of
+  the surface; the HD knight used to on 38% of it and now does on 99.6%.
 - **Export options are remembered** — scale, output folder, texture size and the rest come back as
   they were left, so porting a collection does not mean retyping the scale on every model. LOD, the
   sequence list and the geoset selection are properties of the model in front of you and are not
@@ -109,9 +116,13 @@ Working end to end:
   nothing: nothing in the bake says it is team-coloured, so the export watches its scripts run and
   routes a layer that reads `__a_Game.TeamColor` through the same channel — 166 of 11,259 drawing
   layers across the archive, among them every item's rarity light beam, the revive beams and the
-  Ancient of Wind. It all lands in SC2 as `blend_mode_emis* = 4`, "Team Color Emissive Add" — the
-  mechanism 1,204 of Blizzard's own Heroes materials use. Measured, not assumed; see
-  `docs/mdx-format-verified.md` §5. A classic mask is accepted on its own terms rather than the
+  Ancient of Wind. Reforged and Definitive art lands as a **lit tint**, the way Reforged draws it
+  and the way StarCraft II's own marine is built: the diffuse keeps the painted albedo and carries
+  `1 - mask` in its alpha, sampled ARGB, and SC2 multiplies the player's colour in before lighting,
+  so a tabard keeps its folds, its shading and its highlights (a cut-out's coverage moves to its
+  own alpha texture). Classic art and PopcornFX layers land as `blend_mode_emis* = 4`, "Team Color
+  Emissive Add" — the mechanism 1,204 of Blizzard's own Heroes materials use. Measured, not
+  assumed; see `docs/mdx-format-verified.md` §5. A classic mask is accepted on its own terms rather than the
   Reforged one's: Warcraft III blends `team x (1 - a)` continuously, so a soft midtone mask is
   ordinary art, and demanding the bimodal shape an authored ORM alpha has used to reject 23 of 705
   classic team materials — `altarofkings`, both Pandaren Brewmasters, the sea turtles — which then
