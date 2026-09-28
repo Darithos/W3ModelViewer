@@ -1377,6 +1377,14 @@ if (args.Contains("--pksweep"))
     return MdxProbe.PkRunProbe.Sweep(args[pi + 1], n);
 }
 
+// --placement <cascName> [sequence] prints where the viewer draws each effect beside where its node is.
+if (args.Contains("--placement"))
+{
+    int pi = Array.IndexOf(args, "--placement");
+    return MdxProbe.EffectPlacementProbe.Run(install, args[pi + 1],
+        pi + 2 < args.Length && !args[pi + 2].StartsWith("--") ? args[pi + 2] : null);
+}
+
 // --rawfile <cascName> <out> writes one archive file to disk byte for byte, no decoding.
 if (args.Contains("--rawfile"))
 {
