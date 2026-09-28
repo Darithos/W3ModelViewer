@@ -128,7 +128,13 @@ public sealed class PkCornPlayer
         _wasOn = on;
 
         const float m = PopcornApproximation.MetresToWc3;
-        var world = (uint)_corn.NodeIndex < (uint)_model.Nodes.Count ? animator.World(_corn.NodeIndex) : Matrix4x4.Identity;
+        // The effect's frame sits at the node's pivot. An animator world matrix moves rest-pose
+        // points, so on its own its origin is where the model's origin is carried, not the node:
+        // the same for the hero glow (pivot 0) but not for the DE Paladin's hammer glow, whose node
+        // hangs off the swung weapon bone and was drawn on the ground beside him.
+        var world = (uint)_corn.NodeIndex < (uint)_model.Nodes.Count
+            ? Matrix4x4.CreateTranslation(_model.Nodes[_corn.NodeIndex].Pivot) * animator.World(_corn.NodeIndex)
+            : Matrix4x4.Identity;
         var local = Matrix4x4.CreateScale(m) * world * Matrix4x4.CreateScale(1f / m);
         var colour = _corn.ColorMultiplier;
         var tint = animator.SampleVector(_corn.ColorTrack, sequence, timeMs, Vector3.One, wallMs);

@@ -125,7 +125,10 @@ public sealed class MdxEffectSimulator(MdxModel model)
         if (spawn <= 0) return;
 
         var world = animator.World(e.NodeIndex);
-        var origin = new Vector3(world.M41, world.M42, world.M43);
+        // The emitter sits at its node's pivot, carried by the node's world matrix. That matrix
+        // moves rest-pose points, so its own translation is where the model origin goes — which put
+        // a torch's flame at its base rather than on the torch head 128 units up.
+        var origin = Vector3.Transform(_model.Nodes[e.NodeIndex].Pivot, world);
         var rng = Rng(index);
 
         float speed = Sample(animator, e.SpeedTrack, e.Speed, sequence, timeMs, wallMs);
@@ -191,7 +194,7 @@ public sealed class MdxEffectSimulator(MdxModel model)
             if (Visibility(animator, e.VisibilityTrack, sequence, timeMs, wallMs) < 0.5f) continue;
 
             var world = animator.World(e.NodeIndex);
-            var origin = new Vector3(world.M41, world.M42, world.M43);
+            var origin = Vector3.Transform(_model.Nodes[e.NodeIndex].Pivot, world);   // the node's pivot, as for particles
             float above = Sample(animator, e.HeightAboveTrack, e.HeightAbove, sequence, timeMs, wallMs);
             float below = Sample(animator, e.HeightBelowTrack, e.HeightBelow, sequence, timeMs, wallMs);
             var up = Vector3.TransformNormal(Vector3.UnitZ, world);
