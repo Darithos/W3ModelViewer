@@ -97,6 +97,9 @@ public sealed class Wc3TextureCache(Wc3Storage? storage, Wc3AssetIndex? index = 
     /// <summary>The user's current choices, for saving and for showing in the UI.</summary>
     public IReadOnlyDictionary<string, string> Overrides => _overrides;
 
+    /// <summary>Any file in the game storage by its full CASC name, or null without a storage or file.</summary>
+    public byte[]? TryReadGameFile(string cascName) => storage?.TryReadFile(cascName);
+
     /// <summary>
     /// Points a reference at a specific file, or clears the choice when <paramref name="filePath"/>
     /// is null. Every cached decode of that reference is discarded, so the next

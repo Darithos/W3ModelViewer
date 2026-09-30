@@ -63,6 +63,13 @@ public sealed class CompositeMaterial
         Texture = Texture, Blend = blend, TwoSided = TwoSided, Unshaded = Unshaded,
         PrimaryTexturePath = PrimaryTexturePath,
     };
+
+    /// <summary>The same composite drawn from another image — see <see cref="UvClamp.Apply"/>.</summary>
+    public CompositeMaterial WithTexture(RgbaImage texture) => new()
+    {
+        Texture = texture, Blend = Blend, TwoSided = TwoSided, Unshaded = Unshaded,
+        PrimaryTexturePath = PrimaryTexturePath,
+    };
 }
 
 /// <summary>
@@ -425,6 +432,82 @@ public static class MaterialCompositor
         // solid black panel rather than the player's colour.
         if (hasTeamLayer) return Solid(255);
         return null;
+    }
+
+    /// <summary>
+    /// The emissive map a Reforged layer adds on top of its lit surface, with the surface's coverage
+    /// copied into its alpha, and the layer whose gain scales it — or null when nothing would glow.
+    /// </summary>
+    /// <remarks>
+    /// Reforged's shader adds this texel after lighting (<c>color += emissive</c>, mdx-m3-viewer's
+    /// hd.frag), so a surface can be authored as black diffuse and lit entirely from here. Blizzard
+    /// did exactly that to the Definitive Edition fountains: the pool's UVs sit on a pure black
+    /// octagon in the diffuse atlas (1,1,1) and on mana blue (156,60,253) in the emissive, so a
+    /// renderer that ignores the slot draws a black hole where the water is. Across the DE set 2,043
+    /// layers carry real emissive art (the rest bind <c>Black32.blp</c>): 1,404 at gain 1, 509
+    /// animated by <c>KMTE</c>, and 98 at a static gain of 0 — birth and death variants that switch
+    /// the glow off — which are left out here the way the game leaves them dark.
+    /// </remarks>
+    /// <param name="coverage">
+    /// The composited surface when it is not opaque. A cut-out or blended surface cannot glow where
+    /// it is not drawn, so its alpha becomes the emissive's; null leaves the emissive solid.
+    /// </param>
+    public static (RgbaImage Image, MdxLayer Layer)? EmissiveOf(MdxModel model, MdxMaterial material,
+                                                               Wc3TextureCache textures, string modelCascName,
+                                                               RgbaImage? coverage = null)
+    {
+        var layer = material.Layers.FirstOrDefault(l => l.IsPbr);
+        if (layer is null) return null;
+        if (layer.EmissiveTrack is null && layer.EmissiveMultiplier <= 0) return null;
+        var emissive = LoadSlot(model, layer, MdxTextureSlot.Emissive, textures, modelCascName, 0);
+        if (emissive is null || IsBlack(emissive)) return null;
+
+        var px = (byte[])emissive.Pixels.Clone();
+        int w = emissive.Width, h = emissive.Height;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 4;
+                if (coverage is null) { px[i + 3] = 255; continue; }
+                int sx = x * coverage.Width / w, sy = y * coverage.Height / h;
+                px[i + 3] = coverage.Pixels[(sy * coverage.Width + sx) * 4 + 3];
+            }
+        return (new RgbaImage { Width = w, Height = h, Pixels = px }, layer);
+    }
+
+    /// <summary>
+    /// Whether a material's texture repeats across each axis (<c>TEXS</c> flags &amp;1 width,
+    /// &amp;2 height), or clamps to its edge texels.
+    /// </summary>
+    /// <remarks>
+    /// A clear bit means clamp: mdx-m3-viewer binds CLAMP_TO_EDGE for it, and modellers set Wrap
+    /// Width/Height precisely to make a texture tile. It is not a formality in classic art — 84% of
+    /// SD textures (7,958 of 9,504) leave both bits clear, and 247 SD models have UVs past the edge
+    /// of an axis that does not wrap, a glow ring mapped wider than its card or a gore strip hanging
+    /// off the atlas. Reforged and DE set both bits on 99% of their textures, so there it rarely
+    /// changes anything (MdxProbe --wrapscan). The texture that decides is the one the surface
+    /// shows: the first layer that is not the flat team-colour fill, whose tiling cannot be seen.
+    /// </remarks>
+    public static (bool U, bool V) WrapOf(MdxModel model, MdxMaterial material)
+    {
+        MdxTexture? decisive = null;
+        foreach (var layer in material.Layers)
+        {
+            int id = layer.DiffuseTextureId;
+            if ((uint)id >= (uint)model.Textures.Count) continue;
+            decisive ??= model.Textures[id];
+            if (!model.Textures[id].IsTeamColor) { decisive = model.Textures[id]; break; }
+        }
+        return decisive is null ? (true, true) : ((decisive.Flags & 1) != 0, (decisive.Flags & 2) != 0);
+    }
+
+    /// <summary>True when no texel carries visible colour — Blizzard's <c>Black32.blp</c> placeholder.</summary>
+    private static bool IsBlack(RgbaImage image)
+    {
+        var px = image.Pixels;
+        for (int i = 0; i < px.Length; i += 4)
+            if (px[i] > 3 || px[i + 1] > 3 || px[i + 2] > 3) return false;
+        return true;
     }
 
     /// <summary>

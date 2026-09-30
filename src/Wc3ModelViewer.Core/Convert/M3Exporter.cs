@@ -112,6 +112,41 @@ public sealed class M3ExportOptions
     public bool LitTeamColour { get; init; } = true;
 
     /// <summary>
+    /// Carry Reforged roughness as a StarCraft II gloss map (the spec map's alpha, sampled by
+    /// layer_gloss) instead of only dimming the spec, with no reflection. <see cref="ReflectSky"/>
+    /// carries a gloss map of its own, which is how a gloss map now reaches an export. This one alone
+    /// is calibrated (see <see cref="PbrConverter.Gloss"/>) but off, because on its own it does not
+    /// bring a unit closer to Warcraft III. Measured on the DE knight
+    /// against the World Editor's render, four exports swapped into one spot under one camera
+    /// (terrain identical to 0.000/255), mean gap in brightness percentiles: gold 0.200 today, 0.212
+    /// with gloss, 0.214 with gloss at Blizzard's gloss hdr_spec of 3; steel 0.121, 0.120, 0.112 —
+    /// and hdr_spec 3 alone gets 0.181 and 0.114, so the one gain is the brightness, not the gloss.
+    /// The knight's gold is smooth (roughness 0.27, gloss 0.88), so the gloss map rightly narrows its
+    /// highlight to exponent ~365, which lights fewer pixels than today's 80. Warcraft III's gold is
+    /// bright across its whole face because it reflects an environment map (the knight binds
+    /// ReplaceableTextures\EnvironmentMap.blp); no sun highlight, wide or narrow, stands in for that.
+    /// </summary>
+    public bool GlossMap { get; init; }
+
+    /// <summary>
+    /// Give Reforged materials a reflection, the way Heroes of the Storm builds its metal: an envi
+    /// layer on a cube map, masked by the material's spec map. Warcraft III lights its HD metal the
+    /// same way — its shader reads a prefiltered environment cube by the reflected ray — and without
+    /// it no sun highlight makes the knight's gold read as gold. Null uses Warcraft III's own sky
+    /// (<see cref="ReflectionCube.Warcraft"/>) when <see cref="ReflectSky"/> is on; a probe sets a cube here.
+    /// </summary>
+    public ReflectionMap? Reflection { get; init; }
+
+    /// <summary>
+    /// Part of <see cref="ConvertPbr"/>: give every Reforged material Warcraft III's sky as a
+    /// reflection, with the gloss map that blurs it by roughness and Warcraft III's metallic split
+    /// (<see cref="PbrConverter.Convert"/>). On the DE knight this brought the gold and steel 2.6x
+    /// closer to the World Editor's render than the export without it (see
+    /// <see cref="ReflectionCube.WarcraftMultiply"/>). Off keeps the previous export exactly.
+    /// </summary>
+    public bool ReflectSky { get; init; } = true;
+
+    /// <summary>
     /// MAT_.hdr_spec on standard materials: how bright the specular map's highlights may get.
     /// Reforged lights metal with GGX, whose peak on a smooth surface is several times the albedo,
     /// while SC2's highlight tops out at <c>spec x hdr_spec</c>.
@@ -328,6 +363,22 @@ public sealed class M3ExportOptions
 /// <summary>A texture file the export produced alongside the .m3.</summary>
 public sealed record ExportedTexture(string FileName, byte[] Data);
 
+/// <summary>The reflection every Reforged material gets — see <see cref="M3ExportOptions.Reflection"/>.</summary>
+public sealed class ReflectionMap
+{
+    /// <summary>The cube map, already encoded (<see cref="Formats.DdsWriter.WriteCube"/>).</summary>
+    public required byte[] Cube { get; init; }
+
+    /// <summary>Its file name stem; the export appends the content hash like every texture's.</summary>
+    public string Name { get; init; } = "reflection";
+
+    /// <summary>layer_envi colour_multiply.</summary>
+    public float Multiply { get; init; } = 1f;
+
+    /// <summary>Which spec-map channels mask it: 0 RGB (the F0 tint), 2 alpha — LAYR color_channels.</summary>
+    public uint MaskChannels { get; init; }
+}
+
 public sealed class M3ExportResult
 {
     public required byte[] M3 { get; init; }
@@ -375,6 +426,9 @@ public sealed class M3Exporter
     private readonly MdxModel _mdx;
     private readonly MdxAnimator _animator;
     private readonly M3ExportOptions _opt;
+
+    /// <summary>The reflection this export gives Reforged materials, resolved at <see cref="Export"/>; null for none.</summary>
+    private ReflectionMap? _reflection;
     private readonly List<string> _log = [];
 
     public M3Exporter(MdxModel mdx, M3ExportOptions options)
@@ -416,13 +470,18 @@ public sealed class M3Exporter
         public string DiffusePath = "";             // export file names
         public string NormalPath = "";
         public string SpecularPath = "";
+        public string GlossPath = "";               // bitmap whose ALPHA is gloss — Blizzard's is the spec map itself
         public string EmissivePath = "";
         public string TeamPath = "";                // bitmap whose alpha scales the live player colour
         public string AlphaPath = "";               // alpha1 bitmap when it is not the diffuse's
+        public string EnviPath = "";                // reflection cube map (layer_envi, sampled REFCUBE)
+        public string EnviMaskPath = "";            // what scales the reflection texel by texel (layer_envi_mask)
+        public float EnviMultiply = 1f;             // layer_envi colour_multiply
         public bool TeamInDiffuse;                  // diffuse sampled ARGB: its alpha is 1 - team mask
         public float HdrEmis = 1f;                  // MAT_.hdr_emis: scales emis1/emis2, player colour included
         public bool BlackDiffuse;                   // untextured diffuse, colour 0,0,0,0 — Blizzard's emissive-particle value
         public float UvTurn;                        // LAYR.uv_angle about Z on every textured layer (a ribbon's U runs across it)
+        public (bool U, bool V) Wrap = Repeat;      // LAYR uv_wrap_x/y: the TEXS wrap bits; a clear one clamps
         public int TeamBlendSlot;                   // 4 = emis1, 5 = emis2, 0 = no player colour
         public MdxGeosetAnim? VisibilityAnim;       // GEOA feeding this material's colour track
         public uint ColorAnimId;                    // LAYR color_value anim id, filled during write
@@ -461,6 +520,7 @@ public sealed class M3Exporter
 
     public M3ExportResult Export(Casc.Wc3TextureCache textureCache, string modelCascName)
     {
+        _reflection = _opt.Reflection ?? (_opt.ConvertPbr && _opt.ReflectSky ? ReflectionCube.Warcraft(textureCache) : null);
         BuildBones();
         BuildBillboards();
         BuildRegions(textureCache, modelCascName);
@@ -1248,6 +1308,7 @@ public sealed class M3Exporter
         bool animated = _opt.GeosetVisibility && everHides;
 
         string stem = TexStem(composite.PrimaryTexturePath, g.Index);
+        var wrap = MaterialCompositor.WrapOf(_mdx, mdxMat);
 
         // Materials can be shared, but a GEOA-animated geoset needs its own copy: visibility rides
         // the material's colour track, and sharing it would blink unrelated geosets.
@@ -1256,7 +1317,8 @@ public sealed class M3Exporter
             for (int i = 0; i < _materials.Count; i++)
                 if (_materials[i].VisibilityAnim is null
                     && (_materials[i].DiffusePath == stem + "_diff.dds" || _materials[i].DiffusePath == stem + "_diffteam.dds")
-                    && _materials[i].Blend == composite.Blend && _materials[i].TwoSided == composite.TwoSided)
+                    && _materials[i].Blend == composite.Blend && _materials[i].TwoSided == composite.TwoSided
+                    && _materials[i].Wrap == wrap)
                     return i;
         }
 
@@ -1280,6 +1342,7 @@ public sealed class M3Exporter
             TwoSided = composite.TwoSided,
             Unshaded = composite.Unshaded,
             Priority = mdxMat.PriorityPlane,
+            Wrap = wrap,
             VisibilityAnim = animated ? anim : null,
             DefaultAlpha = animated ? (byte)Math.Clamp(restAlpha * 255f + 0.5f, 0, 255) : (byte)255,
         };
@@ -1300,7 +1363,10 @@ public sealed class M3Exporter
             var diffuse = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Diffuse);
             var normal = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Normal);
             var orm = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Orm);
-            var emissive = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Emissive);
+            // A static emissive gain of 0 switches the glow off in Warcraft III — 98 DE layers, the
+            // birth and death variants of lit buildings — so it must not glow in StarCraft II either.
+            var emissive = hdLayer.EmissiveTrack is null && hdLayer.EmissiveMultiplier <= 0 ? null
+                : LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Emissive);
 
             if (diffuse is not null)
             {
@@ -1311,7 +1377,7 @@ public sealed class M3Exporter
                 // player colour on top of art that still contains it.
                 var set = PbrConverter.Convert(
                     composite.Blend == CompositeBlend.Opaque || teamMask is not null ? composite.Texture : diffuse,
-                    normal, orm, emissive);
+                    normal, orm, emissive, gloss: _opt.GlossMap && orm is not null, reflection: _reflection is not null);
 
                 if (LitTeam && teamMask is not null)
                 {
@@ -1328,7 +1394,15 @@ public sealed class M3Exporter
                 }
                 else
                     mat.DiffusePath = AddTexture(stem + "_diff.dds", set.Diffuse);
-                mat.SpecularPath = AddTexture(stem + "_spec.dds", set.Specular);
+                // With a gloss map the spec's alpha is data, not coverage: filtered plainly, kept BC3.
+                mat.SpecularPath = AddTexture(stem + "_spec.dds", set.Specular, alphaIsData: set.HasGloss);
+                if (set.HasGloss) mat.GlossPath = mat.SpecularPath;
+                if (_reflection is { } reflection && orm is not null)
+                {
+                    mat.EnviPath = AddEncodedTexture(reflection.Name + ".dds", reflection.Cube);
+                    mat.EnviMaskPath = mat.SpecularPath;
+                    mat.EnviMultiply = reflection.Multiply;
+                }
                 if (set.Normal is not null) mat.NormalPath = AddTexture(stem + "_norm.dds", set.Normal, alphaIsData: true);
                 if (set.Emissive is not null) mat.EmissivePath = AddTexture(stem + "_emis.dds", set.Emissive);
             }
@@ -1351,6 +1425,16 @@ public sealed class M3Exporter
         _materials.Add(mat);
         return _materials.Count - 1;
     }
+
+    /// <summary>
+    /// MAT_.specularity on a material whose gloss map sets the exponent texel by texel. Blizzard's
+    /// HotS materials with a gloss layer use 512 on 985 of 1,265 and set simulate_roughness on 997,
+    /// against 80, 20 or 40 and 99 of 11,806 without one.
+    /// </summary>
+    private const float GlossSpecularity = 512f;
+
+    /// <summary>MAT_.hdr_spec (times <see cref="M3ExportOptions.SpecularGain"/>) on a material with a reflection.</summary>
+    private const float ReflectionHdrSpec = 3f;
 
     /// <summary>A mask below this share of the texture is noise, not art, and buys only a texture.</summary>
     private const float TeamCoverageMin = 0.0005f;
@@ -1449,10 +1533,23 @@ public sealed class M3Exporter
             m.DiffusePath = Map(m.DiffusePath);
             m.NormalPath = Map(m.NormalPath);
             m.SpecularPath = Map(m.SpecularPath);
+            m.GlossPath = Map(m.GlossPath);
             m.EmissivePath = Map(m.EmissivePath);
             m.TeamPath = Map(m.TeamPath);
             m.AlphaPath = Map(m.AlphaPath);
+            m.EnviPath = Map(m.EnviPath);
+            m.EnviMaskPath = Map(m.EnviMaskPath);
         }
+    }
+
+    /// <summary>A file already encoded (a cube map) under <see cref="AddTexture"/>'s name and dedup rules.</summary>
+    private string AddEncodedTexture(string fileName, byte[] data)
+    {
+        if (_textures.Any(t => t.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase))) return fileName;
+        var same = _textures.FirstOrDefault(t => t.Data.Length == data.Length && t.Data.AsSpan().SequenceEqual(data));
+        if (same is not null) return same.FileName;
+        _textures.Add(new ExportedTexture(fileName, data));
+        return fileName;
     }
 
     private string TexStem(string primaryPath, int geosetIndex)
@@ -2788,22 +2885,37 @@ public sealed class M3Exporter
             bool alphaUsed = m.Blend is CompositeBlend.AlphaTest or CompositeBlend.AlphaBlend
                                       or CompositeBlend.Additive;
             matLayers[i][0] = m.BlackDiffuse
-                ? WriteLayer(b, "", m.ColorAnimId, wrap: true, defaultAlpha: 0, rgb: 0)                         // diff
-                : WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: true, uvTurn: m.UvTurn,
+                ? WriteLayer(b, "", m.ColorAnimId, wrap: Repeat, defaultAlpha: 0, rgb: 0)                       // diff
+                : WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: m.Wrap, uvTurn: m.UvTurn,
                              defaultAlpha: m.DefaultAlpha,
                              colorChannels: m.TeamInDiffuse ? ChannelsArgb : ChannelsRgb,
                              flipbook: m.FlipbookCells > 1);                                                   // diff
-            if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: true);
-            if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
+            if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: m.Wrap);
+            // Gloss: the spec bitmap again, sampling only its alpha — Blizzard's own spelling on
+            // 1,208 of the 1,265 HotS materials that carry a gloss layer (1,061 of them A-only).
+            if (m.GlossPath.Length > 0) matLayers[i][3] = WriteLayer(b, _opt.TexturePrefix + m.GlossPath, _nextAnimId(), wrap: m.Wrap,
+                                                                     colorChannels: ChannelsAlphaOnly);
+            if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: m.Wrap, uvTurn: m.UvTurn,
                                                                         flipbook: m.FlipbookCells > 1);
             // The alpha layer samples the same sheet, so it needs the same flipbook flag or it
             // reads the whole atlas while the diffuse reads one cell. Blizzard flags it more often
             // than any other slot: 83% of alpha1 layers behind a multi-cell emitter carry 0x100.
             if (alphaUsed) matLayers[i][8] = WriteLayer(b, _opt.TexturePrefix + (m.AlphaPath.Length > 0 ? m.AlphaPath : m.DiffusePath),
-                                                        _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
+                                                        _nextAnimId(), wrap: m.Wrap, uvTurn: m.UvTurn,
                                                         colorChannels: ChannelsAlphaOnly,
                                                         flipbook: m.FlipbookCells > 1);                        // alpha1
-            if (m.NormalPath.Length > 0) matLayers[i][10] = WriteLayer(b, _opt.TexturePrefix + m.NormalPath, _nextAnimId(), wrap: true);
+            if (m.NormalPath.Length > 0) matLayers[i][10] = WriteLayer(b, _opt.TexturePrefix + m.NormalPath, _nextAnimId(), wrap: m.Wrap);
+            // Reflection: a cube map looked up by the reflected view ray (uv_source 2, REFCUBE, on 433
+            // of the 529 Heroes hero materials with an envi layer), scaled by a mask read from the
+            // material's own spec map (452 of 529). See M3ExportOptions.Reflection.
+            if (m.EnviPath.Length > 0)
+            {
+                matLayers[i][6] = WriteLayer(b, _opt.TexturePrefix + m.EnviPath, _nextAnimId(), wrap: Repeat,
+                                             uvSource: UvSourceReflectiveCube, multiply: m.EnviMultiply);
+                if (m.EnviMaskPath.Length > 0)
+                    matLayers[i][7] = WriteLayer(b, _opt.TexturePrefix + m.EnviMaskPath, _nextAnimId(), wrap: m.Wrap,
+                                                 colorChannels: _reflection!.MaskChannels);
+            }
             // Player colour. StarCraft II has no team-colour texture slot: it has a *blend mode*.
             // Set blend_mode_emis1 (or emis2) to 4 and the engine adds the live player colour
             // scaled by that emissive layer's single sampled channel — which is why the layer takes
@@ -2815,7 +2927,7 @@ public sealed class M3Exporter
             {
                 m.TeamBlendSlot = m.EmissivePath.Length > 0 ? 5 : 4;
                 matLayers[i][m.TeamBlendSlot] = WriteLayer(b, _opt.TexturePrefix + m.TeamPath, _nextAnimId(),
-                                                           wrap: true, colorChannels: ChannelsAlphaOnly);
+                                                           wrap: m.Wrap, colorChannels: ChannelsAlphaOnly);
             }
         }
         var nullLayer = b.Add("LAYR", 26, 464);
@@ -3073,6 +3185,7 @@ public sealed class M3Exporter
             // 97% of add and 98% of alpha-add materials, against 16% of opaque ones — so this
             // follows blend mode and deliberately leaves cutouts (blend 0 + alpha test) casting.
             if (translucent) flags |= 0x20 | 0x80;              // no_shadows_cast | no_shadows_receive
+            if (m.GlossPath.Length > 0) flags |= 0x800;         // simulate_roughness — see GlossSpecularity
             w.Write(flags);
             bool visibilityDriven = m.VisibilityAnim is not null || m.DefaultAlpha < 255;
             // A cutout stays in the *opaque* pass — blend_mode 0 does not ignore the alpha channel,
@@ -3102,7 +3215,7 @@ public sealed class M3Exporter
             // Specular exponent. 80 is what Blizzard uses on most opaque unit materials (24 of 49
             // sampled; 20 appears only 9 times) — a low exponent spreads the highlight into a
             // broad sheen across the whole surface instead of a tight glint.
-            w.Write(80f);                                       // specularity
+            w.Write(m.GlossPath.Length > 0 ? GlossSpecularity : 80f);   // specularity
             w.Write(0f);                                        // depth_blend_falloff
             // alpha_test_threshold — Blizzard's own range (20 on hightemplar's cloth, 32 on
             // raynor's hair), not the midpoint. Reforged feathers its card edges, and the texels
@@ -3113,7 +3226,12 @@ public sealed class M3Exporter
             // forms, decay) needs *some* test or it could never hide, but stays low enough to cut
             // nothing while visible.
             w.Write(cutout ? 32u : visibilityDriven ? 8u : 0u);
-            w.Write(_opt.SpecularGain); w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_spec, hdr_emis, hdr_envi_*
+            // A reflecting material takes Blizzard's gloss-material hdr_spec (3.0 on 677 of 1,265): the
+            // gloss path's simulate_roughness normalises the sun lobe, and Warcraft III's GGX peak on
+            // smooth metal is many times its diffuse. On the knight the steel's gap to the World
+            // Editor fell 0.060 -> 0.037 at 3 (0.035 at 10), gold unchanged.
+            w.Write(_opt.SpecularGain * (m.EnviPath.Length > 0 ? ReflectionHdrSpec : 1f));
+            w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_emis, hdr_envi_*
             for (int L = 0; L < 18; L++)
             {
                 var layer = matLayers[i][L];
@@ -3189,15 +3307,28 @@ public sealed class M3Exporter
     /// </summary>
     private const uint ChannelsRgb = 0, ChannelsArgb = 1, ChannelsAlphaOnly = 2;
 
-    /// <summary>LAYR V26 with a bitmap path — the m3studio defaults, uv-wrapped.</summary>
+    /// <summary>LAYR.uv_source 2: "Reflective Cubic Environment" — the envi layer's lookup by the reflected view ray.</summary>
+    private const uint UvSourceReflectiveCube = 2;
+
+    /// <summary>Both LAYR uv_wrap bits set — the m3studio default, and what a surface with no TEXS entry gets.</summary>
+    private static readonly (bool U, bool V) Repeat = (true, true);
+
+    /// <summary>LAYR V26 with a bitmap path — the m3studio defaults, uv-wrapped where the source wraps.</summary>
+    /// <param name="wrap">
+    /// uv_wrap_x (0x4) and uv_wrap_y (0x8), each cleared to clamp that axis. StarCraft II honours
+    /// them one axis at a time, and Blizzard's own art does clear them: 9% of the textured layers
+    /// across 3,000 HotS models (2,043 clamp both axes, 717 clamp only V, 375 only U), nearly all radial
+    /// glows and gradients — the same kind of card Warcraft III clamps.
+    /// </param>
     /// <param name="defaultAlpha">
     /// Alpha of the layer's colour_value default. Sequences that carry no visibility key fall back
     /// to it, so a geoset hidden at rest (corpses, alternate forms) must default to 0.
     /// </param>
     /// <param name="colorChannels">Which texture channels the engine samples — see the constants above.</param>
-    private M3Builder.Section WriteLayer(M3Builder b, string bitmapPath, uint colorAnimId, bool wrap,
+    private M3Builder.Section WriteLayer(M3Builder b, string bitmapPath, uint colorAnimId, (bool U, bool V) wrap,
                                          byte defaultAlpha = 255, uint colorChannels = ChannelsRgb,
-                                         bool flipbook = false, uint rgb = 0x00FFFFFF, float uvTurn = 0f)
+                                         bool flipbook = false, uint rgb = 0x00FFFFFF, float uvTurn = 0f,
+                                         uint uvSource = 0, float multiply = 1f)
     {
         var layer = b.Add("LAYR", 26, 464);
         var w = layer.W;
@@ -3211,11 +3342,14 @@ public sealed class M3Exporter
         // it SC2 maps the whole sheet onto every quad, so Warcraft III's 8x8 cloud atlas draws as a
         // grid of 64 little puffs on each particle. Blizzard sets it on 82% of the materials behind
         // a multi-cell emitter and on only 6% of those behind a single-cell one.
-        w.Write((wrap ? 204u : 192u) | (flipbook ? 0x100u : 0u));  // uv_wrap_x/y | color_add | color_mult
-        w.Write(0u);                                            // uv_source (UV0)
+        w.Write(0xC0u | (wrap.U ? 0x4u : 0u) | (wrap.V ? 0x8u : 0u) | (flipbook ? 0x100u : 0u));  // color_add | color_mult | uv_wrap_x/y
+        w.Write(uvSource);                                      // uv_source (0 = UV0)
         w.Write(colorChannels);
         WriteAnimHeader(w, 1, 0, _nextAnimId());
-        w.Write(1f); w.Write(1f); w.Write(-1);
+        // color_multiply: the value, then 1. SC2 applies both floats: writing the multiply into each
+        // squared it (x0.5 on a grey-128 cube displayed exactly as a grey-32 one), and Blizzard's own
+        // x1.5 envi (Muradin) stores 1.5 then 1.0.
+        w.Write(multiply); w.Write(1f); w.Write(-1);
         WriteAnimHeader(w, 1, 0, _nextAnimId());
         w.Write(0f); w.Write(0f); w.Write(-1);
         w.Write(0u);

@@ -9,6 +9,9 @@ public sealed class SpecularSet
     public required RgbaImage Specular { get; init; }
     public RgbaImage? Normal { get; init; }
     public RgbaImage? Emissive { get; init; }
+
+    /// <summary>True when <see cref="Specular"/>'s alpha is a gloss map rather than solid.</summary>
+    public bool HasGloss { get; init; }
 }
 
 /// <summary>
@@ -35,19 +38,34 @@ public sealed class SpecularSet
 /// </remarks>
 public static class PbrConverter
 {
-    public static SpecularSet Convert(RgbaImage diffuse, RgbaImage? normal, RgbaImage? orm, RgbaImage? emissive)
+    /// <param name="gloss">
+    /// Write a gloss map into the specular's alpha, from the ORM roughness. The roughness then sets
+    /// how wide the highlight is instead of only how bright, so it must not also dim the spec.
+    /// </param>
+    /// <param name="reflection">
+    /// Split the way Warcraft III's HD shader does, for a material that also gets a reflection
+    /// (<see cref="M3ExportOptions.Reflection"/>): diffuse <c>albedo x (1 - metallic)</c>, spec (and so the
+    /// reflection's mask) <c>F0 = albedo x metallic</c>, and in the spec's alpha the gloss at which
+    /// StarCraft II blurs the reflection as far as Warcraft III does — <see cref="ReflectionGloss"/>.
+    /// Implies a gloss map.
+    /// </param>
+    public static SpecularSet Convert(RgbaImage diffuse, RgbaImage? normal, RgbaImage? orm, RgbaImage? emissive,
+                                      bool gloss = false, bool reflection = false)
     {
-        var (albedo, spec) = SplitMetallic(diffuse, orm);
+        reflection &= orm is not null;
+        gloss = (gloss || reflection) && orm is not null;
+        var (albedo, spec) = SplitMetallic(diffuse, orm, gloss, reflection);
         return new SpecularSet
         {
             Diffuse = albedo,
             Specular = spec,
             Normal = normal is null ? null : RepackNormal(normal),
             Emissive = emissive,
+            HasGloss = gloss,
         };
     }
 
-    private static (RgbaImage Diffuse, RgbaImage Specular) SplitMetallic(RgbaImage diffuse, RgbaImage? orm)
+    private static (RgbaImage Diffuse, RgbaImage Specular) SplitMetallic(RgbaImage diffuse, RgbaImage? orm, bool gloss, bool reflection)
     {
         int w = diffuse.Width, h = diffuse.Height;
         var diffPx = new byte[w * h * 4];
@@ -71,6 +89,19 @@ public static class PbrConverter
 
                 float b = src[i] / 255f, g = src[i + 1] / 255f, r = src[i + 2] / 255f;
 
+                if (reflection)
+                {
+                    // Warcraft III's own split (hd.bls: diffuse = albedo x (1 - metallic) / pi, F0 =
+                    // albedo x metallic with no 0.04 floor). The reflection now carries what the
+                    // constants below were compensating for, so none of them apply.
+                    float ao2 = 0.85f + occlusion * 0.15f, keep2 = (1 - metallic) * ao2;
+                    diffPx[i] = Pack(b * keep2); diffPx[i + 1] = Pack(g * keep2); diffPx[i + 2] = Pack(r * keep2);
+                    diffPx[i + 3] = src[i + 3];
+                    specPx[i] = Pack(b * metallic); specPx[i + 1] = Pack(g * metallic); specPx[i + 2] = Pack(r * metallic);
+                    specPx[i + 3] = Pack(ReflectionGloss(roughness));
+                    continue;
+                }
+
                 // Diffuse: metals keep most of their tint, and occlusion is folded in only lightly.
                 // Both constants were measured rather than chosen. Taking three quarters of the
                 // albedo away on metal and multiplying by 0.5 + occlusion/2 left the knight's
@@ -92,19 +123,72 @@ public static class PbrConverter
                 // floor is what keeps a rough metal reading as metal rather than as painted stone —
                 // the sheen users recognise as "the metallic look" is this, not the diffuse.
                 float shine = (1 - roughness) * (1 - roughness);   // perceptual-ish falloff
-                float sB = (0.04f + (b - 0.04f) * metallic) * (0.35f + shine * 0.65f);
-                float sG = (0.04f + (g - 0.04f) * metallic) * (0.35f + shine * 0.65f);
-                float sR = (0.04f + (r - 0.04f) * metallic) * (0.35f + shine * 0.65f);
+                float dim = gloss ? GlossDim(roughness) : 0.35f + shine * 0.65f;
+                float sB = (0.04f + (b - 0.04f) * metallic) * dim;
+                float sG = (0.04f + (g - 0.04f) * metallic) * dim;
+                float sR = (0.04f + (r - 0.04f) * metallic) * dim;
                 specPx[i] = Pack(sB);
                 specPx[i + 1] = Pack(sG);
                 specPx[i + 2] = Pack(sR);
-                specPx[i + 3] = 255;
+                specPx[i + 3] = gloss ? Pack(Gloss(roughness)) : (byte)255;
             }
         }
 
         return (new RgbaImage { Width = w, Height = h, Pixels = diffPx },
                 new RgbaImage { Width = w, Height = h, Pixels = specPx });
     }
+
+    /// <summary>
+    /// StarCraft II gloss (0 = matte, 1 = glossy) for a Reforged roughness: the gloss whose SC2
+    /// highlight is as wide as Reforged's. Reforged packs its ORM the glTF way, so its roughness is
+    /// glTF's (GGX alpha = roughness squared), and a GGX lobe is matched at its peak by a Blinn
+    /// lobe of exponent 2/alpha^2 - 2. SC2's side was measured (<c>MdxProbe --glosscal --fine</c>,
+    /// Agria light, lobes fitted per pixel through the display's 2.2 gamma): at specularity 512 with
+    /// simulate_roughness, the exponent is <see cref="GlossExponentAtZero"/> x e^(<see cref="GlossLogSlope"/>
+    /// x gloss) — 103, 143, 199, 274, 365, 486 at gloss 0.375 to 1 in eighths, residuals under 3% —
+    /// while the no-gloss ruler read back 17.9, 34.9, 66.8, 129, 252, 488 for specularity 16 to 512,
+    /// so specularity is exactly the N.H exponent. The range is 41 to ~500, which spans roughness
+    /// 0.47 to 0.25: the Reforged knight's plate (median 0.28) lands at gloss 0.7-1, its cloth
+    /// (0.75-1.0) at 0, where Blizzard's own foliage (22-40 of 255) and metal kits (130-155) sit too.
+    /// </summary>
+    public static float Gloss(float roughness)
+    {
+        float alpha = MathF.Max(roughness * roughness, 0.01f);
+        float exponent = 2f / (alpha * alpha) - 2f;
+        return Math.Clamp(MathF.Log(exponent / GlossExponentAtZero) / GlossLogSlope, 0f, 1f);
+    }
+
+    /// <summary>
+    /// The gloss at which StarCraft II blurs a reflection as much as Warcraft III does for this ORM
+    /// roughness. Warcraft III (hd.bls) remaps roughness to <c>0.05 + 0.9 x G</c> and reads its
+    /// 512px specular IBL at mip <c>r x 9</c>. StarCraft II with simulate_roughness reads a 256px cube at
+    /// mip <c>8 x (1 - gloss) - 0.67</c> (the <c>MdxProbe --envical</c> mip-ramp spheres: 1.33, 3.35,
+    /// 5.33 at gloss 0.75, 0.5, 0.25; slope = mip count - 1 on 128, 256 and 512px cubes alike), stopping
+    /// at the 4px level. <see cref="ReflectionCube"/> puts Warcraft III's mip k+1 — the same texel size
+    /// — in the 256px cube's mip k, so the gloss must select mip <c>9r - 1</c>. The same gloss sets the
+    /// sun highlight (<see cref="Gloss"/>): for the knight's plate, r 0.3, that is exponent ~236 against
+    /// GGX's 245 — rougher metal gets a sharper sun glint than Warcraft III's, the reflection is right.
+    /// </summary>
+    public static float ReflectionGloss(float roughness)
+    {
+        float r = 0.05f + 0.9f * Math.Clamp(roughness, 0f, 1f);
+        return Math.Clamp(1f - (9f * r - 1f + 0.67f) / 8f, 0f, 1f);
+    }
+
+    /// <summary>SC2's exponent at gloss 0 (specularity 512, simulate_roughness) — see <see cref="Gloss"/>.</summary>
+    public const float GlossExponentAtZero = 41.3f;
+
+    /// <summary>ln(exponent) gained per unit of gloss (specularity 512, simulate_roughness) — see <see cref="Gloss"/>.</summary>
+    public const float GlossLogSlope = 2.489f;
+
+    /// <summary>
+    /// What remains of the spec brightness once the gloss map carries the width: all of it.
+    /// simulate_roughness already dims a wide lobe — the same fit read the peak at 1.00, 1.00, 0.87,
+    /// 0.68, 0.46, 0.26 of the ruler's from gloss 1 down to 0.375, peak / exponent within a factor
+    /// 1.7 throughout, which is GGX's own energy-conserving falloff. The no-gloss path's roughness
+    /// dim on top of it would count roughness twice.
+    /// </summary>
+    private static float GlossDim(float roughness) => 1f;
 
     /// <summary>
     /// SC2 samples normals from (alpha, green); X goes to A, Y to G, R/B zeroed. Y is also negated:

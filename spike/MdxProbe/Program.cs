@@ -228,6 +228,93 @@ if (args.Contains("--geosetvis"))
     return MdxProbe.GeosetVisProbe.Run(args[gi + 1], want);
 }
 
+// --wrapscan [limit] [--sd|--hd] [--filter path] [--show n] counts TEXS wrap flags and lists the
+// geosets whose UVs leave 0..1 on an axis their texture does not wrap (DE by default).
+if (args.Contains("--wrapscan"))
+{
+    int wi = Array.IndexOf(args, "--wrapscan");
+    int wlimit = wi + 1 < args.Length && int.TryParse(args[wi + 1], out int wl) ? wl : int.MaxValue;
+    int wf = Array.IndexOf(args, "--filter"), ws = Array.IndexOf(args, "--show");
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive;
+    return MdxProbe.WrapScan.Run(install, art, wlimit, wf >= 0 && wf + 1 < args.Length ? args[wf + 1] : null,
+                                 ws >= 0 && ws + 1 < args.Length ? int.Parse(args[ws + 1]) : 40);
+}
+
+// --waterscan [--sd|--hd] [--filter path] lists every layer that animates its texture (TXAN or a
+// KMTF flipbook) or draws a water-named texture (DE by default).
+if (args.Contains("--waterscan"))
+{
+    int wf = Array.IndexOf(args, "--filter");
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive;
+    return MdxProbe.WaterScan.Run(install, art, wf >= 0 && wf + 1 < args.Length ? args[wf + 1] : null);
+}
+
+// --texpng <cascName> <outDir> writes every texture the model references to PNG with its mean RGBA.
+if (args.Contains("--texpng"))
+{
+    int ti = Array.IndexOf(args, "--texpng");
+    return MdxProbe.TexPng.Run(install, args[ti + 1], args[ti + 2]);
+}
+
+// --emiscensus [--hd] tallies how HD layers scale real emissive art (DE by default).
+if (args.Contains("--emiscensus")) return MdxProbe.EmisCensus.Run(install, args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive);
+
+// --glosscal <outDir> [prefix] writes the row of calibration spheres that measures SC2's gloss (see GlossCal).
+if (args.Contains("--glosscal"))
+{
+    int gc = Array.IndexOf(args, "--glosscal");
+    return MdxProbe.GlossCal.Run(args[gc + 1], gc + 2 < args.Length && !args[gc + 2].StartsWith("--") ? args[gc + 2] : "glosscal");
+}
+
+// --glossab <cascName> <outDir> <prefix> exports a unit with the gloss map off / on / on at hdr_spec 3.
+if (args.Contains("--glossab"))
+{
+    int ga = Array.IndexOf(args, "--glossab");
+    return MdxProbe.GlossCal.Ab(install, args[ga + 1], args[ga + 2], args[ga + 3]);
+}
+
+// --envical <outDir> [prefix] writes the spheres that measure SC2's environment layer (see EnviCal).
+if (args.Contains("--envical"))
+{
+    int ec = Array.IndexOf(args, "--envical");
+    return MdxProbe.EnviCal.Run(install, args[ec + 1], ec + 2 < args.Length && !args[ec + 2].StartsWith("--") ? args[ec + 2] : "envical");
+}
+
+// --reflectab <cascName> <outDir> <prefix> m:h [m:h ...] exports a unit today and with the reflection at
+// multiply m and hdr_spec h (see EnviCal.KnightAb).
+if (args.Contains("--reflectab"))
+{
+    int ra = Array.IndexOf(args, "--reflectab");
+    var settings = args.Skip(ra + 4).TakeWhile(a => a.Contains(':')).Select(a => a.Split(':'))
+                       .Select(p => (float.Parse(p[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(p[1], System.Globalization.CultureInfo.InvariantCulture))).ToArray();
+    return MdxProbe.EnviCal.KnightAb(install, args[ra + 1], args[ra + 2], args[ra + 3], settings);
+}
+
+// --appexport <cascName> <outDir> <name> [--bind] exports with the app's defaults, sky on and off.
+if (args.Contains("--appexport"))
+{
+    int ae = Array.IndexOf(args, "--appexport");
+    return MdxProbe.EnviCal.AppExport(install, args[ae + 1], args[ae + 2], args[ae + 3], args.Contains("--bind"));
+}
+
+// --cubefaces <cube.dds> <out.png> [element] [mip] lays one cube's six faces side by side.
+if (args.Contains("--cubefaces"))
+{
+    int cf = Array.IndexOf(args, "--cubefaces");
+    return MdxProbe.EnviCal.DumpFaces(args[cf + 1], args[cf + 2], cf + 3 < args.Length ? int.Parse(args[cf + 3]) : 0, cf + 4 < args.Length ? int.Parse(args[cf + 4]) : 0);
+}
+
+// --winding <cascName...> reports which way the named models (and the gloss sphere) wind their triangles.
+if (args.Contains("--winding"))
+    return MdxProbe.GlossCal.Winding(install, args.SkipWhile(a => a != "--winding").Skip(1).Where(a => !a.StartsWith("--")).ToArray());
+
+// --wrapquads <outDir> [prefix] writes the clamp/wrap control quads (see WrapQuad).
+if (args.Contains("--wrapquads"))
+{
+    int wq = Array.IndexOf(args, "--wrapquads");
+    return MdxProbe.WrapQuad.Run(install, args[wq + 1], wq + 2 < args.Length && !args[wq + 2].StartsWith("--") ? args[wq + 2] : "wrapq");
+}
+
 // --tex resolves and identifies every texture a set of models references.
 if (args.Contains("--tex")) return MdxProbe.TexProbe.Run(install);
 
@@ -388,6 +475,7 @@ if (args.Contains("--scalescan"))
 
 // --wpfblend renders the viewer's unshaded material offscreen: does its matte follow opacity and alpha?
 if (args.Contains("--wpfblend")) return MdxProbe.WpfBlendProbe.Run();
+if (args.Contains("--wpfemissive")) return MdxProbe.WpfBlendProbe.Emissive();
 
 // --geoascan [n] [looseDir...] censuses the static alpha a GEOA keeps beside its track, and the
 // sequences where that fallback decides whether a geoset is visible.
