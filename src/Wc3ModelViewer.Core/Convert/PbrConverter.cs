@@ -9,6 +9,9 @@ public sealed class SpecularSet
     public required RgbaImage Specular { get; init; }
     public RgbaImage? Normal { get; init; }
     public RgbaImage? Emissive { get; init; }
+
+    /// <summary>True when <see cref="Specular"/>'s alpha is a gloss map rather than solid.</summary>
+    public bool HasGloss { get; init; }
 }
 
 /// <summary>
@@ -35,19 +38,26 @@ public sealed class SpecularSet
 /// </remarks>
 public static class PbrConverter
 {
-    public static SpecularSet Convert(RgbaImage diffuse, RgbaImage? normal, RgbaImage? orm, RgbaImage? emissive)
+    /// <param name="gloss">
+    /// Write a gloss map into the specular's alpha, from the ORM roughness. The roughness then sets
+    /// how wide the highlight is instead of only how bright, so it must not also dim the spec.
+    /// </param>
+    public static SpecularSet Convert(RgbaImage diffuse, RgbaImage? normal, RgbaImage? orm, RgbaImage? emissive,
+                                      bool gloss = false)
     {
-        var (albedo, spec) = SplitMetallic(diffuse, orm);
+        gloss &= orm is not null;
+        var (albedo, spec) = SplitMetallic(diffuse, orm, gloss);
         return new SpecularSet
         {
             Diffuse = albedo,
             Specular = spec,
             Normal = normal is null ? null : RepackNormal(normal),
             Emissive = emissive,
+            HasGloss = gloss,
         };
     }
 
-    private static (RgbaImage Diffuse, RgbaImage Specular) SplitMetallic(RgbaImage diffuse, RgbaImage? orm)
+    private static (RgbaImage Diffuse, RgbaImage Specular) SplitMetallic(RgbaImage diffuse, RgbaImage? orm, bool gloss)
     {
         int w = diffuse.Width, h = diffuse.Height;
         var diffPx = new byte[w * h * 4];
@@ -92,19 +102,35 @@ public static class PbrConverter
                 // floor is what keeps a rough metal reading as metal rather than as painted stone —
                 // the sheen users recognise as "the metallic look" is this, not the diffuse.
                 float shine = (1 - roughness) * (1 - roughness);   // perceptual-ish falloff
-                float sB = (0.04f + (b - 0.04f) * metallic) * (0.35f + shine * 0.65f);
-                float sG = (0.04f + (g - 0.04f) * metallic) * (0.35f + shine * 0.65f);
-                float sR = (0.04f + (r - 0.04f) * metallic) * (0.35f + shine * 0.65f);
+                float dim = gloss ? GlossDim(roughness) : 0.35f + shine * 0.65f;
+                float sB = (0.04f + (b - 0.04f) * metallic) * dim;
+                float sG = (0.04f + (g - 0.04f) * metallic) * dim;
+                float sR = (0.04f + (r - 0.04f) * metallic) * dim;
                 specPx[i] = Pack(sB);
                 specPx[i + 1] = Pack(sG);
                 specPx[i + 2] = Pack(sR);
-                specPx[i + 3] = 255;
+                specPx[i + 3] = gloss ? Pack(Gloss(roughness)) : (byte)255;
             }
         }
 
         return (new RgbaImage { Width = w, Height = h, Pixels = diffPx },
                 new RgbaImage { Width = w, Height = h, Pixels = specPx });
     }
+
+    /// <summary>
+    /// StarCraft II gloss (0 = matte, 1 = glossy) for a Reforged roughness. Blizzard's own gloss
+    /// maps agree on the direction — alpha tracks spec brightness (correlation up to +0.95), their
+    /// foliage sits at 22-40 of 255 and their metal kits at 130-155 — but not on the scale: how SC2
+    /// turns gloss into an exponent is unmeasured, and a multiply (512 x g) and a power (512^g) put
+    /// metal at ~310 and ~40. One SC2 data point so far: at specularity 2, a 0.5 gloss layer with
+    /// simulate_roughness kills a highlight that blows out white without one. Until the
+    /// <c>MdxProbe --glosscal</c> row is read under a usable light, this is a placeholder, and
+    /// <see cref="M3ExportOptions.GlossMap"/> stays off.
+    /// </summary>
+    public static float Gloss(float roughness) => 1 - roughness;
+
+    /// <summary>What remains of the spec brightness once the gloss map carries the width — see <see cref="Gloss"/>.</summary>
+    private static float GlossDim(float roughness) => 1f;
 
     /// <summary>
     /// SC2 samples normals from (alpha, green); X goes to A, Y to G, R/B zeroed. Y is also negated:

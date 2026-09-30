@@ -112,6 +112,13 @@ public sealed class M3ExportOptions
     public bool LitTeamColour { get; init; } = true;
 
     /// <summary>
+    /// Carry Reforged roughness as a StarCraft II gloss map (the spec map's alpha, sampled by
+    /// layer_gloss) instead of only dimming the spec. Off until the gloss-to-exponent mapping is
+    /// measured in StarCraft II — see <c>MdxProbe --glosscal</c>; nothing ships on a guess.
+    /// </summary>
+    public bool GlossMap { get; init; }
+
+    /// <summary>
     /// MAT_.hdr_spec on standard materials: how bright the specular map's highlights may get.
     /// Reforged lights metal with GGX, whose peak on a smooth surface is several times the albedo,
     /// while SC2's highlight tops out at <c>spec x hdr_spec</c>.
@@ -416,6 +423,7 @@ public sealed class M3Exporter
         public string DiffusePath = "";             // export file names
         public string NormalPath = "";
         public string SpecularPath = "";
+        public string GlossPath = "";               // bitmap whose ALPHA is gloss — Blizzard's is the spec map itself
         public string EmissivePath = "";
         public string TeamPath = "";                // bitmap whose alpha scales the live player colour
         public string AlphaPath = "";               // alpha1 bitmap when it is not the diffuse's
@@ -1318,7 +1326,7 @@ public sealed class M3Exporter
                 // player colour on top of art that still contains it.
                 var set = PbrConverter.Convert(
                     composite.Blend == CompositeBlend.Opaque || teamMask is not null ? composite.Texture : diffuse,
-                    normal, orm, emissive);
+                    normal, orm, emissive, gloss: _opt.GlossMap && orm is not null);
 
                 if (LitTeam && teamMask is not null)
                 {
@@ -1335,7 +1343,9 @@ public sealed class M3Exporter
                 }
                 else
                     mat.DiffusePath = AddTexture(stem + "_diff.dds", set.Diffuse);
-                mat.SpecularPath = AddTexture(stem + "_spec.dds", set.Specular);
+                // With a gloss map the spec's alpha is data, not coverage: filtered plainly, kept BC3.
+                mat.SpecularPath = AddTexture(stem + "_spec.dds", set.Specular, alphaIsData: set.HasGloss);
+                if (set.HasGloss) mat.GlossPath = mat.SpecularPath;
                 if (set.Normal is not null) mat.NormalPath = AddTexture(stem + "_norm.dds", set.Normal, alphaIsData: true);
                 if (set.Emissive is not null) mat.EmissivePath = AddTexture(stem + "_emis.dds", set.Emissive);
             }
@@ -1358,6 +1368,13 @@ public sealed class M3Exporter
         _materials.Add(mat);
         return _materials.Count - 1;
     }
+
+    /// <summary>
+    /// MAT_.specularity on a material whose gloss map sets the exponent texel by texel. Blizzard's
+    /// HotS materials with a gloss layer use 512 on 985 of 1,265 and set simulate_roughness on 997,
+    /// against 80, 20 or 40 and 99 of 11,806 without one.
+    /// </summary>
+    private const float GlossSpecularity = 512f;
 
     /// <summary>A mask below this share of the texture is noise, not art, and buys only a texture.</summary>
     private const float TeamCoverageMin = 0.0005f;
@@ -1456,6 +1473,7 @@ public sealed class M3Exporter
             m.DiffusePath = Map(m.DiffusePath);
             m.NormalPath = Map(m.NormalPath);
             m.SpecularPath = Map(m.SpecularPath);
+            m.GlossPath = Map(m.GlossPath);
             m.EmissivePath = Map(m.EmissivePath);
             m.TeamPath = Map(m.TeamPath);
             m.AlphaPath = Map(m.AlphaPath);
@@ -2801,6 +2819,10 @@ public sealed class M3Exporter
                              colorChannels: m.TeamInDiffuse ? ChannelsArgb : ChannelsRgb,
                              flipbook: m.FlipbookCells > 1);                                                   // diff
             if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: m.Wrap);
+            // Gloss: the spec bitmap again, sampling only its alpha — Blizzard's own spelling on
+            // 1,208 of the 1,265 HotS materials that carry a gloss layer (1,061 of them A-only).
+            if (m.GlossPath.Length > 0) matLayers[i][3] = WriteLayer(b, _opt.TexturePrefix + m.GlossPath, _nextAnimId(), wrap: m.Wrap,
+                                                                     colorChannels: ChannelsAlphaOnly);
             if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: m.Wrap, uvTurn: m.UvTurn,
                                                                         flipbook: m.FlipbookCells > 1);
             // The alpha layer samples the same sheet, so it needs the same flipbook flag or it
@@ -3080,6 +3102,7 @@ public sealed class M3Exporter
             // 97% of add and 98% of alpha-add materials, against 16% of opaque ones — so this
             // follows blend mode and deliberately leaves cutouts (blend 0 + alpha test) casting.
             if (translucent) flags |= 0x20 | 0x80;              // no_shadows_cast | no_shadows_receive
+            if (m.GlossPath.Length > 0) flags |= 0x800;         // simulate_roughness — see GlossSpecularity
             w.Write(flags);
             bool visibilityDriven = m.VisibilityAnim is not null || m.DefaultAlpha < 255;
             // A cutout stays in the *opaque* pass — blend_mode 0 does not ignore the alpha channel,
@@ -3109,7 +3132,7 @@ public sealed class M3Exporter
             // Specular exponent. 80 is what Blizzard uses on most opaque unit materials (24 of 49
             // sampled; 20 appears only 9 times) — a low exponent spreads the highlight into a
             // broad sheen across the whole surface instead of a tight glint.
-            w.Write(80f);                                       // specularity
+            w.Write(m.GlossPath.Length > 0 ? GlossSpecularity : 80f);   // specularity
             w.Write(0f);                                        // depth_blend_falloff
             // alpha_test_threshold — Blizzard's own range (20 on hightemplar's cloth, 32 on
             // raynor's hair), not the midpoint. Reforged feathers its card edges, and the texels

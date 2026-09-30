@@ -259,6 +259,13 @@ if (args.Contains("--texpng"))
 // --emiscensus [--hd] tallies how HD layers scale real emissive art (DE by default).
 if (args.Contains("--emiscensus")) return MdxProbe.EmisCensus.Run(install, args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive);
 
+// --glosscal <outDir> [prefix] writes the row of calibration spheres that measures SC2's gloss (see GlossCal).
+if (args.Contains("--glosscal"))
+{
+    int gc = Array.IndexOf(args, "--glosscal");
+    return MdxProbe.GlossCal.Run(args[gc + 1], gc + 2 < args.Length && !args[gc + 2].StartsWith("--") ? args[gc + 2] : "glosscal");
+}
+
 // --wrapquads <outDir> [prefix] writes the clamp/wrap control quads (see WrapQuad).
 if (args.Contains("--wrapquads"))
 {
