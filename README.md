@@ -51,6 +51,13 @@ Working end to end:
 - **Animated texture flipbooks** — HD water, fountains and coral animate their diffuse through a
   `KMTF` texture-id track of up to 50 frames. The viewer plays these on the track's own timeline;
   export resolves the flipbook's first frame instead of falling back to texture 0.
+- **Emissive maps** — Reforged and Definitive materials add their emissive map after lighting, as
+  Warcraft III does, so the Definitive fountains' pools glow instead of drawing black (their
+  colour lives only in the emissive map; 2,043 DE layers carry real emissive art). A gain track
+  animates it; a static gain of 0 switches it off.
+- **Texture wrap flags** — a texture whose TEXS wrap bit is clear clamps to its edge, in the viewer
+  and in the `.m3` (LAYR uv_wrap per axis, as Blizzard's own art clears it on 9% of its layers).
+  247 classic models draw UVs past a clamped edge; they used to tile there.
 - **.m3 export (StarCraft II)** — mesh, skeleton, baked animations, attachments, cameras, GEOA
   visibility, PBR→specular texture conversion, written directly by the app: **no Blender, no
   add-ons, no external tools**. Verified in the StarCraft II editor: models load, animate and
