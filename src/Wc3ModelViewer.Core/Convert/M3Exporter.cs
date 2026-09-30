@@ -1433,6 +1433,9 @@ public sealed class M3Exporter
     /// </summary>
     private const float GlossSpecularity = 512f;
 
+    /// <summary>MAT_.hdr_spec (times <see cref="M3ExportOptions.SpecularGain"/>) on a material with a reflection.</summary>
+    private const float ReflectionHdrSpec = 3f;
+
     /// <summary>A mask below this share of the texture is noise, not art, and buys only a texture.</summary>
     private const float TeamCoverageMin = 0.0005f;
 
@@ -3223,7 +3226,12 @@ public sealed class M3Exporter
             // forms, decay) needs *some* test or it could never hide, but stays low enough to cut
             // nothing while visible.
             w.Write(cutout ? 32u : visibilityDriven ? 8u : 0u);
-            w.Write(_opt.SpecularGain); w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_spec, hdr_emis, hdr_envi_*
+            // A reflecting material takes Blizzard's gloss-material hdr_spec (3.0 on 677 of 1,265): the
+            // gloss path's simulate_roughness normalises the sun lobe, and Warcraft III's GGX peak on
+            // smooth metal is many times its diffuse. On the knight the steel's gap to the World
+            // Editor fell 0.060 -> 0.037 at 3 (0.035 at 10), gold unchanged.
+            w.Write(_opt.SpecularGain * (m.EnviPath.Length > 0 ? ReflectionHdrSpec : 1f));
+            w.Write(m.HdrEmis); w.Write(1f); w.Write(0f); w.Write(0f);   // hdr_emis, hdr_envi_*
             for (int L = 0; L < 18; L++)
             {
                 var layer = matLayers[i][L];
