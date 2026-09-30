@@ -41,6 +41,21 @@ public static class GlossCal
         new("j", 0.50f, 64, true),
     ];
 
+    /// <summary>
+    /// The second round, after the first (hdr_spec 8) drove every peak ~55x past the display's white
+    /// point into tone mapping and bloom: hdr_spec is dropped so peaks stay readable, the ruler is
+    /// denser, and gloss is stepped at Blizzard's recipe (specularity 512 + simulate_roughness).
+    /// </summary>
+    public static Variant[] Fine(float hdr) =>
+    [
+        new("k", null, 16, false, 255, hdr), new("l", null, 32, false, 255, hdr), new("m", null, 64, false, 255, hdr),
+        new("n", null, 128, false, 255, hdr), new("o", null, 256, false, 255, hdr), new("p", null, 512, false, 255, hdr),
+        new("q", 0.125f, 512, true, 255, hdr), new("r", 0.25f, 512, true, 255, hdr), new("s", 0.375f, 512, true, 255, hdr),
+        new("t", 0.5f, 512, true, 255, hdr), new("u", 0.625f, 512, true, 255, hdr), new("v", 0.75f, 512, true, 255, hdr),
+        new("w", 0.875f, 512, true, 255, hdr), new("x", 1f, 512, true, 255, hdr),
+        new("z", null, 512, false, 255, 0f),
+    ];
+
     public static int Run(string outDir, string prefix)
     {
         Directory.CreateDirectory(outDir);
@@ -64,7 +79,11 @@ public static class GlossCal
         string spec = res.Textures.Select(t => t.FileName).Single(n => n.Contains("_spec_"));
         Console.WriteLine($"base: {res.M3.Length} bytes, textures {string.Join(", ", res.Textures.Select(t => t.FileName))}");
 
-        foreach (var v in Environment.GetCommandLineArgs().Contains("--probe") ? Probe : Row)
+        var argv = Environment.GetCommandLineArgs();
+        int fine = Array.IndexOf(argv, "--fine");
+        var set = fine >= 0 ? Fine(fine + 1 < argv.Length && float.TryParse(argv[fine + 1], System.Globalization.CultureInfo.InvariantCulture, out float h) ? h : 0.12f)
+                : argv.Contains("--probe") ? Probe : Row;
+        foreach (var v in set)
         {
             string id = prefix + v.Id;
             string dir = Path.Combine(outDir, id);
@@ -108,6 +127,60 @@ public static class GlossCal
         throw new InvalidOperationException("no MAT_");
     }
 
+    /// <summary>
+    /// Which way real models wind their triangles: the share whose (b-a)x(c-a) agrees with the vertex
+    /// normals. The first sphere row lit only its far side in SC2 (dark from every camera facing away
+    /// from the sun), which is what an inside-out mesh looks like; this says which winding is outward.
+    /// </summary>
+    public static int Winding(string install, string[] cascNames)
+    {
+        using var storage = new Wc3Storage(install);
+        foreach (string name in cascNames)
+            Report(name, MdxReader.Read(storage.TryReadFile(name) ?? throw new FileNotFoundException(name)));
+        Report("GlossCal sphere", Sphere(40f, 48, 32));
+        return 0;
+
+        static void Report(string name, MdxModel model)
+        {
+            long agree = 0, total = 0;
+            foreach (var g in model.Geosets.Where(g => g.LodId == 0 && g.Normals.Length == g.Positions.Length))
+                for (int t = 0; t + 2 < g.Indices.Length; t += 3)
+                {
+                    int a = g.Indices[t], b = g.Indices[t + 1], c = g.Indices[t + 2];
+                    var face = Vector3.Cross(g.Positions[b] - g.Positions[a], g.Positions[c] - g.Positions[a]);
+                    if (face.LengthSquared() < 1e-12f) continue;
+                    total++;
+                    if (Vector3.Dot(face, g.Normals[a] + g.Normals[b] + g.Normals[c]) > 0) agree++;
+                }
+            Console.WriteLine($"{name}: {agree}/{total} triangles ({100.0 * agree / Math.Max(1, total):0.0}%) wind counter-clockwise about their normals");
+        }
+    }
+
+    /// <summary>
+    /// The same unit exported with the gloss map off (prefix + "a", today's export), on (+ "b"), on at
+    /// Blizzard's usual gloss hdr_spec of 3 (+ "c"), and off at 3 (+ "d", the control that
+    /// separates the gloss from the gain), for the side-by-side against Warcraft III.
+    /// </summary>
+    public static int Ab(string install, string cascName, string outDir, string prefix)
+    {
+        using var storage = new Wc3Storage(install);
+        var index = storage.BuildIndex();
+        var model = MdxReader.Read(storage.TryReadFile(cascName) ?? throw new FileNotFoundException(cascName));
+        var cache = new Wc3TextureCache(storage, index) { PreferHd = model.IsReforged };
+        foreach (var (tag, gloss, gain) in new[] { ("a", false, 1f), ("b", true, 1f), ("c", true, 3f), ("d", false, 3f) })
+        {
+            string name = prefix + tag;
+            var opts = new M3ExportOptions { Lod = 0, ModelName = name, Scale = 0.025f, GlossMap = gloss, SpecularGain = gain };
+            var res = new M3Exporter(model, opts).Export(cache, cascName);
+            string dir = Path.Combine(outDir, name), texDir = Path.Combine(dir, "textures");
+            Directory.CreateDirectory(texDir);
+            File.WriteAllBytes(Path.Combine(dir, name + ".m3"), res.M3);
+            foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(texDir, t.FileName), t.Data);
+            Console.WriteLine($"{name}: gloss {gloss} hdr_spec {gain} -> {res.M3.Length:N0} B, {res.Textures.Count} textures");
+        }
+        return 0;
+    }
+
     private static void Replace(byte[] hay, byte[] from, byte[] to)
     {
         int hits = 0;
@@ -140,8 +213,10 @@ public static class GlossCal
         for (int r = 0; r < rings; r++)
             for (int s = 0; s < segments; s++)
             {
+                // Counter-clockwise seen from outside, as 99.8% of the HD knight's triangles are
+                // (--winding); the first row wound the other way and SC2 drew the inside of the far half.
                 int a = r * (segments + 1) + s, b = a + segments + 1;
-                idx.AddRange([a, a + 1, b, a + 1, b + 1, b]);
+                idx.AddRange([a, b, a + 1, a + 1, b, b + 1]);
             }
 
         int n0 = pos.Count;

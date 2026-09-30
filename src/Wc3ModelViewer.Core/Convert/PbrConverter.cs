@@ -118,18 +118,38 @@ public static class PbrConverter
     }
 
     /// <summary>
-    /// StarCraft II gloss (0 = matte, 1 = glossy) for a Reforged roughness. Blizzard's own gloss
-    /// maps agree on the direction — alpha tracks spec brightness (correlation up to +0.95), their
-    /// foliage sits at 22-40 of 255 and their metal kits at 130-155 — but not on the scale: how SC2
-    /// turns gloss into an exponent is unmeasured, and a multiply (512 x g) and a power (512^g) put
-    /// metal at ~310 and ~40. One SC2 data point so far: at specularity 2, a 0.5 gloss layer with
-    /// simulate_roughness kills a highlight that blows out white without one. Until the
-    /// <c>MdxProbe --glosscal</c> row is read under a usable light, this is a placeholder, and
-    /// <see cref="M3ExportOptions.GlossMap"/> stays off.
+    /// StarCraft II gloss (0 = matte, 1 = glossy) for a Reforged roughness: the gloss whose SC2
+    /// highlight is as wide as Reforged's. Reforged packs its ORM the glTF way, so its roughness is
+    /// glTF's (GGX alpha = roughness squared), and a GGX lobe is matched at its peak by a Blinn
+    /// lobe of exponent 2/alpha^2 - 2. SC2's side was measured (<c>MdxProbe --glosscal --fine</c>,
+    /// Agria light, lobes fitted per pixel through the display's 2.2 gamma): at specularity 512 with
+    /// simulate_roughness, the exponent is <see cref="GlossExponentAtZero"/> x e^(<see cref="GlossLogSlope"/>
+    /// x gloss) — 103, 143, 199, 274, 365, 486 at gloss 0.375 to 1 in eighths, residuals under 3% —
+    /// while the no-gloss ruler read back 17.9, 34.9, 66.8, 129, 252, 488 for specularity 16 to 512,
+    /// so specularity is exactly the N.H exponent. The range is 41 to ~500, which spans roughness
+    /// 0.47 to 0.25: the Reforged knight's plate (median 0.28) lands at gloss 0.7-1, its cloth
+    /// (0.75-1.0) at 0, where Blizzard's own foliage (22-40 of 255) and metal kits (130-155) sit too.
     /// </summary>
-    public static float Gloss(float roughness) => 1 - roughness;
+    public static float Gloss(float roughness)
+    {
+        float alpha = MathF.Max(roughness * roughness, 0.01f);
+        float exponent = 2f / (alpha * alpha) - 2f;
+        return Math.Clamp(MathF.Log(exponent / GlossExponentAtZero) / GlossLogSlope, 0f, 1f);
+    }
 
-    /// <summary>What remains of the spec brightness once the gloss map carries the width — see <see cref="Gloss"/>.</summary>
+    /// <summary>SC2's exponent at gloss 0 (specularity 512, simulate_roughness) — see <see cref="Gloss"/>.</summary>
+    public const float GlossExponentAtZero = 41.3f;
+
+    /// <summary>ln(exponent) gained per unit of gloss (specularity 512, simulate_roughness) — see <see cref="Gloss"/>.</summary>
+    public const float GlossLogSlope = 2.489f;
+
+    /// <summary>
+    /// What remains of the spec brightness once the gloss map carries the width: all of it.
+    /// simulate_roughness already dims a wide lobe — the same fit read the peak at 1.00, 1.00, 0.87,
+    /// 0.68, 0.46, 0.26 of the ruler's from gloss 1 down to 0.375, peak / exponent within a factor
+    /// 1.7 throughout, which is GGX's own energy-conserving falloff. The no-gloss path's roughness
+    /// dim on top of it would count roughness twice.
+    /// </summary>
     private static float GlossDim(float roughness) => 1f;
 
     /// <summary>

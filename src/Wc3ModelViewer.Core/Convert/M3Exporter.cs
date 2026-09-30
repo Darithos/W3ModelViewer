@@ -113,8 +113,16 @@ public sealed class M3ExportOptions
 
     /// <summary>
     /// Carry Reforged roughness as a StarCraft II gloss map (the spec map's alpha, sampled by
-    /// layer_gloss) instead of only dimming the spec. Off until the gloss-to-exponent mapping is
-    /// measured in StarCraft II — see <c>MdxProbe --glosscal</c>; nothing ships on a guess.
+    /// layer_gloss) instead of only dimming the spec. Calibrated (see <see cref="PbrConverter.Gloss"/>)
+    /// but off, because it does not bring a unit closer to Warcraft III. Measured on the DE knight
+    /// against the World Editor's render, four exports swapped into one spot under one camera
+    /// (terrain identical to 0.000/255), mean gap in brightness percentiles: gold 0.200 today, 0.212
+    /// with gloss, 0.214 with gloss at Blizzard's gloss hdr_spec of 3; steel 0.121, 0.120, 0.112 —
+    /// and hdr_spec 3 alone gets 0.181 and 0.114, so the one gain is the brightness, not the gloss.
+    /// The knight's gold is smooth (roughness 0.27, gloss 0.88), so the gloss map rightly narrows its
+    /// highlight to exponent ~365, which lights fewer pixels than today's 80. Warcraft III's gold is
+    /// bright across its whole face because it reflects an environment map (the knight binds
+    /// ReplaceableTextures\EnvironmentMap.blp); no sun highlight, wide or narrow, stands in for that.
     /// </summary>
     public bool GlossMap { get; init; }
 

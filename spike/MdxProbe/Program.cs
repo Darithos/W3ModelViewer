@@ -266,6 +266,17 @@ if (args.Contains("--glosscal"))
     return MdxProbe.GlossCal.Run(args[gc + 1], gc + 2 < args.Length && !args[gc + 2].StartsWith("--") ? args[gc + 2] : "glosscal");
 }
 
+// --glossab <cascName> <outDir> <prefix> exports a unit with the gloss map off / on / on at hdr_spec 3.
+if (args.Contains("--glossab"))
+{
+    int ga = Array.IndexOf(args, "--glossab");
+    return MdxProbe.GlossCal.Ab(install, args[ga + 1], args[ga + 2], args[ga + 3]);
+}
+
+// --winding <cascName...> reports which way the named models (and the gloss sphere) wind their triangles.
+if (args.Contains("--winding"))
+    return MdxProbe.GlossCal.Winding(install, args.SkipWhile(a => a != "--winding").Skip(1).Where(a => !a.StartsWith("--")).ToArray());
+
 // --wrapquads <outDir> [prefix] writes the clamp/wrap control quads (see WrapQuad).
 if (args.Contains("--wrapquads"))
 {
