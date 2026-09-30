@@ -54,13 +54,18 @@ Working end to end:
 - **.m3 export (StarCraft II)** — mesh, skeleton, baked animations, attachments, cameras, GEOA
   visibility, PBR→specular texture conversion, written directly by the app: **no Blender, no
   add-ons, no external tools**. Verified in the StarCraft II editor: models load, animate and
-  render textured. The PBR split is tuned so a surface exports at the brightness the viewer shows
-  it at, which is the comparison anyone actually makes. Physically a metal has no diffuse at all,
-  but StarCraft II has one specular intensity and no image-based reflection to light one with, so
-  taking the metallic part out honestly left the knight's pauldron at 21% of its Warcraft III
-  brightness and his sword at 19% — the whole metal half of every Reforged unit. Metal now keeps
-  three quarters of its albedo and the specular floor carries the sheen; `MdxProbe --pbr` prints
-  the per-texture ratio. Normal maps follow StarCraft II's own convention, measured rather than
+  render textured. Reforged metal is lit the way Warcraft III lights it and Heroes of the Storm
+  builds its own: a **reflection of Warcraft III's sky**. Warcraft III's HD shader reads a
+  prefiltered environment cube by the reflected ray, blurred by roughness; the export turns that
+  sky (Lordaeron Summer day) to StarCraft II's sun and ships it as an envi-layer cube map, masked
+  by the metal's own colour (F0 = albedo × metallic) — the Heroes recipe on 452 of the 529 hero
+  materials that carry one. Roughness becomes a gloss map in the spec's alpha, and with
+  simulate_roughness StarCraft II blurs the reflection per texel just as Warcraft III does (its
+  mip choice was measured on test spheres and each mip of the cube holds Warcraft III's own blur
+  level). Diffuse is `albedo × (1 − metallic)`, as in Warcraft III, since the reflection now carries
+  the metal. On the DE knight, set against the World Editor's render, the gold and steel came out
+  2.6× closer than without it. `MdxProbe --envical`, `--reflectab` and `spike/m3verify/envicensus.py`
+  hold the measurements. Normal maps follow StarCraft II's own convention, measured rather than
   assumed: its maps store green the other way up from Reforged's (a curl test reads 29 of 30 HotS
   and 5 of 6 Liberty maps one way, every Reforged source the other), and each triangle's bitangent
   sign — the fourth byte of the packed normal — comes from the MDX tangent's W, so mirrored UVs

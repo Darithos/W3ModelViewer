@@ -89,6 +89,45 @@ public static class DdsReader
         };
     }
 
+    /// <summary>
+    /// One mip of one surface of a cube map or cube array — the six faces of array element
+    /// <c>surface / 6</c> in D3D order (+X, -X, +Y, -Y, +Z, -Z). Warcraft III's image-based lighting
+    /// ships as DX10 cube arrays (<c>environment\environmentmap\*\*_ibl.dds</c>: BC1 sRGB, two
+    /// elements — irradiance, then the roughness-filtered specular — each face with a full mip
+    /// chain); legacy cube maps (caps2 0x200) are one element. Surfaces are stored one after another,
+    /// every surface with all its mips, which is the layout both headers share.
+    /// </summary>
+    public static RgbaImage DecodeSurface(byte[] d, int surface, int mip)
+    {
+        if (!LooksLikeDds(d)) throw new InvalidDataException("Not a DDS file.");
+        int height = BitConverter.ToInt32(d, 12), width = BitConverter.ToInt32(d, 16);
+        int mips = Math.Max(1, BitConverter.ToInt32(d, 28));
+        string fourCc = System.Text.Encoding.ASCII.GetString(d, 84, 4);
+        int start = 128;
+        if (fourCc == "DX10")
+        {
+            fourCc = BitConverter.ToUInt32(d, 128) switch
+            {
+                71 or 72 => "DXT1",
+                77 or 78 => "DXT5",
+                var f => throw new NotSupportedException($"DDS DXGI format {f} is not supported for surfaces."),
+            };
+            start = 148;
+        }
+        int blockSize = fourCc switch { "DXT1" => 8, "DXT5" => 16, _ => throw new NotSupportedException($"DDS fourCC '{fourCc}' is not supported for surfaces.") };
+        long SurfaceBytes(int w, int h) => (long)Math.Max(1, (w + 3) / 4) * Math.Max(1, (h + 3) / 4) * blockSize;
+        long chain = 0;
+        for (int m = 0; m < mips; m++) chain += SurfaceBytes(Math.Max(1, width >> m), Math.Max(1, height >> m));
+        long at = start + chain * surface;
+        for (int m = 0; m < mip; m++) at += SurfaceBytes(Math.Max(1, width >> m), Math.Max(1, height >> m));
+        int mw = Math.Max(1, width >> mip), mh = Math.Max(1, height >> mip);
+        return fourCc == "DXT1" ? DecodeBlocks(d, (int)at, mw, mh, 8, DecodeBc1Block)
+                                : DecodeBlocks(d, (int)at, mw, mh, 16, DecodeBc3Block);
+    }
+
+    /// <summary>Mip levels in the file (1 when the header leaves the count out).</summary>
+    public static int MipCount(byte[] d) => Math.Max(1, BitConverter.ToInt32(d, 28));
+
     private static RgbaImage DecodeRgba(byte[] d, int start, int width, int height)
     {
         var px = new byte[width * height * 4];

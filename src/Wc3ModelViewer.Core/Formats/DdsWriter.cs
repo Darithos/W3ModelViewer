@@ -73,6 +73,56 @@ public static class DdsWriter
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// A cube map for a StarCraft II environment layer: six opaque faces in D3D order (+X, -X, +Y,
+    /// -Y, +Z, -Z), each with a full mip chain, BC1 under a legacy header with every face flag set
+    /// (caps2 0xFE00). That is exactly the container of Heroes of the Storm's own reflection maps
+    /// (silver_reflection, gold_reflection: 128px, storm_blurredcube_generic: 512px), which the SC2
+    /// editor loads; a DX10 header or a cube array — Warcraft III's IBL layout — is not what it reads.
+    /// </summary>
+    public static byte[] WriteCube(IReadOnlyList<RgbaImage> faces)
+    {
+        if (faces.Count != 6) throw new ArgumentException("A cube map needs six faces.", nameof(faces));
+        int size = faces[0].Width;
+        if (faces.Any(f => f.Width != size || f.Height != size)) throw new ArgumentException("Cube faces must be square and equal.", nameof(faces));
+        return WriteCube(faces.Select(f => (IReadOnlyList<RgbaImage>)BuildMipChain(f, alphaIsCoverage: false)).ToList());
+    }
+
+    /// <summary>
+    /// The same container with every mip given rather than box-filtered: a prefiltered environment
+    /// holds a rougher reflection at each level, which a plain downsample would not.
+    /// </summary>
+    public static byte[] WriteCube(IReadOnlyList<IReadOnlyList<RgbaImage>> chains)
+    {
+        if (chains.Count != 6) throw new ArgumentException("A cube map needs six faces.", nameof(chains));
+        int size = chains[0][0].Width;
+        for (int m = 0; m < chains[0].Count; m++)
+            if (chains.Any(c => c.Count != chains[0].Count || c[m].Width != Math.Max(1, size >> m) || c[m].Height != Math.Max(1, size >> m)))
+                throw new ArgumentException("Every face needs the same full mip chain.", nameof(chains));
+
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        const uint DDSD_CAPS = 0x1, DDSD_HEIGHT = 0x2, DDSD_WIDTH = 0x4, DDSD_PIXELFORMAT = 0x1000,
+                   DDSD_MIPMAPCOUNT = 0x20000, DDSD_LINEARSIZE = 0x80000;
+        const uint DDSCAPS_COMPLEX = 0x8, DDSCAPS_TEXTURE = 0x1000, DDSCAPS_MIPMAP = 0x400000;
+        const uint DDSCAPS2_CUBEMAP_ALLFACES = 0x200 | 0x400 | 0x800 | 0x1000 | 0x2000 | 0x4000 | 0x8000;
+        w.Write("DDS "u8);
+        w.Write(124);
+        w.Write(DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_MIPMAPCOUNT | DDSD_LINEARSIZE);
+        w.Write(size); w.Write(size);
+        w.Write(Blocks(size) * Blocks(size) * 8);
+        w.Write(0);
+        w.Write(chains[0].Count);
+        for (int i = 0; i < 11; i++) w.Write(0);
+        w.Write(32); w.Write(0x4u); w.Write("DXT1"u8); w.Write(0);
+        w.Write(0); w.Write(0); w.Write(0); w.Write(0);
+        w.Write(DDSCAPS_TEXTURE | DDSCAPS_COMPLEX | DDSCAPS_MIPMAP);
+        w.Write(DDSCAPS2_CUBEMAP_ALLFACES); w.Write(0); w.Write(0); w.Write(0);
+        foreach (var chain in chains)
+            foreach (var mip in chain) Compress(mip, w, bc1: true);
+        return ms.ToArray();
+    }
+
     private static int Blocks(int dim) => Math.Max(1, (dim + 3) / 4);
 
     private static bool IsOpaque(RgbaImage img)

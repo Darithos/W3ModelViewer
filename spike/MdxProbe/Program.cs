@@ -273,6 +273,37 @@ if (args.Contains("--glossab"))
     return MdxProbe.GlossCal.Ab(install, args[ga + 1], args[ga + 2], args[ga + 3]);
 }
 
+// --envical <outDir> [prefix] writes the spheres that measure SC2's environment layer (see EnviCal).
+if (args.Contains("--envical"))
+{
+    int ec = Array.IndexOf(args, "--envical");
+    return MdxProbe.EnviCal.Run(install, args[ec + 1], ec + 2 < args.Length && !args[ec + 2].StartsWith("--") ? args[ec + 2] : "envical");
+}
+
+// --reflectab <cascName> <outDir> <prefix> m:h [m:h ...] exports a unit today and with the reflection at
+// multiply m and hdr_spec h (see EnviCal.KnightAb).
+if (args.Contains("--reflectab"))
+{
+    int ra = Array.IndexOf(args, "--reflectab");
+    var settings = args.Skip(ra + 4).TakeWhile(a => a.Contains(':')).Select(a => a.Split(':'))
+                       .Select(p => (float.Parse(p[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(p[1], System.Globalization.CultureInfo.InvariantCulture))).ToArray();
+    return MdxProbe.EnviCal.KnightAb(install, args[ra + 1], args[ra + 2], args[ra + 3], settings);
+}
+
+// --appexport <cascName> <outDir> <name> [--bind] exports with the app's defaults, sky on and off.
+if (args.Contains("--appexport"))
+{
+    int ae = Array.IndexOf(args, "--appexport");
+    return MdxProbe.EnviCal.AppExport(install, args[ae + 1], args[ae + 2], args[ae + 3], args.Contains("--bind"));
+}
+
+// --cubefaces <cube.dds> <out.png> [element] [mip] lays one cube's six faces side by side.
+if (args.Contains("--cubefaces"))
+{
+    int cf = Array.IndexOf(args, "--cubefaces");
+    return MdxProbe.EnviCal.DumpFaces(args[cf + 1], args[cf + 2], cf + 3 < args.Length ? int.Parse(args[cf + 3]) : 0, cf + 4 < args.Length ? int.Parse(args[cf + 4]) : 0);
+}
+
 // --winding <cascName...> reports which way the named models (and the gloss sphere) wind their triangles.
 if (args.Contains("--winding"))
     return MdxProbe.GlossCal.Winding(install, args.SkipWhile(a => a != "--winding").Skip(1).Where(a => !a.StartsWith("--")).ToArray());

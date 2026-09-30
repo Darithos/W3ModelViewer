@@ -92,7 +92,7 @@ public static class GlossCal
             foreach (var t in res.Textures) File.WriteAllBytes(Path.Combine(texDir, t.FileName), t.Data);
 
             // Same length as the exporter's name, so the path strings can be swapped in place.
-            string vSpec = spec[..^14] + $"v{v.Id}{new string('0', 8)}.dds";
+            string vSpec = spec[..^14] + VariantTag(id, spec) + ".dds";
             if (vSpec.Length != spec.Length) throw new InvalidOperationException(vSpec);
             byte g = (byte)Math.Clamp(MathF.Round((v.Gloss ?? 1f) * 255f), 0, 255);
             WriteDds(Path.Combine(texDir, vSpec), Solid(v.Spec, v.Spec, v.Spec, g));
@@ -170,7 +170,7 @@ public static class GlossCal
         foreach (var (tag, gloss, gain) in new[] { ("a", false, 1f), ("b", true, 1f), ("c", true, 3f), ("d", false, 3f) })
         {
             string name = prefix + tag;
-            var opts = new M3ExportOptions { Lod = 0, ModelName = name, Scale = 0.025f, GlossMap = gloss, SpecularGain = gain };
+            var opts = new M3ExportOptions { Lod = 0, ModelName = name, Scale = 0.025f, GlossMap = gloss, SpecularGain = gain, ReflectSky = false };
             var res = new M3Exporter(model, opts).Export(cache, cascName);
             string dir = Path.Combine(outDir, name), texDir = Path.Combine(dir, "textures");
             Directory.CreateDirectory(texDir);
@@ -181,7 +181,14 @@ public static class GlossCal
         return 0;
     }
 
-    private static void Replace(byte[] hay, byte[] from, byte[] to)
+    /// <summary>
+    /// Ten hex digits naming one variant's copy of a texture, unique per unit id: the SC2 editor keeps
+    /// a texture by name for the whole session, so two rounds must never share a name.
+    /// </summary>
+    internal static string VariantTag(string unitId, string original) =>
+        System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.ASCII.GetBytes(unitId + "|" + original)), 0, 5).ToLowerInvariant();
+
+    internal static void Replace(byte[] hay, byte[] from, byte[] to)
     {
         int hits = 0;
         for (int i = 0; i + from.Length <= hay.Length; i++)
@@ -189,12 +196,12 @@ public static class GlossCal
         if (hits == 0) throw new InvalidOperationException("spec path not found in the m3");
     }
 
-    private static RgbaImage Solid(byte b, byte g, byte r, byte a) => RgbaImage.Solid(64, 64, b, g, r, a);
+    internal static RgbaImage Solid(byte b, byte g, byte r, byte a) => RgbaImage.Solid(64, 64, b, g, r, a);
 
-    private static void WriteDds(string path, RgbaImage img) => File.WriteAllBytes(path, DdsWriter.Write(img, 0, alphaIsCoverage: false));
+    internal static void WriteDds(string path, RgbaImage img) => File.WriteAllBytes(path, DdsWriter.Write(img, 0, alphaIsCoverage: false));
 
     /// <summary>A lat-long sphere on one bone, centred one radius above the ground, with one HD PBR material.</summary>
-    private static MdxModel Sphere(float radius, int segments, int rings)
+    internal static MdxModel Sphere(float radius, int segments, int rings)
     {
         var pos = new List<Vector3>(); var nrm = new List<Vector3>(); var uv = new List<Vector2>(); var tan = new List<Vector4>();
         var centre = new Vector3(0, 0, radius * 1.1f);
