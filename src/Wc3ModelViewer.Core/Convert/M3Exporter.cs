@@ -423,6 +423,7 @@ public sealed class M3Exporter
         public float HdrEmis = 1f;                  // MAT_.hdr_emis: scales emis1/emis2, player colour included
         public bool BlackDiffuse;                   // untextured diffuse, colour 0,0,0,0 — Blizzard's emissive-particle value
         public float UvTurn;                        // LAYR.uv_angle about Z on every textured layer (a ribbon's U runs across it)
+        public (bool U, bool V) Wrap = Repeat;      // LAYR uv_wrap_x/y: the TEXS wrap bits; a clear one clamps
         public int TeamBlendSlot;                   // 4 = emis1, 5 = emis2, 0 = no player colour
         public MdxGeosetAnim? VisibilityAnim;       // GEOA feeding this material's colour track
         public uint ColorAnimId;                    // LAYR color_value anim id, filled during write
@@ -1248,6 +1249,7 @@ public sealed class M3Exporter
         bool animated = _opt.GeosetVisibility && everHides;
 
         string stem = TexStem(composite.PrimaryTexturePath, g.Index);
+        var wrap = MaterialCompositor.WrapOf(_mdx, mdxMat);
 
         // Materials can be shared, but a GEOA-animated geoset needs its own copy: visibility rides
         // the material's colour track, and sharing it would blink unrelated geosets.
@@ -1256,7 +1258,8 @@ public sealed class M3Exporter
             for (int i = 0; i < _materials.Count; i++)
                 if (_materials[i].VisibilityAnim is null
                     && (_materials[i].DiffusePath == stem + "_diff.dds" || _materials[i].DiffusePath == stem + "_diffteam.dds")
-                    && _materials[i].Blend == composite.Blend && _materials[i].TwoSided == composite.TwoSided)
+                    && _materials[i].Blend == composite.Blend && _materials[i].TwoSided == composite.TwoSided
+                    && _materials[i].Wrap == wrap)
                     return i;
         }
 
@@ -1280,6 +1283,7 @@ public sealed class M3Exporter
             TwoSided = composite.TwoSided,
             Unshaded = composite.Unshaded,
             Priority = mdxMat.PriorityPlane,
+            Wrap = wrap,
             VisibilityAnim = animated ? anim : null,
             DefaultAlpha = animated ? (byte)Math.Clamp(restAlpha * 255f + 0.5f, 0, 255) : (byte)255,
         };
@@ -1300,7 +1304,10 @@ public sealed class M3Exporter
             var diffuse = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Diffuse);
             var normal = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Normal);
             var orm = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Orm);
-            var emissive = LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Emissive);
+            // A static emissive gain of 0 switches the glow off in Warcraft III — 98 DE layers, the
+            // birth and death variants of lit buildings — so it must not glow in StarCraft II either.
+            var emissive = hdLayer.EmissiveTrack is null && hdLayer.EmissiveMultiplier <= 0 ? null
+                : LoadSlot(textures, modelCascName, hdLayer, MdxTextureSlot.Emissive);
 
             if (diffuse is not null)
             {
@@ -2788,22 +2795,22 @@ public sealed class M3Exporter
             bool alphaUsed = m.Blend is CompositeBlend.AlphaTest or CompositeBlend.AlphaBlend
                                       or CompositeBlend.Additive;
             matLayers[i][0] = m.BlackDiffuse
-                ? WriteLayer(b, "", m.ColorAnimId, wrap: true, defaultAlpha: 0, rgb: 0)                         // diff
-                : WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: true, uvTurn: m.UvTurn,
+                ? WriteLayer(b, "", m.ColorAnimId, wrap: Repeat, defaultAlpha: 0, rgb: 0)                       // diff
+                : WriteLayer(b, _opt.TexturePrefix + m.DiffusePath, m.ColorAnimId, wrap: m.Wrap, uvTurn: m.UvTurn,
                              defaultAlpha: m.DefaultAlpha,
                              colorChannels: m.TeamInDiffuse ? ChannelsArgb : ChannelsRgb,
                              flipbook: m.FlipbookCells > 1);                                                   // diff
-            if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: true);
-            if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
+            if (m.SpecularPath.Length > 0) matLayers[i][2] = WriteLayer(b, _opt.TexturePrefix + m.SpecularPath, _nextAnimId(), wrap: m.Wrap);
+            if (m.EmissivePath.Length > 0) matLayers[i][4] = WriteLayer(b, _opt.TexturePrefix + m.EmissivePath, _nextAnimId(), wrap: m.Wrap, uvTurn: m.UvTurn,
                                                                         flipbook: m.FlipbookCells > 1);
             // The alpha layer samples the same sheet, so it needs the same flipbook flag or it
             // reads the whole atlas while the diffuse reads one cell. Blizzard flags it more often
             // than any other slot: 83% of alpha1 layers behind a multi-cell emitter carry 0x100.
             if (alphaUsed) matLayers[i][8] = WriteLayer(b, _opt.TexturePrefix + (m.AlphaPath.Length > 0 ? m.AlphaPath : m.DiffusePath),
-                                                        _nextAnimId(), wrap: true, uvTurn: m.UvTurn,
+                                                        _nextAnimId(), wrap: m.Wrap, uvTurn: m.UvTurn,
                                                         colorChannels: ChannelsAlphaOnly,
                                                         flipbook: m.FlipbookCells > 1);                        // alpha1
-            if (m.NormalPath.Length > 0) matLayers[i][10] = WriteLayer(b, _opt.TexturePrefix + m.NormalPath, _nextAnimId(), wrap: true);
+            if (m.NormalPath.Length > 0) matLayers[i][10] = WriteLayer(b, _opt.TexturePrefix + m.NormalPath, _nextAnimId(), wrap: m.Wrap);
             // Player colour. StarCraft II has no team-colour texture slot: it has a *blend mode*.
             // Set blend_mode_emis1 (or emis2) to 4 and the engine adds the live player colour
             // scaled by that emissive layer's single sampled channel — which is why the layer takes
@@ -2815,7 +2822,7 @@ public sealed class M3Exporter
             {
                 m.TeamBlendSlot = m.EmissivePath.Length > 0 ? 5 : 4;
                 matLayers[i][m.TeamBlendSlot] = WriteLayer(b, _opt.TexturePrefix + m.TeamPath, _nextAnimId(),
-                                                           wrap: true, colorChannels: ChannelsAlphaOnly);
+                                                           wrap: m.Wrap, colorChannels: ChannelsAlphaOnly);
             }
         }
         var nullLayer = b.Add("LAYR", 26, 464);
@@ -3189,13 +3196,22 @@ public sealed class M3Exporter
     /// </summary>
     private const uint ChannelsRgb = 0, ChannelsArgb = 1, ChannelsAlphaOnly = 2;
 
-    /// <summary>LAYR V26 with a bitmap path — the m3studio defaults, uv-wrapped.</summary>
+    /// <summary>Both LAYR uv_wrap bits set — the m3studio default, and what a surface with no TEXS entry gets.</summary>
+    private static readonly (bool U, bool V) Repeat = (true, true);
+
+    /// <summary>LAYR V26 with a bitmap path — the m3studio defaults, uv-wrapped where the source wraps.</summary>
+    /// <param name="wrap">
+    /// uv_wrap_x (0x4) and uv_wrap_y (0x8), each cleared to clamp that axis. StarCraft II honours
+    /// them one axis at a time, and Blizzard's own art does clear them: 9% of the textured layers
+    /// across 3,000 HotS models (2,043 clamp both axes, 717 clamp only V, 375 only U), nearly all radial
+    /// glows and gradients — the same kind of card Warcraft III clamps.
+    /// </param>
     /// <param name="defaultAlpha">
     /// Alpha of the layer's colour_value default. Sequences that carry no visibility key fall back
     /// to it, so a geoset hidden at rest (corpses, alternate forms) must default to 0.
     /// </param>
     /// <param name="colorChannels">Which texture channels the engine samples — see the constants above.</param>
-    private M3Builder.Section WriteLayer(M3Builder b, string bitmapPath, uint colorAnimId, bool wrap,
+    private M3Builder.Section WriteLayer(M3Builder b, string bitmapPath, uint colorAnimId, (bool U, bool V) wrap,
                                          byte defaultAlpha = 255, uint colorChannels = ChannelsRgb,
                                          bool flipbook = false, uint rgb = 0x00FFFFFF, float uvTurn = 0f)
     {
@@ -3211,7 +3227,7 @@ public sealed class M3Exporter
         // it SC2 maps the whole sheet onto every quad, so Warcraft III's 8x8 cloud atlas draws as a
         // grid of 64 little puffs on each particle. Blizzard sets it on 82% of the materials behind
         // a multi-cell emitter and on only 6% of those behind a single-cell one.
-        w.Write((wrap ? 204u : 192u) | (flipbook ? 0x100u : 0u));  // uv_wrap_x/y | color_add | color_mult
+        w.Write(0xC0u | (wrap.U ? 0x4u : 0u) | (wrap.V ? 0x8u : 0u) | (flipbook ? 0x100u : 0u));  // color_add | color_mult | uv_wrap_x/y
         w.Write(0u);                                            // uv_source (UV0)
         w.Write(colorChannels);
         WriteAnimHeader(w, 1, 0, _nextAnimId());

@@ -228,6 +228,44 @@ if (args.Contains("--geosetvis"))
     return MdxProbe.GeosetVisProbe.Run(args[gi + 1], want);
 }
 
+// --wrapscan [limit] [--sd|--hd] [--filter path] [--show n] counts TEXS wrap flags and lists the
+// geosets whose UVs leave 0..1 on an axis their texture does not wrap (DE by default).
+if (args.Contains("--wrapscan"))
+{
+    int wi = Array.IndexOf(args, "--wrapscan");
+    int wlimit = wi + 1 < args.Length && int.TryParse(args[wi + 1], out int wl) ? wl : int.MaxValue;
+    int wf = Array.IndexOf(args, "--filter"), ws = Array.IndexOf(args, "--show");
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive;
+    return MdxProbe.WrapScan.Run(install, art, wlimit, wf >= 0 && wf + 1 < args.Length ? args[wf + 1] : null,
+                                 ws >= 0 && ws + 1 < args.Length ? int.Parse(args[ws + 1]) : 40);
+}
+
+// --waterscan [--sd|--hd] [--filter path] lists every layer that animates its texture (TXAN or a
+// KMTF flipbook) or draws a water-named texture (DE by default).
+if (args.Contains("--waterscan"))
+{
+    int wf = Array.IndexOf(args, "--filter");
+    var art = args.Contains("--sd") ? Wc3ArtSet.Classic : args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive;
+    return MdxProbe.WaterScan.Run(install, art, wf >= 0 && wf + 1 < args.Length ? args[wf + 1] : null);
+}
+
+// --texpng <cascName> <outDir> writes every texture the model references to PNG with its mean RGBA.
+if (args.Contains("--texpng"))
+{
+    int ti = Array.IndexOf(args, "--texpng");
+    return MdxProbe.TexPng.Run(install, args[ti + 1], args[ti + 2]);
+}
+
+// --emiscensus [--hd] tallies how HD layers scale real emissive art (DE by default).
+if (args.Contains("--emiscensus")) return MdxProbe.EmisCensus.Run(install, args.Contains("--hd") ? Wc3ArtSet.Reforged : Wc3ArtSet.Definitive);
+
+// --wrapquads <outDir> [prefix] writes the clamp/wrap control quads (see WrapQuad).
+if (args.Contains("--wrapquads"))
+{
+    int wq = Array.IndexOf(args, "--wrapquads");
+    return MdxProbe.WrapQuad.Run(install, args[wq + 1], wq + 2 < args.Length && !args[wq + 2].StartsWith("--") ? args[wq + 2] : "wrapq");
+}
+
 // --tex resolves and identifies every texture a set of models references.
 if (args.Contains("--tex")) return MdxProbe.TexProbe.Run(install);
 
@@ -388,6 +426,7 @@ if (args.Contains("--scalescan"))
 
 // --wpfblend renders the viewer's unshaded material offscreen: does its matte follow opacity and alpha?
 if (args.Contains("--wpfblend")) return MdxProbe.WpfBlendProbe.Run();
+if (args.Contains("--wpfemissive")) return MdxProbe.WpfBlendProbe.Emissive();
 
 // --geoascan [n] [looseDir...] censuses the static alpha a GEOA keeps beside its track, and the
 // sequences where that fallback decides whether a geoset is visible.

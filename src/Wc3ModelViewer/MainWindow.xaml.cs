@@ -52,6 +52,15 @@ public partial class MainWindow : Window
         public required MdxGeoset Geoset { get; init; }
         public required MeshGeometry3D Mesh { get; init; }
         public required Brush Brush { get; init; }
+
+        /// <summary>
+        /// A Reforged emissive map added over the lit surface, when the material has one: its own
+        /// brush (so the GEOA fade reaches it) and material (so a KMTE track can change its gain).
+        /// </summary>
+        public ImageBrush? EmissiveBrush { get; init; }
+        public EmissiveMaterial? Emissive { get; init; }
+        public MdxLayer? EmissiveLayer { get; init; }
+
         public required Vector3[] SkinPositions { get; init; }
         public Vector3[]? SkinNormals { get; init; }
 
@@ -100,10 +109,19 @@ public partial class MainWindow : Window
         Filter.Text = args[at + 1];
         if (args.Contains("--hd")) ArtSetCombo.SelectedIndex = 2;
         if (args.Contains("--de")) ArtSetCombo.SelectedIndex = 1;
+        if (args.Contains("--sd")) ArtSetCombo.SelectedIndex = 3;
         ApplyFilter();
         if (AssetList.Items.Count == 0) { Status.Text = $"--open: nothing matches '{args[at + 1]}'"; return; }
         var item = (AssetItem)AssetList.Items[0]!;
         await LoadModelAsync(item.Entry);
+        // --hide 1,4: untick geosets by index and reframe, so a big ground quad or glow plane stops
+        // shrinking the part a screenshot is meant to show.
+        if (Array.IndexOf(args, "--hide") is int hi && hi >= 0 && hi + 1 < args.Length)
+        {
+            var hide = args[hi + 1].Split(',').Select(s => int.TryParse(s, out int n) ? n : -1).ToHashSet();
+            SetAllGeosets(g => g.IsVisible && !hide.Contains(g.Geoset.Index));
+            RebuildScene(zoom: true);
+        }
         if (args.Contains("--play") && AnimCombo.Items.Count > 1)
         {
             AnimCombo.SelectedIndex = 1;                 // 0 is the rest pose
@@ -783,14 +801,46 @@ public partial class MainWindow : Window
             if (composite.Blend == CompositeBlend.AlphaTest && !IsRealCutout(geo, composite))
                 composite = composite.WithBlend(CompositeBlend.Opaque);
 
+            // A texture without its TEXS wrap bits clamps to its edge in Warcraft III, and an
+            // ImageBrush can only repeat, so where this geoset's UVs leave the texture on such an
+            // axis the image is padded with its edge texels and the UVs moved into it. Tiling
+            // instead drew the neighbouring copies: rings of extra glow round a spell card, the
+            // far side of the atlas along a gore strip. Padding comes after the cutout test,
+            // which reads the geoset's own UVs against the unpadded image.
+            var (wrapU, wrapV) = MaterialCompositor.WrapOf(_model, _model.Materials[geo.MaterialId]);
+            var uvClamp = UvClamp.For(geo.Uvs, wrapU, wrapV, composite.Texture.Width, composite.Texture.Height);
+            var unpadded = composite.Texture;
+            if (uvClamp is not null) composite = composite.WithTexture(uvClamp.Apply(composite.Texture));
+
             var brush = MakeBrush(composite);
             var (front, back) = MakeMaterial(composite, brush);
+
+            // Reforged adds its emissive map after lighting. Inside a MaterialGroup WPF does the same
+            // — an EmissiveMaterial over a lit diffuse ADDS, scaled by the brush alpha (grey 128 plus
+            // red 100 reads 227; MdxProbe --wpfemissive) — so the map is drawn as it is, with the
+            // surface's coverage in its alpha. Without it every surface Blizzard lit this way drew
+            // black: the Definitive fountains' pools are black diffuse under a mana-blue emissive.
+            var emissive = MaterialCompositor.EmissiveOf(_model, _model.Materials[geo.MaterialId], _textures,
+                _entry.CascName, composite.Blend == CompositeBlend.Opaque ? null : unpadded);
+            ImageBrush? emissiveBrush = null;
+            EmissiveMaterial? emissiveMaterial = null;
+            if (emissive is var (emissiveImage, _))
+            {
+                if (uvClamp is not null) emissiveImage = uvClamp.Apply(emissiveImage);
+                emissiveBrush = TileBrush(emissiveImage.Width, emissiveImage.Height,
+                    composite.Blend == CompositeBlend.AlphaTest ? SnapCutout(emissiveImage.Pixels) : emissiveImage.Pixels);
+                emissiveMaterial = new EmissiveMaterial(emissiveBrush) { Color = GainColor(emissive.Value.Layer.EmissiveMultiplier) };
+                var lit = new MaterialGroup { Children = { front, emissiveMaterial } };
+                front = lit;
+                if (back is not null) back = lit;
+            }
 
             var mesh = new MeshGeometry3D
             {
                 Positions = ToPoints(geo.Positions),
                 TriangleIndices = new Int32Collection(geo.Indices),
-                TextureCoordinates = new PointCollection(geo.Uvs.Select(uv => new System.Windows.Point(uv.X, uv.Y))),
+                TextureCoordinates = new PointCollection(geo.Uvs.Select(uv => uvClamp?.Map(uv) ?? uv)
+                                                                .Select(uv => new System.Windows.Point(uv.X, uv.Y))),
             };
             if (geo.Normals.Length == geo.VertexCount)
                 mesh.Normals = new Vector3DCollection(geo.Normals.Select(n => new Vector3D(n.X, n.Y, n.Z)));
@@ -809,10 +859,12 @@ public partial class MainWindow : Window
             _sceneMeshes.Add(new SceneMesh
             {
                 Geoset = geo, Mesh = mesh, Brush = brush,
+                EmissiveBrush = emissiveBrush, Emissive = emissiveMaterial,
+                EmissiveLayer = emissive?.Layer,
                 SkinPositions = new Vector3[geo.VertexCount],
                 SkinNormals = geo.VertexCount <= 25_000 ? new Vector3[geo.VertexCount] : null,
                 Flipbook = flipbook,
-                Frames = flipbook is null ? null : DecodeFlipbook(flipbook),
+                Frames = flipbook is null ? null : DecodeFlipbook(flipbook, uvClamp),
             });
         }
         foreach (var gm in cutoutModels) group.Children.Add(gm);   // cutouts after all opaque
@@ -899,7 +951,8 @@ public partial class MainWindow : Window
     /// single blended texture with no PBR set, so the frames are loaded straight from the cache
     /// rather than through the material compositor — there is nothing to composite.
     /// </summary>
-    private Dictionary<int, BitmapSource> DecodeFlipbook(MdxLayer layer)
+    /// <param name="uvClamp">The padding the mesh's UVs were mapped for, which every frame then needs too.</param>
+    private Dictionary<int, BitmapSource> DecodeFlipbook(MdxLayer layer, UvClamp? uvClamp)
     {
         var frames = new Dictionary<int, BitmapSource>();
         if (_model is null || _textures is null || _entry is null) return frames;
@@ -909,6 +962,7 @@ public partial class MainWindow : Window
             if ((uint)id >= (uint)_model.Textures.Count) continue;
             var img = _textures.Load(_entry.CascName, _model.Textures[id], ViewerTeamColor);
             if (img is null) continue;
+            if (uvClamp is not null) img = uvClamp.Apply(img);
             var bmp = BitmapSource.Create(img.Width, img.Height, 96, 96, PixelFormats.Bgra32,
                                           null, img.Pixels, img.Width * 4);
             bmp.Freeze();
@@ -953,13 +1007,7 @@ public partial class MainWindow : Window
         var img = composite.Texture;
         var pixels = img.Pixels;
 
-        // No alpha test in WPF: snap cutout alpha to hard 0/255 at the engine's threshold.
-        if (composite.Blend == CompositeBlend.AlphaTest)
-        {
-            pixels = (byte[])pixels.Clone();
-            for (int i = 3; i < pixels.Length; i += 4)
-                pixels[i] = pixels[i] >= MaterialCompositor.CutoutThreshold * 255 ? (byte)255 : (byte)0;
-        }
+        if (composite.Blend == CompositeBlend.AlphaTest) pixels = SnapCutout(pixels);
 
         // No additive blend either. What defines an additive layer is that black adds nothing, so
         // carry brightness in the alpha channel: the brightest texels stay solid and glow, and the
@@ -972,17 +1020,41 @@ public partial class MainWindow : Window
                 pixels[i + 3] = Math.Max(pixels[i], Math.Max(pixels[i + 1], pixels[i + 2]));
         }
 
-        var bmp = BitmapSource.Create(img.Width, img.Height, 96, 96, PixelFormats.Bgra32, null, pixels, img.Width * 4);
+        return TileBrush(img.Width, img.Height, pixels);
+    }
+
+    /// <summary>No alpha test in WPF: a copy with alpha snapped to hard 0/255 at the engine's threshold.</summary>
+    private static byte[] SnapCutout(byte[] pixels)
+    {
+        var snapped = (byte[])pixels.Clone();
+        for (int i = 3; i < snapped.Length; i += 4)
+            snapped[i] = snapped[i] >= MaterialCompositor.CutoutThreshold * 255 ? (byte)255 : (byte)0;
+        return snapped;
+    }
+
+    private static ImageBrush TileBrush(int width, int height, byte[] pixels)
+    {
+        var bmp = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
         bmp.Freeze();
         // Absolute viewport + Tile = true GL_REPEAT semantics for out-of-range UVs (same as D3 viewer).
-        var brush = new ImageBrush(bmp)
+        return new ImageBrush(bmp)
         {
             TileMode = TileMode.Tile,
             Stretch = Stretch.Fill,
             ViewportUnits = BrushMappingMode.Absolute,
             Viewport = new Rect(0, 0, 1, 1),
         };
-        return brush;
+    }
+
+    /// <summary>
+    /// An emissive gain as the colour WPF multiplies the emissive brush by. Linear, and capped at
+    /// white: WPF cannot add more than the texel, so the few layers above 1 (9 at 2, 7 at 3 across
+    /// the DE set) glow no brighter than those at 1.
+    /// </summary>
+    private static Color GainColor(float gain)
+    {
+        byte v = (byte)Math.Clamp(gain * 255f + 0.5f, 0, 255);
+        return Color.FromRgb(v, v, v);
     }
 
     private static (Material Front, Material? Back) MakeMaterial(CompositeMaterial composite, Brush brush)
@@ -1173,7 +1245,11 @@ public partial class MainWindow : Window
         {
             float alpha = _animator.GeosetAlpha(sm.Geoset.Index, _sequence, t, _wallMs);
             sm.Brush.Opacity = alpha < 0.01f ? 0 : alpha;
+            if (sm.EmissiveBrush is not null) sm.EmissiveBrush.Opacity = sm.Brush.Opacity;
             if (alpha < 0.01f) continue;                  // invisible: skip the skinning cost too
+
+            if (sm is { Emissive: { } emis, EmissiveLayer: { EmissiveTrack: { } kmte } emisLayer })
+                emis.Color = GainColor(_animator.SampleFloat(kmte, _sequence, t, emisLayer.EmissiveMultiplier, _wallMs));
 
             // Advance a texture flipbook. Its keys run on their own timeline from 0, not the
             // sequence's, so the whole animation loops independently of which sequence is playing —

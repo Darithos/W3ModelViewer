@@ -39,6 +39,38 @@ public static class WpfBlendProbe
         return 0;
     }
 
+    /// <summary>
+    /// How a lit diffuse plus an <see cref="EmissiveMaterial"/> in one group combine: added, or the
+    /// emissive painted over. Decides whether an HD emissive map can be drawn as-is.
+    /// </summary>
+    public static int Emissive()
+    {
+        var thread = new Thread(() =>
+        {
+            foreach (var (b, g, r, a) in new (byte, byte, byte, byte)[] { (0, 0, 0, 255), (0, 0, 100, 255), (0, 0, 100, 128), (0, 0, 100, 0) })
+            {
+                var diffuse = Solid(128, 128, 128, 255);
+                var emis = Solid(b, g, r, a);
+                var m = new MaterialGroup { Children = { new DiffuseMaterial(diffuse), new EmissiveMaterial(emis) } };
+                var alone = Render(new DiffuseMaterial(Solid(128, 128, 128, 255)));
+                var px = Render(m);
+                Console.WriteLine($"diffuse alone R{alone.R} G{alone.G} B{alone.B}; + emissive RGBA({r},{g},{b},{a}) -> R{px.R,3} G{px.G,3} B{px.B,3}");
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        return 0;
+    }
+
+    private static ImageBrush Solid(byte b, byte g, byte r, byte a)
+    {
+        var pixels = new byte[16];
+        for (int i = 0; i < 16; i += 4) { pixels[i] = b; pixels[i + 1] = g; pixels[i + 2] = r; pixels[i + 3] = a; }
+        var bmp = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null, pixels, 8);
+        return new ImageBrush(bmp) { ViewportUnits = BrushMappingMode.Absolute, Viewport = new Rect(0, 0, 1, 1) };
+    }
+
     /// <summary>A 2x2 cyan texture — the colour of the missile's tint.</summary>
     private static ImageBrush MakeBrush(byte alpha)
     {
