@@ -1246,6 +1246,9 @@ if (args.Contains("--export1"))
         TrailWidthScale = Array.IndexOf(args, "--trailwidth") is int tws && tws >= 0 && tws + 1 < args.Length
             ? float.Parse(args[tws + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
         Scale = Array.IndexOf(args, "--scale") is int si && si >= 0 ? float.Parse(args[si + 1], System.Globalization.CultureInfo.InvariantCulture) : 1f,
+        // --envlatlong <dds>: A/B only — reflect a 2D lat-long picture instead of Warcraft III's IBL.
+        Reflection = Array.IndexOf(args, "--envlatlong") is int el && el >= 0 && el + 1 < args.Length
+            ? Wc3ModelViewer.Core.Convert.ReflectionCube.FromPanorama(File.ReadAllBytes(args[el + 1])) : null,
         // --static exports no sequence at all, as the dialog does with every one unticked.
         Sequences = args.Contains("--static") ? [] : null,
         // --full keeps every baked key and the source texture size, as exports did before v1.6.

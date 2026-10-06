@@ -381,9 +381,14 @@ public static class MaterialCompositor
     /// per-layer <c>teamColorMultiplier</c> is 0 on every shipping HD layer, and the diffuse alpha
     /// is coverage, so neither of those is the signal.</item>
     /// </list>
-    /// The 11 ORM textures (of 837) whose alpha is uniformly opaque are unauthored placeholders —
-    /// hair, dragon wings, ship sails, whose RGB is a degenerate constant too. Taking them at face
-    /// value would team-colour a whole head of hair, so a mask with no dark texels is rejected.
+    /// Reforged's HD pixel shader (<c>shaders\ps\hd.bls</c>, disassembled) reads that alpha
+    /// straight into its colour mix with no gate: hue = lerp(diffuse, team, sqrt(a)), brightness =
+    /// lerp(max(diffuse), min(max(diffuse), max(team)), 0.95 a^2). So an ORM whose alpha is 255
+    /// everywhere — the footman's helmet plume (<c>Human_Footman_Hair_ORM</c>), ship sails, dragon
+    /// wings, 11 of 837 — is a surface that is <i>entirely</i> the player's, and the game draws it
+    /// so. These used to be rejected as unauthored because their RGB is a flat constant too; that
+    /// left the plume white in every player colour, here and in StarCraft II. Only an alpha that is
+    /// 0 throughout (330 of 837) means "no player colour".
     /// </remarks>
     public static TeamMask? TeamMaskOf(MdxModel model, MdxMaterial material,
                                        Wc3TextureCache textures, string modelCascName)
@@ -409,29 +414,134 @@ public static class MaterialCompositor
             if (glow is not null) return FromBrightness(glow);
         }
 
-        // Classic: the mask lives in the diffuse that is drawn over the team layer.
+        // Classic: a replaceable-1 fill somewhere in the stack. The mask is read off the stack
+        // itself, whichever way the author built it — see StackMask.
         bool hasTeamLayer = material.Layers.Any(l => (uint)l.DiffuseTextureId < (uint)model.Textures.Count
                                                   && model.Textures[l.DiffuseTextureId].IsTeamColor);
+        if (hasTeamLayer) return StackMask(model, material, textures, modelCascName);
+
+        // A single classic layer that names a team-colour slot: its diffuse alpha is the mask.
         foreach (var layer in material.Layers)
         {
             int texId = layer.DiffuseTextureId;
             if ((uint)texId >= (uint)model.Textures.Count) continue;
             var tex = model.Textures[texId];
             if (tex.IsTeamColor || tex.IsTeamGlow || tex.FileName.Length == 0) continue;
-            if (!hasTeamLayer && layer.Slot(MdxTextureSlot.TeamColor) < 0) continue;
+            if (layer.Slot(MdxTextureSlot.TeamColor) < 0) continue;
             var img = textures.Load(modelCascName, tex);
             if (img is null) continue;
             return FromAlpha(img, invert: true);
         }
-
-        // A replaceable-1 layer with nothing drawn over it — no diffuse in the material at all, or
-        // none this install can resolve — is a surface that is *entirely* the player's colour: a
-        // banner, a flag panel, a floor decal. There is no per-texel mask to recover because every
-        // texel is masked. Returning null here instead would be the worst of both worlds, since
-        // Compose has already replaced that flat fill with black, so the surface would export as a
-        // solid black panel rather than the player's colour.
-        if (hasTeamLayer) return Solid(255);
         return null;
+    }
+
+    /// <summary>
+    /// A classic stack's mask, read off the stack: the material composited with the player's fill
+    /// at full white, minus the same stack composited over black, per texel, in the diffuse's grid.
+    /// </summary>
+    /// <remarks>
+    /// This answers the one question StarCraft II needs — how much of the player's colour reaches
+    /// this texel — without assuming where in the stack the fill sits or how it is blended, which
+    /// the old reading (<c>1 - alpha</c> of the first diffuse) did assume:
+    /// <list type="bullet">
+    /// <item>The stock stack, fill underneath and the diffuse over it with <c>Blend</c>, comes out
+    /// as <c>1 - diffuse.a</c>, exactly as before.</item>
+    /// <item>A fill drawn <b>on top</b> with <c>Modulate</c> — DarkHordeGruntV2's pauldrons, an
+    /// opaque plate texture multiplied by the player's colour — comes out as the plate's
+    /// brightness. The exporter's diffuse for that material is black (the stack over a black fill),
+    /// and StarCraft II adds <c>colour x brightness</c> on top, which is what Warcraft III drew. The
+    /// old reading took <c>1 - a</c> of the opaque plate, found nothing, and the pauldrons reached
+    /// StarCraft II black in every player colour while the viewer showed them red.</item>
+    /// <item>A fill on top with <c>Blend</c> or <c>Transparent</c> covers the surface completely
+    /// (its texture is opaque), and so does a fill with nothing drawn over it — a banner, a flag
+    /// panel, a decal: 255 throughout. Null there would be the worst of both worlds, since the
+    /// composite has already replaced the fill with black.</item>
+    /// <item>A fill added with <c>Additive</c> reaches every texel at full strength; the sum is kept
+    /// unclamped so that reads as 255 rather than as what the diffuse left below white.</item>
+    /// </list>
+    /// </remarks>
+    private static TeamMask? StackMask(MdxModel model, MdxMaterial material,
+                                       Wc3TextureCache textures, string modelCascName)
+    {
+        var layers = new List<(MdxFilterMode Mode, RgbaImage? Image)>();     // null image = the fill
+        foreach (var layer in material.Layers)
+        {
+            int texId = layer.DiffuseTextureId;
+            if ((uint)texId >= (uint)model.Textures.Count) continue;
+            var tex = model.Textures[texId];
+            if (tex.IsTeamColor) { layers.Add((layer.FilterMode, null)); continue; }
+            var img = tex.IsTeamGlow ? null : textures.Load(modelCascName, tex);
+            if (img is not null) layers.Add((layer.FilterMode, img));
+        }
+        if (layers.All(l => l.Image is not null)) return null;
+
+        int w = Math.Max(4, layers.Max(l => l.Image?.Width ?? 0));
+        int h = Math.Max(4, layers.Max(l => l.Image?.Height ?? 0));
+        var white = Stack(layers, w, h, 1f);
+        var black = Stack(layers, w, h, 0f);
+        var values = new byte[w * h];
+        int any = 0;
+        for (int i = 0; i < values.Length; i++)
+        {
+            float d = Math.Max(white[i * 3] - black[i * 3],
+                      Math.Max(white[i * 3 + 1] - black[i * 3 + 1], white[i * 3 + 2] - black[i * 3 + 2]));
+            byte v = (byte)Math.Clamp(d * 255f + 0.5f, 0, 255);
+            values[i] = v;
+            if (v > 8) any++;
+        }
+        return any == 0 ? null : new TeamMask { Width = w, Height = h, Values = values };
+    }
+
+    /// <summary>
+    /// <see cref="BlendOnto"/> in floats, with the fill at <paramref name="fill"/> (alpha 1) and
+    /// no clamp on Additive, so that <see cref="StackMask"/> can subtract two of these.
+    /// </summary>
+    private static float[] Stack(List<(MdxFilterMode Mode, RgbaImage? Image)> layers, int w, int h, float fill)
+    {
+        var canvas = new float[w * h * 3];
+        bool first = true;
+        foreach (var (mode, image) in layers)
+        {
+            var src = image is null ? null : image.Width == w && image.Height == h ? image : Resize(image, w, h);
+            for (int i = 0; i < w * h; i++)
+            {
+                float r, g, b, a;
+                if (src is null) { r = g = b = fill; a = 1f; }
+                else
+                {
+                    int o = i * 4;
+                    b = src.Pixels[o] / 255f; g = src.Pixels[o + 1] / 255f; r = src.Pixels[o + 2] / 255f;
+                    a = src.Pixels[o + 3] / 255f;
+                }
+                int c = i * 3;
+                if (first) { canvas[c] = b; canvas[c + 1] = g; canvas[c + 2] = r; continue; }
+                switch (mode)
+                {
+                    case MdxFilterMode.Transparent:
+                        if (a >= CutoutThreshold) { canvas[c] = b; canvas[c + 1] = g; canvas[c + 2] = r; }
+                        break;
+                    case MdxFilterMode.Blend or MdxFilterMode.AddAlpha:
+                        canvas[c] += (b - canvas[c]) * a;
+                        canvas[c + 1] += (g - canvas[c + 1]) * a;
+                        canvas[c + 2] += (r - canvas[c + 2]) * a;
+                        break;
+                    case MdxFilterMode.Additive:
+                        canvas[c] += b; canvas[c + 1] += g; canvas[c + 2] += r;
+                        break;
+                    case MdxFilterMode.Modulate or MdxFilterMode.Modulate2x:
+                    {
+                        float k = mode == MdxFilterMode.Modulate2x ? 2f : 1f;
+                        canvas[c] *= b * k; canvas[c + 1] *= g * k; canvas[c + 2] *= r * k;
+                        break;
+                    }
+                    default:
+                        canvas[c] = b; canvas[c + 1] = g; canvas[c + 2] = r;
+                        break;
+                }
+            }
+            first = false;
+        }
+        return canvas;
     }
 
     /// <summary>
@@ -529,27 +639,20 @@ public static class MaterialCompositor
     /// over a replaceable-1 fill; false for the <b>Reforged</b> one, where it is the ORM's alpha.
     /// </param>
     /// <remarks>
-    /// The two readings need <i>different</i> acceptance rules, and conflating them cost the
-    /// classic path real art.
+    /// One acceptance rule for both: the mask is usable when any texel carries player colour at
+    /// all, and <c>TeamMask.Coverage</c> throws out the ones too small to be worth a texture. Both
+    /// engines apply the channel <i>continuously</i> — Warcraft III's HD shader mixes the team hue
+    /// in by <c>sqrt(a)</c> with no gate, and the classic path blends <c>team x (1 - a)</c> — so a
+    /// soft, midtone or even uniform mask is ordinary art, not a defect.
     /// <para>
-    /// <b>Reforged</b> has to prove itself: every HD layer owns an ORM whether or not anything on
-    /// it is player-coloured, so the alpha channel alone does not say the author meant a mask. The
-    /// 11 placeholder ORMs (of 837) whose alpha is uniformly opaque would team-colour a whole head
-    /// of hair. Demanding both dark and bright texels — a bimodal, painted-on selection — is what
-    /// separates an authored mask from an unauthored channel.
-    /// </para>
-    /// <para>
-    /// <b>Classic</b> has already proved itself before this is ever called: the material stacks an
-    /// explicit <c>replaceable 1</c> layer under the diffuse, which is the author stating outright
-    /// that the player's colour shows through. And Warcraft III blends it <i>continuously</i> —
-    /// <c>team x (1 - a)</c> — so a soft, midtone mask is perfectly ordinary art, not a defect.
-    /// Applying the bimodal rule here rejected any mask whose team region never reaches alpha 63:
-    /// 23 of 705 classic team materials across 580 stock unit and building models, among them
-    /// <c>altarofkings</c>, both Pandaren Brewmasters and the sea turtles — and, because
-    /// <see cref="Compose"/> has by then already subtracted the player's contribution to black,
-    /// those surfaces exported <b>black</b> rather than merely uncoloured. All the classic reading
-    /// has to establish is that some texel is masked at all; <c>TeamMask.Coverage</c> throws out
-    /// the ones too small to be worth a texture.
+    /// Two stricter rules were tried here and each cost real art. Demanding both dark and bright
+    /// texels (a "painted-on" selection) threw out the Reforged ORMs whose alpha is 255 throughout —
+    /// the footman's helmet plume, ship sails — which the game draws entirely in the player's
+    /// colour. Applied to the classic reading it rejected any mask whose team region never reaches
+    /// alpha 63: 23 of 705 classic team materials across 580 stock models, <c>altarofkings</c> and
+    /// both Pandaren Brewmasters among them, and because <see cref="Compose"/> has by then already
+    /// subtracted the player's contribution to black, those surfaces exported <b>black</b> rather
+    /// than merely uncoloured. Any future "mask rejected" path must ask what the composite did.
     /// </para>
     /// </remarks>
     private static TeamMask? FromAlpha(RgbaImage img, bool invert)
@@ -564,22 +667,15 @@ public static class MaterialCompositor
         int n = img.Pixels.Length / 4;
         if (n == 0) return null;
         var values = new byte[n];
-        int lo = 0, hi = 0, any = 0;
+        int any = 0;
         for (int i = 0; i < n; i++)
         {
             byte a = img.Pixels[i * 4 + 3];
             byte v = invert ? (byte)(255 - a) : a;
             values[i] = v;
-            if (v < 64) lo++; else if (v > 192) hi++;
             if (v > 8) any++;
         }
-        // Long arithmetic on purpose: Definitive Edition ships 2048-square ORMs, and 3.9 million
-        // dark texels times 1000 overflows an int to negative, which silently rejected every DE
-        // mask (Uther's tabard stayed white in all eight player colours).
-        bool usable = invert
-            ? any > 0
-            : (long)hi * 1000 >= n && (long)lo * 1000 >= n;
-        if (!usable) return null;
+        if (any == 0) return null;
         return slot[k] = new TeamMask { Width = img.Width, Height = img.Height, Values = values };
     }
 

@@ -357,15 +357,18 @@ public static class TeamProbe
                 var origin = cache.OriginOf(name, tex);
                 Console.WriteLine($"   ORM '{tex.FileName}' -> {(img is null ? "NULL" : $"{img.Width}x{img.Height}")} from {origin?.Source} {origin?.From}");
                 if (img is null) continue;
-                int n = img.Pixels.Length / 4, lo = 0, hi = 0;
+                int n = img.Pixels.Length / 4, lo = 0, hi = 0, any = 0;
                 for (int i = 3; i < img.Pixels.Length; i += 4)
+                {
                     if (img.Pixels[i] < 64) lo++; else if (img.Pixels[i] > 192) hi++;
-                Console.WriteLine($"   n={n} lo={lo} ({lo * 100.0 / n:0.00}%) hi={hi} ({hi * 100.0 / n:0.00}%) -> FromAlpha {(hi * 1000 < n || lo * 1000 < n ? "REJECTS" : "accepts")}");
+                    if (img.Pixels[i] > 8) any++;
+                }
+                Console.WriteLine($"   n={n} lo={lo} ({lo * 100.0 / n:0.00}%) hi={hi} ({hi * 100.0 / n:0.00}%) any={any} -> FromAlpha {(any == 0 ? "REJECTS (alpha-empty)" : "accepts")}");
             }
 
-            // Classic: the mask is 1 - the alpha of the diffuse drawn over a replaceable-1 fill.
-            // Same accept/reject test, run on the inverted channel, plus where the mask's weight
-            // actually sits — a custom model can carry its team region at half alpha rather than 0.
+            // Classic: TeamMaskOf reads the mask off the whole stack (fill under a Blend diffuse,
+            // fill modulated on top, fill alone...). The per-diffuse histogram below is only the
+            // old 1 - alpha reading, shown for orientation; the verdict that counts is TeamMaskOf's.
             bool teamLayer = mat.Layers.Any(l => (uint)l.DiffuseTextureId < (uint)model.Textures.Count
                                               && model.Textures[l.DiffuseTextureId].IsTeamColor);
             bool glowLayer = mat.Layers.Any(l => (uint)l.DiffuseTextureId < (uint)model.Textures.Count
@@ -388,9 +391,8 @@ public static class TeamProbe
                     if (v < 64) dlo++; else if (v > 192) dhi++;
                 }
                 Console.WriteLine($"   diffuse '{Path.GetFileName(dtex.FileName)}' {dimg.Width}x{dimg.Height} filter={layer.FilterMode}");
-                Console.WriteLine("     mask(1-a) " + string.Join(" ", buckets.Select((c, i) => $"{i * 32}+:{c * 100.0 / dn:0.0}%")));
-                Console.WriteLine($"     lo={dlo * 100.0 / dn:0.00}% hi={dhi * 100.0 / dn:0.00}% -> FromAlpha "
-                                  + ((long)dhi * 1000 < dn || (long)dlo * 1000 < dn ? "REJECTS" : "accepts"));
+                Console.WriteLine("     1-a histogram " + string.Join(" ", buckets.Select((c, i) => $"{i * 32}+:{c * 100.0 / dn:0.0}%"))
+                                  + $"  (lo={dlo * 100.0 / dn:0.00}% hi={dhi * 100.0 / dn:0.00}%)");
             }
             var mask = MaterialCompositor.TeamMaskOf(model, mat, cache, name);
             Console.WriteLine($"   TeamMaskOf => {(mask is null ? "null" : $"{mask.Width}x{mask.Height} coverage {mask.Coverage * 100:0.0}%")}");
