@@ -77,6 +77,16 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // --offscreen: for scripted --screenshot runs, keep the window off every monitor and never
+        // take the foreground, so a check can run while someone is typing in another program.
+        // RenderTargetBitmap draws the visual tree wherever the window is.
+        if (Environment.GetCommandLineArgs().Contains("--offscreen"))
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = -6000; Top = -6000;
+            ShowActivated = false;
+            ShowInTaskbar = false;
+        }
         DetectInstallPath();
         CompositionTarget.Rendering += OnFrameTick;
 
@@ -106,6 +116,12 @@ public partial class MainWindow : Window
         var args = Environment.GetCommandLineArgs();
         int at = Array.IndexOf(args, "--open");
         if (at < 0 || at + 1 >= args.Length || _index is null) return;
+        // --customdir <folder>: browse that folder's loose models instead of the install.
+        if (Array.IndexOf(args, "--customdir") is int cd && cd >= 0 && cd + 1 < args.Length && Directory.Exists(args[cd + 1]))
+        {
+            _customDir = args[cd + 1];
+            ArtSetCombo.SelectedIndex = CustomSet;          // scans the folder and refilters
+        }
         Filter.Text = args[at + 1];
         if (args.Contains("--hd")) ArtSetCombo.SelectedIndex = 2;
         if (args.Contains("--de")) ArtSetCombo.SelectedIndex = 1;
@@ -113,7 +129,8 @@ public partial class MainWindow : Window
         ApplyFilter();
         if (AssetList.Items.Count == 0) { Status.Text = $"--open: nothing matches '{args[at + 1]}'"; return; }
         var item = (AssetItem)AssetList.Items[0]!;
-        await LoadModelAsync(item.Entry);
+        if (item.FilePath is not null) await LoadLooseAsync(item.FilePath, fromBrowser: true);
+        else await LoadModelAsync(item.Entry);
         // --hide 1,4: untick geosets by index and reframe, so a big ground quad or glow plane stops
         // shrinking the part a screenshot is meant to show.
         if (Array.IndexOf(args, "--hide") is int hi && hi >= 0 && hi + 1 < args.Length)

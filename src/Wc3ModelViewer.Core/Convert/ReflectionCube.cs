@@ -124,6 +124,87 @@ public static class ReflectionCube
         return DdsWriter.WriteCube(chains);
     }
 
+    /// <summary>
+    /// A cube from a 2D lat-long panorama, for an A/B only: the picture turned so its sun sits at
+    /// <see cref="AgriaSun"/>'s azimuth (its elevation kept), mip k blurred over a cone that widens
+    /// with k the way the Warcraft IBL's roughness levels do. Not used by any export the app makes:
+    /// Warcraft III's HD shader never samples a 2D environment map (of its 1,024 permutations none
+    /// declares the model's EnvironmentMap slot, t5), so <c>replaceabletextures\environmentmap.dds</c>
+    /// is dead data the game ships. This exists to show what a conversion that uses it would draw.
+    /// </summary>
+    public static ReflectionMap FromPanorama(byte[] panoDds, int faceSize = 256)
+    {
+        var pano = DdsReader.Decode(panoDds);
+        int pw = pano.Width, ph = pano.Height;
+        // The sun: the brightest texel of the upper half.
+        int best = -1, bestSum = -1;
+        for (int y = 0; y < ph / 2; y++)
+            for (int x = 0; x < pw; x++)
+            {
+                int o = (y * pw + x) * 4, sum = pano.Pixels[o] + pano.Pixels[o + 1] + pano.Pixels[o + 2];
+                if (sum > bestSum) { bestSum = sum; best = y * pw + x; }
+            }
+        float sunU = (best % pw + 0.5f) / pw;
+        float lonSun = MathF.Atan2(AgriaSun.Y, AgriaSun.X);
+
+        Vector3 Fetch(float u, float v)
+        {
+            u -= MathF.Floor(u);
+            float fx = u * pw - 0.5f, fy = Math.Clamp(v * ph - 0.5f, 0, ph - 1);
+            int x0 = (int)MathF.Floor(fx), y0 = (int)fy;
+            float tx = fx - x0, ty = fy - y0;
+            int x1 = (x0 + 1 + pw) % pw; x0 = (x0 + pw) % pw;
+            int y1 = Math.Min(y0 + 1, ph - 1);
+            Vector3 P(int px, int py) { int o = (py * pw + px) * 4; return new Vector3(pano.Pixels[o + 2], pano.Pixels[o + 1], pano.Pixels[o]) / 255f; }
+            return Vector3.Lerp(Vector3.Lerp(P(x0, y0), P(x1, y0), tx), Vector3.Lerp(P(x0, y1), P(x1, y1), tx), ty);
+        }
+        Vector3 Look(Vector3 d)
+        {
+            d = Vector3.Normalize(d);
+            float lon = MathF.Atan2(d.Y, d.X);
+            float u = sunU + (lon - lonSun) / (2 * MathF.PI);
+            float v = 0.5f - MathF.Asin(Math.Clamp(d.Z, -1f, 1f)) / MathF.PI;
+            return Fetch(u, v);
+        }
+
+        int levels = 1 + (int)Math.Log2(faceSize);
+        var chains = new List<IReadOnlyList<RgbaImage>>();
+        for (int face = 0; face < 6; face++)
+        {
+            var chain = new List<RgbaImage>();
+            for (int k = 0; k < levels; k++)
+            {
+                int size = Math.Max(1, faceSize >> k);
+                float r = Math.Min(1f, (k + 1) / 9f);                       // the IBL chain's roughness at mip k
+                float tanCone = MathF.Tan((k == 0 ? 0.3f : 45f * r * r) * MathF.PI / 180f);
+                int n = k == 0 ? 2 : 12;
+                var px = new byte[size * size * 4];
+                for (int ty = 0; ty < size; ty++)
+                    for (int tx = 0; tx < size; tx++)
+                    {
+                        var d = Direction(face, 2f * (tx + 0.5f) / size - 1, 2f * (ty + 0.5f) / size - 1);
+                        var t1 = Vector3.Cross(d, MathF.Abs(d.Z) < 0.9f ? Vector3.UnitZ : Vector3.UnitX);
+                        t1 = Vector3.Normalize(t1);
+                        var t2 = Vector3.Cross(d, t1);
+                        var acc = Vector3.Zero; int cnt = 0;
+                        for (int i = 0; i < n; i++)
+                            for (int j = 0; j < n; j++)
+                            {
+                                float a = (2f * (i + 0.5f) / n - 1), b = (2f * (j + 0.5f) / n - 1);
+                                if (a * a + b * b > 1f) continue;
+                                acc += Look(d + (t1 * a + t2 * b) * tanCone); cnt++;
+                            }
+                        var c = acc / Math.Max(1, cnt);
+                        int o = (ty * size + tx) * 4;
+                        px[o] = Pack(c.Z); px[o + 1] = Pack(c.Y); px[o + 2] = Pack(c.X); px[o + 3] = 255;
+                    }
+                chain.Add(new RgbaImage { Width = size, Height = size, Pixels = px });
+            }
+            chains.Add(chain);
+        }
+        return new ReflectionMap { Cube = DdsWriter.WriteCube(chains), Name = "wc3_panorama", Multiply = WarcraftMultiply };
+    }
+
     /// <summary>Z-up world to Warcraft III's Y-up IBL space, as its shader swizzles (x, z, -y).</summary>
     private static Vector3 YUp(Vector3 v) => new(v.X, v.Z, -v.Y);
 

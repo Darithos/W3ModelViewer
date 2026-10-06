@@ -134,11 +134,14 @@ Working end to end:
   so a tabard keeps its folds, its shading and its highlights (a cut-out's coverage moves to its
   own alpha texture). Classic art and PopcornFX layers land as `blend_mode_emis* = 4`, "Team Color
   Emissive Add" — the mechanism 1,204 of Blizzard's own Heroes materials use. Measured, not
-  assumed; see `docs/mdx-format-verified.md` §5. A classic mask is accepted on its own terms rather than the
-  Reforged one's: Warcraft III blends `team x (1 - a)` continuously, so a soft midtone mask is
-  ordinary art, and demanding the bimodal shape an authored ORM alpha has used to reject 23 of 705
-  classic team materials — `altarofkings`, both Pandaren Brewmasters, the sea turtles — which then
-  exported **black**, because the player's contribution had already been taken out of the diffuse.
+  assumed; see `docs/mdx-format-verified.md` §5. Both engines apply the mask continuously — Warcraft III's HD shader
+  mixes the ORM alpha into its colour with no gate, and classic art blends `team x (1 - a)` — so a
+  soft, midtone or even uniform mask is ordinary art: an ORM whose alpha is 255 throughout is a
+  surface drawn entirely in the player's colour (the footman's helmet plume), and a classic layer
+  stack is read as what it draws, whichever way its author built it — the stock fill under a blended
+  diffuse, a fill multiplied on top of an opaque plate, a fill alone. Rejecting any of these exports
+  the surface **black**, because the player's contribution has already been taken out of the
+  diffuse; two stricter rules were tried and each cost real art.
 - **Billboards** — cards that Warcraft III turns to face the camera (the priest's staff orb, most
   spell glows) face it in the viewer and in StarCraft II. They export as `BBSC` entries: a full
   billboard becomes type 6, and a vertical-axis (Lock Z) billboard becomes type 2. No re-orientation

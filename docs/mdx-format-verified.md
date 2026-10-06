@@ -197,11 +197,23 @@ Two different mechanisms, and only one of them is live in the shipping HD art:
   right, none of those is player-coloured. Across 400 HD unit models: **486 ORM textures carry such
   a mask, 330 are alpha-empty, 10 are neither.**
 
-  The remaining **11** have *uniformly opaque* alpha, which must be rejected rather than read as
-  "team-colour everything": they are unauthored placeholders — hair, dragon wings, ship sails —
-  whose RGB is a degenerate constant too (`Human_Footman_Hair_ORM` is R 0, G 255, B 255 everywhere).
-  So the rule is: a mask needs both dark and bright texels to be real.
-  `MaterialCompositor.TeamMaskOf` implements exactly this, and its classic counterpart.
+  The remaining **11** have *uniformly opaque* alpha — hair, dragon wings, ship sails, with a flat
+  constant RGB too (`Human_Footman_Hair_ORM` is R 0, G 255, B 255 everywhere). These are **real
+  masks**: the HD pixel shader (`shaders\ps\hd.bls`, disassembled) reads the ORM alpha straight into
+  its colour mix with no gate — `hue = lerp(diffuse, team, sqrt(a))`,
+  `brightness = lerp(max(diffuse), min(max(diffuse), max(team)), 0.95 a²)` — so alpha 255
+  throughout is a surface drawn entirely in the player's colour (the footman's helmet plume is one).
+  The rule is simply: any texel above 8 makes a mask; alpha 0 throughout means none. A "needs both
+  dark and bright texels" rule was tried first and left those plumes white (v1.5.0 to v1.11.0).
+  `MaterialCompositor.TeamMaskOf` implements this; its classic counterpart reads the mask off the
+  layer stack (the stack over a white fill minus the stack over a black fill), so a fill multiplied
+  on top of an opaque plate — the DarkHordeGruntV2 pauldrons — masks as the plate's brightness
+  rather than as nothing.
+
+  The sixth HD layer slot, `ReplaceableTextures\EnvironmentMap.dds` (a 2048×1024 lat-long photo of
+  a field at dusk), is **dead data**: 0 of the shader's 1,024 permutations declare that slot (t5).
+  Reflections come from the lighting set's IBL cube arrays
+  (`environment\environmentmap\<set>\*_ibl.dds`), two sets lerped by a day-night factor.
 
 The practical consequence for export: **do not** invent an HD mask from the diffuse alpha — on HD
 that channel is coverage, and using it paints player colour over cut-out holes. That was tried and
