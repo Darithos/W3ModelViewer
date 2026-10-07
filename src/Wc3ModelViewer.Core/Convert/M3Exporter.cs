@@ -2529,8 +2529,15 @@ public sealed class M3Exporter
         int totalVerts = 0, totalFaces = 0;
         var bmin = new Vector3(float.MaxValue);
         var bmax = new Vector3(float.MinValue);
+        // The 65,536 vertex limit is per region, not per file: faces are u16 relative to their region,
+        // and REGN v5's first vertex is u32. SC2 itself ships animated models of up to 200k vertices
+        // across many regions (smx1_eggroomset: 183k, 208 bones, 13 sequences). A whole-file cap here
+        // refused every Reforged Tree of Life, whose three upgrade tiers sit in one file (~108k).
+        // MDX faces are u16 as well, so a region can only exceed this if a geoset is malformed.
         foreach (var r in regions)
         {
+            if (r.VertexCount > 65536)
+                throw new InvalidOperationException($"a region of {r.VertexCount} vertices exceeds the m3 limit of 65536 per region");
             for (int k = 0; k < r.Lookup.Count; k++) r.Lookup[k] = (ushort)boneMap[r.Lookup[k]];
             r.FirstVertex = totalVerts;
             r.FirstFace = totalFaces;
@@ -2541,7 +2548,6 @@ public sealed class M3Exporter
             bmin = Vector3.Min(bmin, r.Min);
             bmax = Vector3.Max(bmax, r.Max);
         }
-        if (totalVerts > 65536) throw new InvalidOperationException($"vertex count {totalVerts} exceeds the m3 limit of 65536 — pick a higher LOD");
         float boundsRadius = (bmax - bmin).Length() / 2;
 
         var boneSkinned = new bool[_bones.Count];

@@ -457,7 +457,7 @@ Portrait models do not strictly need the turn — SC2 frames them with the camer
 
 _evidence: spike/MdxProbe --symmetry (WC3 side, reads the CASC install); the SC2 side measured against C:\games\StarCraft II\Mods\HotS.SC2Mod (Blizzard storm_* art and the AlleyV_Wc3R_* WC3 conversions)_
 
-## [likely] The hard m3 limits are 65535 vertices PER REGION (face indices are region-relative uint16) and 256 bones PER REGION (per-vertex bone lookup indices are uint8). The writer's global 65536-vertex throw matches both Blender addons but is stricter than the format; splitting is done with extra REGN + extra BAT_ inside the SINGLE existing DIV_.
+## [verified] The hard m3 limits are 65535 vertices PER REGION (face indices are region-relative uint16) and 256 bones PER REGION (per-vertex bone lookup indices are uint8). The writer's global 65536-vertex throw matches both Blender addons but is stricter than the format; splitting is done with extra REGN + extra BAT_ inside the SINGLE existing DIV_.
 
 Mechanics, verified from the importer:
   - REGN v5.first_vertex_index is uint32 (it was uint16 only in v2), so the U8__ vertex buffer can legitimately exceed 65536 vertices.
@@ -484,6 +484,7 @@ BAT_ V1 (14 bytes) full layout — the writer already matches it byte for byte, 
 
 That last field is the m3 answer to WC3 GEOA (geoset animation): a WC3 geoset whose GEOA alpha animates 0<->1 as a hard visibility switch maps to BAT_.bone = <a dedicated bone> plus an SDFG (flag) track on that bone's `batching` anim id (BONE offset 140, the 4th anim ref). Smoothly-animated GEOA alpha instead has to go onto the material (SDCC on the diffuse LAYR color_value alpha, or SDR3 on a layer's color_multiply).
 
+_evidence (2026-10-07): StarCraft II's own CASC holds 53 of 33,365 .m3 files over 65,536 vertices in total (max 200,005), 34 of them animated (smx1_eggroomset: 183k, 208 bones, 13 sequences), and no region over 65,536; HotS.SC2Mod holds 12 (max 124,865). The writer's global throw refused the Reforged Tree of Life (~108k: three upgrade tiers in one file) and is now a per-region check._
 _evidence: Region-relative faces: https://github.com/SC2Mapster/m3addon/blob/master/m3import.py lines 1364-1391 and https://github.com/Solstice245/m3studio/blob/main/io_m3_import.py lines 1061-1068; 65536 total check: https://github.com/Solstice245/m3studio/blob/main/io_m3_export.py lines 1115-1116; REGN/BAT_ structs: https://github.com/Solstice245/m3studio/blob/main/structures.xml lines 755-831; BONE.batching semantics: same file line 741 ('BAT_ instances which point to bone are toggled by this property')_
 
 ## [likely] m3 SEQS V2 has a per-sequence not_looping flag (0x1), a frequency field, and always_global/global_in_previewer flags. SC2 picks animations purely by the SEQS name string, matched as a space-separated token sequence against the actor's requested animation name.
@@ -684,7 +685,7 @@ _evidence: STC_ struct: https://github.com/Solstice245/m3studio/blob/main/struct
 11. (feature, low) Material/UV animation: SDCC on LAYR.color_value for KMTA, SD2V on uv_offset / uv_tiling and SD3V on uv_angle for TXAN. Requires extending the STC_ id/ref builder with block types 1, 4 and 11.
 12. (feature, low) Cameras: CAM_ v5 at MODL offset 276 + cameras_addon 0xFFFF at 288, with a synthesised look-at bone; merge the _Portrait.mdx sequences.
 13. (feature, low) Hit tests: WC3 CLID collision shapes -> SSGS v1 (108 B) list at MODL offset 768; also fill hittest_tight at offset 660 with a sphere covering the model instead of 108 zero bytes.
-14. (robustness) Replace the global 65536 throw with per-region splitting (see the limits finding); keep the 256-bones-per-region check.
+14. (done 2026-10-07) The global 65536 throw is now a per-region check. No splitting is needed: MDX faces are u16 too, so no geoset can yield a larger region.
 15. (skip) PAR_/RIB_ — emit Ref_Attacher attachment points and a JSON sidecar instead.
 
 _evidence: C:\Projects\D3 Model Viewer\src\D3ModelViewer.Core\Formats\M3Writer.cs (whole file, read in full); struct facts as cited in the other findings_
@@ -707,7 +708,7 @@ Viewer: `MdxAnimator.Camera` billboards Billboarded and LockZ nodes (node-local 
 ## Open questions
 
 - Does the SC2 engine / Editor previewer actually reject 16-byte-unaligned section offsets, or is m3studio's `len % 16` padding harmless in practice? Test: export one model both ways and open both in the SC2 Editor Previewer. No source I found settles this; every Blizzard file is aligned, and m3addon rounds up, so aligning is the safe default regardless.
-- Does SC2 tolerate a model whose total vertex count exceeds 65536 (multiple regions, each under 65536, with region-relative uint16 faces)? Both Blender addons hard-error at 65536 total, but nothing in REGN v5 (uint32 first_vertex_index) requires it. Needs an empirical test against a large Heroes of the Storm .m3 from C:\games\Heroes of the Storm — check whether any shipped model exceeds 65536.
+- ~~Does SC2 tolerate a model whose total vertex count exceeds 65536?~~ Yes. Blizzard ships 34 animated SC2 models over it; see the limits finding.
 - MDX V-coordinate handedness: I inferred top-down (D3D) from the format's Direct3D lineage and from the fact that MDX->OBJ converters flip V, but I did not find an explicit statement in mdx-m3-viewer or the local MaxScript. Verify by exporting one WC3 model with a visibly asymmetric texture and comparing against the in-game render.
 - Exact alpha-test threshold WC3 uses for FilterMode 1 (Transparent). The commonly cited value is 0.75 (=> 191/192 of 255) based on mdx-m3-viewer's shader `if (color.a < 0.75) discard;`, but I did not read that shader directly this session.
 - Reforged HD material layer slot ORDER. TaylorMouse's Max plugin exposes diffuse / normal / ORM / emissive / reflection and separately a replaceable-texture dropdown, implying the on-disk LAYS order is diffuse, normal, ORM, emissive, team-color, team-glow (6 layers), but the Read.ms parser reads layers positionally without naming them. Confirm by dumping a known Reforged HD unit's MTLS chunk.
