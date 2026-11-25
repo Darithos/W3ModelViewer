@@ -1615,13 +1615,18 @@ public sealed class M3Exporter
         {
             // m3 cameras aim along their bone's local -Z, so synthesize a root bone at the camera
             // position oriented from position toward target. Animated cameras bake in BuildSequences.
+            // A KCRL roll is usually held for the whole file (the DE Archmage's -5 degrees), so
+            // the rest pose takes it from the first sequence, as Blizzard's conversions do.
+            float restRoll = cam.RollTrack is { } rt && _mdx.Sequences.Count > 0
+                ? _animator.SampleFloat(rt, _mdx.Sequences[0], _mdx.Sequences[0].IntervalStart, 0f)
+                : 0f;
             var bone = new ExportBone
             {
                 Name = UniqueBoneName($"Cam_{(cam.Name.Length > 0 ? cam.Name : "Portrait")}", _bones.Count),
                 Parent = -1,
                 RestLocation = ToSc2(cam.Position) * _opt.Scale,
                 PivotWorld = ToSc2(cam.Position) * _opt.Scale,
-                RestRotation = LookRotation(ToSc2(cam.Position), ToSc2(cam.TargetPosition)),
+                RestRotation = LookRotation(ToSc2(cam.Position), ToSc2(cam.TargetPosition), restRoll),
             };
             _bones.Add(bone);
             _cameras.Add((cam, _bones.Count - 1));
@@ -1715,7 +1720,26 @@ public sealed class M3Exporter
     /// bone's local +Y against world up averages +0.845, so +Y is the up axis.
     /// </para>
     /// </remarks>
-    private static Quaternion LookRotation(Vector3 from, Vector3 to)
+    /// <summary>
+    /// A Warcraft III camera's field of view, which is horizontal at 4:3, as the vertical angle
+    /// SC2 reads with <c>use_vertical_fov</c> set.
+    /// </summary>
+    /// <remarks>
+    /// Measured, not assumed: of 99 SD portraits Blizzard converted for War3.SC2Mod, 85 store
+    /// exactly <c>2·atan(tan(fov/2)·3/4)</c> with use_vertical_fov 1 — the Archmage's 0.6911 rad
+    /// became 0.5274 — and the other 14 left the WC3 number, apparently re-framed by hand. Written
+    /// as-is, every portrait came out zoomed out by a third.
+    /// </remarks>
+    private static float VerticalFov(float wc3Fov) => 2 * MathF.Atan(MathF.Tan(wc3Fov / 2) * 0.75f);
+
+    /// <param name="roll">
+    /// Warcraft III's KCRL, in radians: a turn about the line of sight. Positive WC3 roll turns
+    /// the camera's up left-handed about the look direction (right-handed about the bone's +Z).
+    /// Measured on Blizzard's own conversions in War3.SC2Mod: the SD Tauren Chieftain and Spirit
+    /// Walker portraits carry KCRL -5 degrees, and their war3_*_portrait.m3 camera bones are rolled
+    /// +5 degrees right-handed about the look direction.
+    /// </param>
+    private static Quaternion LookRotation(Vector3 from, Vector3 to, float roll = 0)
     {
         var f = to - from;
         if (f.LengthSquared() < 1e-10f) return Quaternion.Identity;
@@ -1727,6 +1751,12 @@ public sealed class M3Exporter
         var z = -f;                                             // local +Z points back from the target
         var x = Vector3.Normalize(Vector3.Cross(up, z));        // right
         var y = Vector3.Cross(z, x);                            // up
+        if (roll != 0)
+        {
+            // Rodrigues by -roll about f, for two vectors square to it: f×x = -y and f×y = x.
+            float c = MathF.Cos(roll), s = MathF.Sin(roll);
+            (x, y) = (x * c + y * s, y * c - x * s);
+        }
         var m = new Matrix4x4(
             x.X, x.Y, x.Z, 0,
             y.X, y.Y, y.Z, 0,
@@ -1926,7 +1956,17 @@ public sealed class M3Exporter
                                                         || d.Name.StartsWith("Stand 1", StringComparison.Ordinal));
         if (!hasStand)
         {
-            var first = defs.FirstOrDefault();
+            // The copy must be a sequence that shows the model. A classic SD portrait's 'Walk' is a
+            // hidden filler range (every geoset's alpha is keyed 0 there, and Warcraft III records
+            // its extent as empty: min > max, radius 0), so copying it gave a Stand that drew
+            // nothing and the SC2 unit portrait came out solid black. A portrait's idle is its
+            // first non-talk 'Portrait' sequence; otherwise take the first sequence with a
+            // non-empty extent, and only then the first of all.
+            static bool Hidden(SeqDef d) => d.Source.BoundsRadius <= 0 && d.Source.Min.X > d.Source.Max.X;
+            var first = defs.FirstOrDefault(d => d.Name.StartsWith("Portrait", StringComparison.OrdinalIgnoreCase)
+                                                 && !d.Name.Contains("Talk", StringComparison.OrdinalIgnoreCase) && !Hidden(d))
+                        ?? defs.FirstOrDefault(d => !Hidden(d))
+                        ?? defs.FirstOrDefault();
             _log.Add("no Stand sequence selected — SC2 shows bind pose without one" +
                      (first is not null ? $"; duplicating '{first.Name}' as Stand" : ""));
             // Every track kind is carried over, not only the skeletal ones. Without the float and
@@ -2091,12 +2131,18 @@ public sealed class M3Exporter
             ? anim.Alpha
             : _animator.GeosetAlpha(anim.GeosetId, seq, timeMs, timeMs);
 
-    /// <summary>Animated cameras: KCTR/KTTR have no m3 form, so bake position + look-at rotation keys.</summary>
+    /// <summary>
+    /// Animated cameras: KCTR/KTTR/KCRL have no m3 form, so bake position + look-at rotation keys.
+    /// </summary>
+    /// <remarks>
+    /// Roll matters to portraits: 748 of the 4,843 shipped cameras carry KCRL, the DE Archmage
+    /// portrait's among them (a constant -0.088 rad, about -5 degrees).
+    /// </remarks>
     private void BakeCameraTracks(SeqDef def, List<int> times, (uint Loc, uint Rot, uint Scl)[] boneIds)
     {
         foreach (var (cam, boneIndex) in _cameras)
         {
-            if (cam.TranslationTrack is null && cam.TargetTranslationTrack is null) continue;
+            if (cam.TranslationTrack is null && cam.TargetTranslationTrack is null && cam.RollTrack is null) continue;
 
             var locs = new Vector3[times.Count];
             var rots = new Quaternion[times.Count];
@@ -2104,8 +2150,9 @@ public sealed class M3Exporter
             {
                 var pos = cam.Position + SampleTrack(cam.TranslationTrack, def.Source, times[ti]);
                 var target = cam.TargetPosition + SampleTrack(cam.TargetTranslationTrack, def.Source, times[ti]);
+                float roll = _animator.SampleFloat(cam.RollTrack, def.Source, times[ti], 0f);
                 locs[ti] = ToSc2(pos) * _opt.Scale;
-                var q = LookRotation(ToSc2(pos), ToSc2(target));
+                var q = LookRotation(ToSc2(pos), ToSc2(target), roll);
                 rots[ti] = ti > 0 && Quaternion.Dot(rots[ti - 1], q) < 0 ? -q : q;
             }
 
@@ -2844,20 +2891,28 @@ public sealed class M3Exporter
                 var w = cam.W;
                 w.Write((uint)boneMap[bone]);
                 b.Ref(cam, camNames[i]);
-                WriteFloatAnimRef(w, mdxCam.FieldOfView, _nextAnimId());
+                // The fields Warcraft III has no counterpart for take the value every one of the
+                // 371 Blizzard v5 portrait cameras in HotS.SC2Mod\assets\portraits agrees on (and
+                // the 88 hand-made AlleyV_Wc3R_*_Portrait conversions, which work in game, use the
+                // same depth-of-field numbers): use_vertical_fov 1 (370 of 371), dof type 0,
+                // clip2 = far, focal 0.05, falloff 0.01..0.02, the two late fields 1 and 27.
+                // FOV and the clip planes come from the WC3 camera; the clips are lengths, so they
+                // take the export scale.
+                float farClip = mdxCam.FarClip * _opt.Scale;
+                WriteFloatAnimRef(w, VerticalFov(mdxCam.FieldOfView), _nextAnimId());
                 w.Write(1u);                                    // use_vertical_fov
-                w.Write(3u);                                    // depth_of_field_type
-                WriteFloatAnimRef(w, mdxCam.FarClip * _opt.Scale, _nextAnimId());
+                w.Write(0u);                                    // depth_of_field_type
+                WriteFloatAnimRef(w, farClip, _nextAnimId());
                 WriteFloatAnimRef(w, mdxCam.NearClip * _opt.Scale, _nextAnimId());
-                WriteFloatAnimRef(w, 0, _nextAnimId());         // clip2
-                WriteFloatAnimRef(w, 0, _nextAnimId());         // focal_depth
-                WriteFloatAnimRef(w, 0, _nextAnimId());         // falloff_start
-                WriteFloatAnimRef(w, mdxCam.FarClip * _opt.Scale, _nextAnimId());   // falloff_end
+                WriteFloatAnimRef(w, farClip, _nextAnimId());   // clip2
+                WriteFloatAnimRef(w, 0.05f, _nextAnimId());     // focal_depth
+                WriteFloatAnimRef(w, 0.01f, _nextAnimId());     // falloff_start
+                WriteFloatAnimRef(w, 0.02f, _nextAnimId());     // falloff_end
                 WriteFloatAnimRef(w, 0, _nextAnimId());
                 WriteFloatAnimRef(w, 0, _nextAnimId());
                 WriteFloatAnimRef(w, 0, _nextAnimId());         // depth_of_field
-                WriteFloatAnimRef(w, 0, _nextAnimId());
-                WriteFloatAnimRef(w, 0, _nextAnimId());
+                WriteFloatAnimRef(w, 1, _nextAnimId());
+                WriteFloatAnimRef(w, 27, _nextAnimId());
             }
             cam.Count = _cameras.Count;
 

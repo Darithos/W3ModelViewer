@@ -212,6 +212,9 @@ public static class ExportProbe
     }
 
     /// <summary>Structural checks over a produced MD34 file.</summary>
+    /// <summary>The structural check, for an .m3 already on disk (<c>--verifym3 file...</c>).</summary>
+    public static List<string> Verify(byte[] d) => VerifyM3(d);
+
     private static List<string> VerifyM3(byte[] d)
     {
         var issues = new List<string>();

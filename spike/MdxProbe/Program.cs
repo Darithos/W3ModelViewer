@@ -19,6 +19,21 @@ if (args.Contains("--unresolved")) { int ui = Array.IndexOf(args, "--unresolved"
 
 if (args.Contains("--slotmismatch")) return MdxProbe.SlotMismatch.Run(install);
 
+// --camcensus [filter] compares every model's raw CAMS bytes with the cameras MdxReader returns.
+if (args.Contains("--camcensus"))
+{
+    int ci = Array.IndexOf(args, "--camcensus");
+    return MdxProbe.CamCensus.Run(install, ci + 1 < args.Length && !args[ci + 1].StartsWith("--") ? args[ci + 1] : null);
+}
+// --camexport [filter] [limit] exports camera-carrying models and checks CAM_ in the bytes.
+if (args.Contains("--camexport"))
+{
+    int ci = Array.IndexOf(args, "--camexport");
+    string? cf = ci + 1 < args.Length && !args[ci + 1].StartsWith("--") ? args[ci + 1] : null;
+    int cl = ci + 2 < args.Length && int.TryParse(args[ci + 2], out int cln) ? cln : 60;
+    return MdxProbe.CamCensus.Export(install, cf, cl);
+}
+
 if (args.Contains("--flagcensus"))
 {
     int fi = Array.IndexOf(args, "--flagcensus");
@@ -374,6 +389,20 @@ if (args.Contains("--loose"))
 }
 
 // --export runs the full m3 export for a spread of models and verifies the output structurally.
+// --verifym3 <file.m3>... runs ExportProbe's structural check on exports already on disk.
+if (args.Contains("--verifym3"))
+{
+    int bad = 0;
+    foreach (string f in args.SkipWhile(a => a != "--verifym3").Skip(1))
+    {
+        var issues = MdxProbe.ExportProbe.Verify(File.ReadAllBytes(f));
+        Console.WriteLine($"{f}: {(issues.Count == 0 ? "VERIFY clean" : $"VERIFY {issues.Count} problems")}");
+        foreach (string s in issues.Take(12)) Console.WriteLine("  !! " + s);
+        if (issues.Count > 0) bad++;
+    }
+    return bad;
+}
+
 if (args.Contains("--export"))
 {
     int i = Array.IndexOf(args, "--export");

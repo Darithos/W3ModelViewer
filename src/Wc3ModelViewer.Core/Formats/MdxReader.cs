@@ -728,12 +728,20 @@ public static class MdxReader
         return ReadVec3Track(c);
     }
 
+    /// <remarks>
+    /// Every camera Blizzard ships today — 4,843 of them across the SD, HD and DE trees, all VERS
+    /// 1800 — writes 0x03 in the top byte of its inclusive size word (0x03000078 for a bare
+    /// 120-byte camera). Read whole, the word is ~50 MB, failed the bounds check, and every camera
+    /// was dropped: portraits exported with no CAM_ and rendered black in SC2's portrait window.
+    /// The low 24 bits alone walk each CAMS chunk exactly to its end (<c>MdxProbe --camcensus</c>),
+    /// so the top byte is a tag of some kind, not part of the length.
+    /// </remarks>
     private static void ReadCams(MdxModel m, Cursor r)
     {
         while (r.Remaining >= 4)
         {
             int start = r.Position;
-            int inclusive = r.I32();
+            int inclusive = r.I32() & 0x00FFFFFF;
             if (inclusive < 120 || start + inclusive > r.End) break;
             var c = r.Sub(start, inclusive);
             c.Skip(4);
@@ -752,6 +760,11 @@ public static class MdxReader
                     case "KCTR": tr = ReadVec3Track(c); continue;
                     case "KTTR": tt = ReadVec3Track(c); continue;
                     case "KCRL": roll = ReadFloatTrack(c); continue;
+                    // 82 DE building-birth cameras carry two float tracks of their own (tags read
+                    // "IDUF" and "ELAF"; one key each, the second holding 8.0, likely depth-of-field
+                    // settings). Nothing here uses them, but they are skipped rather than ending
+                    // the walk so a track written after them is not lost.
+                    case "IDUF" or "ELAF": ReadFloatTrack(c); continue;
                 }
                 break;
             }
